@@ -6,3 +6,4 @@
 | 2026-09-25 | Frontend owns all design; no separate designer | One owner for look and build |
 | 2026-09-25 | No generic AI aesthetics (see DESIGN.md) | Brand credibility with film-literate users |
 | 2026-09-25 | Marketing kept separate, parked for later | Focus on build first |
+| 2026-09-25 | GitHub repo stays private | Hari's call; keeps the work private before launch |
