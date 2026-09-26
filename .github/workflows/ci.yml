@@ -6,9 +6,9 @@
 # - No job here uses repository secrets. The repo is private on GitHub Free, so GitHub
 #   Environments are unavailable and every workflow can read every repo secret. Deploys
 #   and EAS builds go in separate workflows: prod ones are named deploy-prod*.yml, are
-#   workflow_dispatch-only, and are the only files allowed to reference *_PROD secrets
-#   (checked by the "prod-secret tripwire" step below; a tripwire against
-#   accidental misuse, not access control).
+#   workflow_dispatch-only (a convention until Phase 3), and are the only files allowed
+#   to reference PROD secrets (checked by the "prod-secret tripwire" step below; a
+#   tripwire against accidental misuse, not access control).
 # - CI is advisory: without branch protection nothing blocks a merge on a red run.
 name: CI
 
@@ -103,25 +103,25 @@ jobs:
       - name: Scan git history
         run: ./gitleaks git --redact --verbose --exit-code 1 .
       - name: Prod-secret tripwire (not access control; see docs/ENVIRONMENTS.md)
-        # Non-deploy-prod workflows must not touch *_PROD or bulk secrets; deploy-prod*
-        # workflows must be workflow_dispatch-only. grep exit 1 = clean, >1 = fail closed.
+        # Fails if a workflow other than deploy-prod*.yml reads a PROD secret, reads secrets
+        # in bulk, or invokes a deploy-prod workflow. grep exit 1 = clean; >1 = fail closed.
+        # Known limit: a text match. Deliberate evasion (string building, workflow IDs,
+        # composite actions) is possible; this catches accidents only.
         run: |
           shopt -s nullglob
-          wf=(.github/workflows/*.yml .github/workflows/*.yaml); prod=(); other=(); fail=0
-          [ ${#wf[@]} -gt 0 ] || { echo "::error::no workflow files found; failing closed"; exit 2; }
-          for f in "${wf[@]}"; do case "${f##*/}" in deploy-prod*) prod+=("$f") ;; *) other+=("$f") ;; esac; done
-          check() { # $1 message, $2 regex, rest files
-            local msg=$1 re=$2 rc=0 hits f; shift 2
-            [ $# -gt 0 ] || return 0
-            hits=$(grep -liE "$re" "$@") || rc=$?
-            if [ "$rc" -gt 1 ]; then echo "::error::guard grep failed (exit $rc); failing closed"; exit 2; fi
-            while IFS= read -r f; do [ -z "$f" ] || { echo "::error file=$f::$msg"; fail=1; }; done <<< "$hits"
-          }
-          check "prod or bulk secret access outside deploy-prod*.yml" \
-            'secrets\.[A-Za-z0-9_]+_PROD\b|secrets\[|toJSON\(secrets\)|secrets:[[:space:]]*inherit' "${other[@]}"
-          # Trigger positions only (key, `on:` line, list item), so `run: supabase db push` passes.
-          t='(push|pull_request[a-z_]*|schedule|workflow_call|workflow_run|repository_dispatch)'
-          check "deploy-prod workflow has a trigger other than workflow_dispatch" \
-            "(^|[[:space:]])$t:|^[\"']?on[\"']?:.*\\b$t\\b|^[[:space:]]*-[[:space:]]*$t[[:space:]]*\$" "${prod[@]}"
-          if [ "$fail" -ne 0 ]; then exit 1; fi
-          echo "OK: prod-secret tripwire clean (${#other[@]} other, ${#prod[@]} deploy-prod workflows)"
+          files=()
+          for f in .github/workflows/*.yml .github/workflows/*.yaml; do
+            case "${f##*/}" in deploy-prod*) ;; *) files+=("$f") ;; esac
+          done
+          [ ${#files[@]} -gt 0 ] || { echo "::error::no workflow files found; failing closed"; exit 2; }
+          # [-] keeps this regex from matching its own source text.
+          re='secrets\.[A-Za-z0-9_]*PROD|secrets\[|toJSON\(secrets\)|secrets:[[:space:]]*inherit|workflow[[:space:]]+run[[:space:]].*deploy[-]prod|workflows/deploy[-]prod'
+          rc=0; hits=$(grep -liE "$re" "${files[@]}") || rc=$?
+          if [ "$rc" -gt 1 ]; then echo "::error::tripwire grep failed (exit $rc); failing closed"; exit 2; fi
+          if [ "$rc" -eq 0 ]; then
+            while IFS= read -r f; do
+              echo "::error file=$f::prod secret, bulk secret, or deploy-prod reference outside deploy-prod*.yml"
+            done <<< "$hits"
+            exit 1
+          fi
+          echo "OK: prod-secret tripwire clean (${#files[@]} workflow files checked)"
