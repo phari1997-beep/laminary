@@ -18,7 +18,7 @@ Governing decisions (`docs/DECISIONS.md`):
 | Purpose | All work in Phases 0–1, including the 500-title pilot. Day-to-day work and tests after that | Integration, availability sync, scaling annotation, scoring API | TestFlight testers, then store users |
 | Database | `supabase start` (Docker, local Postgres + pgvector), configured by `supabase/config.toml` | Supabase project `laminary-dev`, **Free** plan | Supabase project `laminary-prod`, **Pro** plan (about $25/month) |
 | Secrets live in | `.env` at repo root (gitignored) | GitHub repo secrets with a `_DEV` suffix, plus the Supabase dashboard (dev) | GitHub repo secrets with a `_PROD` suffix, plus the Supabase dashboard (prod) |
-| Migrations applied | By hand (`supabase db reset`) | By a deploy workflow after merge to `main` (added in Phase 2) | By a `workflow_dispatch`-only deploy workflow that Hari runs by hand ([OPEN]: whether the coordinator may trigger prod deploys), after the same migration has run on dev |
+| Migrations applied | By hand (`supabase db reset`) | By a deploy workflow after merge to `main` (added in Phase 2) | By a `workflow_dispatch`-only deploy workflow that **only Hari** triggers, by hand (DECISIONS 2026-09-26), after the same migration has run on dev |
 | App builds | Expo Go / dev client | EAS profile `preview` (internal distribution, for the team only) | EAS profile `production`: **TestFlight builds and store builds** |
 | Data | Fixtures, then the 500-title pilot (Phase 1) | Full catalog as it scales (Phase 2) | Full catalog |
 
@@ -82,9 +82,9 @@ Runs on every push to `main`, every PR into `main`, and manual dispatch. It uses
 | `app` | Passes as a no-op until `app/package.json` exists, then runs `npm ci`, `npm run lint --if-present`, `npm test --if-present` on Node 22 | under 10 s now |
 | `secret-scan` | Installs a pinned, checksum-verified gitleaks 8.30.1, scans the full history, then runs the prod-secret tripwire | under 30 s |
 
-**CI is advisory.** Branch protection and rulesets aren't available for private repos on GitHub Free, so a red CI run does **not** block a merge or a direct push. Before merging, whoever merges must check that every job on the PR (or on the commit) is green. QA's review includes confirming this. Who may merge: Hari. Two separate open questions for Hari:
-- **[OPEN]** May the coordinator merge to `main`?
-- **[OPEN]** May the coordinator trigger prod deploys?
+**CI is advisory.** Branch protection and rulesets aren't available for private repos on GitHub Free, so a red CI run does **not** block a merge or a direct push. Before merging, whoever merges must check that every job on the PR (or on the commit) is green. QA's review includes confirming this. Permissions (DECISIONS 2026-09-26):
+- **Merging to `main`:** Hari, or the coordinator for QA-passed work.
+- **Prod deploys:** only Hari triggers them. Nothing enforces this on a private GitHub Free repo, so it is a rule, not a control (section 2).
 
 **What GitHub Free leaves out for this repo, and what GitHub Pro would add.** Source: GitHub's docs, read from the `github/docs` source repo (`data/reusables/gated-features/*.md` and `data/reusables/billing/actions-included-quotas.md`, commit `18945a31`, 2026-09-25). docs.github.com itself is blocked from the agent sandbox.
 
