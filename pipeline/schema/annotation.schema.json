@@ -1,0 +1,520 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:laminary:schema:annotation:0.1.0",
+  "title": "Laminary title annotation",
+  "description": "Output contract for one title's narrative annotation (movie or whole TV series). DRAFT 0.1.0, pending Hari's approval. Field meanings and every controlled term are defined in docs/NARRATIVE_SCHEMA.md. Rule for consumers: text under any 'safe_text' key may always be shown; text under any 'spoiler_text' key is hidden unless the viewer opts in; controlled labels carry the spoiler level given in 'x-laminary-spoiler-levels'.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "record_kind", "title", "provenance", "outcome"],
+  "properties": {
+    "schema_version": {
+      "description": "Semantic version of this schema that the record conforms to.",
+      "const": "0.1.0"
+    },
+    "record_kind": { "$ref": "#/$defs/record_kind" },
+    "title": { "$ref": "#/$defs/title" },
+    "provenance": { "$ref": "#/$defs/provenance" },
+    "outcome": { "$ref": "#/$defs/outcome" },
+    "abstain_reason": { "$ref": "#/$defs/abstain_reason" },
+    "layers": { "$ref": "#/$defs/layers" },
+    "beat_tags": { "$ref": "#/$defs/beat_tags_block" }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "outcome": { "const": "annotated" } } },
+      "then": {
+        "required": ["layers", "beat_tags"],
+        "not": { "required": ["abstain_reason"] }
+      }
+    },
+    {
+      "if": { "properties": { "outcome": { "const": "abstained" } } },
+      "then": {
+        "required": ["abstain_reason"],
+        "properties": { "layers": false, "beat_tags": false }
+      }
+    },
+    {
+      "if": { "properties": { "record_kind": { "const": "llm_annotation" } } },
+      "then": {
+        "properties": {
+          "title": { "properties": { "tmdb_id": { "type": "integer" } } },
+          "provenance": {
+            "properties": {
+              "annotator": { "required": ["model_version", "prompt_version", "run_id"] },
+              "sources": { "minItems": 1 }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "record_kind": { "const": "gold_label" } } },
+      "then": {
+        "properties": {
+          "title": { "properties": { "tmdb_id": { "type": "integer" } } },
+          "provenance": {
+            "properties": {
+              "annotator": { "required": ["labeler_id", "guide_version"] },
+              "sources": { "minItems": 1 }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "record_kind": { "const": "illustrative_example" } } },
+      "then": {
+        "properties": {
+          "provenance": { "properties": { "annotator": { "required": ["labeler_id"] } } }
+        }
+      }
+    }
+  ],
+
+  "x-laminary-spoiler-levels": {
+    "description": "Default spoiler level of every controlled term, keyed by $defs vocabulary name, plus field-level levels for non-text fields. Must match the tables in docs/NARRATIVE_SCHEMA.md (checked by pipeline/tests/test_schema.py).",
+    "vocabularies": {
+      "tone": {
+        "tense": "none",
+        "hopeful": "none",
+        "playful": "none",
+        "warm": "none",
+        "eerie": "none",
+        "melancholic": "none",
+        "cerebral": "none",
+        "bleak": "mild",
+        "bittersweet": "mild",
+        "triumphant": "mild"
+      },
+      "setting_period": {
+        "historical_past": "none",
+        "contemporary": "none",
+        "near_future": "none",
+        "far_future": "none",
+        "invented_world": "none",
+        "mixed": "none"
+      },
+      "protagonist_structure": {
+        "single": "none",
+        "dual": "none",
+        "ensemble": "none"
+      },
+      "booker_plot": {
+        "overcoming_the_monster": "none",
+        "rags_to_riches": "mild",
+        "the_quest": "none",
+        "voyage_and_return": "none",
+        "comedy": "none",
+        "tragedy": "mild",
+        "rebirth": "mild"
+      },
+      "mythic_blueprint": {
+        "heros_journey": "none",
+        "heroines_journey": "none",
+        "anti_hero_descent": "mild",
+        "no_clear_blueprint": "none"
+      },
+      "journey_stage": {
+        "ordinary_world": "none",
+        "call_to_adventure": "none",
+        "refusal_of_the_call": "none",
+        "meeting_the_mentor": "none",
+        "crossing_the_threshold": "none",
+        "tests_allies_enemies": "none",
+        "approach_to_inmost_cave": "mild",
+        "ordeal": "mild",
+        "reward": "mild",
+        "road_back": "mild",
+        "resurrection": "mild",
+        "return_with_elixir": "mild"
+      },
+      "emotional_arc": {
+        "rags_to_riches": "mild",
+        "riches_to_rags": "mild",
+        "man_in_a_hole": "mild",
+        "icarus": "mild",
+        "cinderella": "mild",
+        "oedipus": "mild"
+      },
+      "chronology": {
+        "linear": "none",
+        "in_medias_res": "none",
+        "frame_narrative": "none",
+        "nonlinear": "none",
+        "reverse_chronology": "none"
+      },
+      "beat_tag": {
+        "mentor_dies": "major",
+        "twist_ending": "mild",
+        "unreliable_narrator": "major",
+        "found_family": "none",
+        "redemption_arc": "mild",
+        "pyrrhic_victory": "major",
+        "time_loop": "none",
+        "heist_structure": "none",
+        "ensemble_convergence": "none",
+        "ambiguous_ending": "mild"
+      }
+    },
+    "fields": {
+      "layers.structural_skeleton.arc_points": "mild"
+    }
+  },
+
+  "$defs": {
+    "confidence": {
+      "description": "Probability-like confidence in [0, 1] that the label is correct given the source summary. Bands are defined in docs/NARRATIVE_SCHEMA.md.",
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+
+    "record_kind": {
+      "description": "Who produced the record and why.",
+      "enum": ["llm_annotation", "gold_label", "illustrative_example"]
+    },
+    "media_type": { "enum": ["movie", "tv_series"] },
+    "series_status": { "enum": ["ended", "ongoing"] },
+    "source_kind": { "enum": ["wikipedia_plot", "tmdb_overview"] },
+    "source_license": { "enum": ["CC-BY-SA-4.0", "CC-BY-SA-3.0", "TMDB-API-terms"] },
+    "outcome": { "enum": ["annotated", "abstained"] },
+    "abstain_reason": {
+      "enum": ["summary_too_thin", "summary_contradictory", "not_a_narrative", "summary_title_mismatch"]
+    },
+    "spoiler_level": { "enum": ["none", "mild", "major"] },
+
+    "setting_period": {
+      "enum": ["historical_past", "contemporary", "near_future", "far_future", "invented_world", "mixed"]
+    },
+    "tone": {
+      "enum": [
+        "tense", "hopeful", "playful", "warm", "eerie", "melancholic", "cerebral",
+        "bleak", "bittersweet", "triumphant"
+      ]
+    },
+    "protagonist_structure": { "enum": ["single", "dual", "ensemble"] },
+    "booker_plot": {
+      "enum": [
+        "overcoming_the_monster", "rags_to_riches", "the_quest", "voyage_and_return",
+        "comedy", "tragedy", "rebirth"
+      ]
+    },
+    "mythic_blueprint": {
+      "enum": ["heros_journey", "heroines_journey", "anti_hero_descent", "no_clear_blueprint"]
+    },
+    "journey_stage": {
+      "enum": [
+        "ordinary_world", "call_to_adventure", "refusal_of_the_call", "meeting_the_mentor",
+        "crossing_the_threshold", "tests_allies_enemies", "approach_to_inmost_cave", "ordeal",
+        "reward", "road_back", "resurrection", "return_with_elixir"
+      ]
+    },
+    "emotional_arc": {
+      "enum": ["rags_to_riches", "riches_to_rags", "man_in_a_hole", "icarus", "cinderella", "oedipus"]
+    },
+    "chronology": {
+      "enum": ["linear", "in_medias_res", "frame_narrative", "nonlinear", "reverse_chronology"]
+    },
+    "beat_tag": {
+      "enum": [
+        "mentor_dies", "twist_ending", "unreliable_narrator", "found_family", "redemption_arc",
+        "pyrrhic_victory", "time_loop", "heist_structure", "ensemble_convergence",
+        "ambiguous_ending"
+      ]
+    },
+
+    "title": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["media_type", "name", "release_year", "tmdb_id"],
+      "properties": {
+        "media_type": { "$ref": "#/$defs/media_type" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 300 },
+        "release_year": {
+          "description": "Year of first release (for a series, first air year).",
+          "type": "integer",
+          "minimum": 1870,
+          "maximum": 2100
+        },
+        "tmdb_id": {
+          "description": "TMDB id within the TMDB namespace implied by media_type (movie or tv). Null only for illustrative examples.",
+          "type": ["integer", "null"],
+          "minimum": 1
+        },
+        "wikidata_id": {
+          "type": ["string", "null"],
+          "pattern": "^Q[1-9][0-9]*$"
+        },
+        "series_status": {
+          "description": "Series only. For 'ongoing', annotations describe the aired run as of the source revision.",
+          "$ref": "#/$defs/series_status"
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "media_type": { "const": "tv_series" } } },
+          "then": { "required": ["series_status"] },
+          "else": { "not": { "required": ["series_status"] } }
+        }
+      ]
+    },
+
+    "source": {
+      "description": "One licensed plot summary the annotation was produced from. The summary text itself is not stored in this record.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "ref", "revision", "retrieved_at", "license", "word_count", "content_sha256"],
+      "properties": {
+        "kind": { "$ref": "#/$defs/source_kind" },
+        "ref": {
+          "description": "Stable reference: Wikipedia article URL, or 'tmdb:movie/<id>' / 'tmdb:tv/<id>'.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        },
+        "revision": {
+          "description": "Wikipedia revision id, or TMDB retrieval date (YYYY-MM-DD) when no revision id exists.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "retrieved_at": { "type": "string", "format": "date-time" },
+        "license": { "$ref": "#/$defs/source_license" },
+        "word_count": { "type": "integer", "minimum": 0 },
+        "content_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["annotated_at", "annotator", "sources", "input_word_count"],
+      "properties": {
+        "annotated_at": { "type": "string", "format": "date-time" },
+        "annotator": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "model_version": {
+              "description": "Exact model id string sent to the API (LLM records).",
+              "type": "string",
+              "minLength": 1
+            },
+            "prompt_version": {
+              "description": "Version of the annotation prompt, e.g. 'annotate-v3'. LLM records.",
+              "type": "string",
+              "minLength": 1
+            },
+            "run_id": {
+              "description": "Pipeline run / batch id, for joining to cost reports. LLM records.",
+              "type": "string",
+              "minLength": 1
+            },
+            "labeler_id": {
+              "description": "Pseudonymous id of the human labeler (gold set, examples).",
+              "type": "string",
+              "minLength": 1
+            },
+            "guide_version": {
+              "description": "Version of the labeling guide the human followed (gold set).",
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "sources": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/source" },
+          "maxItems": 5
+        },
+        "input_word_count": {
+          "description": "Total words of summary text sent to the annotator (0 for illustrative examples).",
+          "type": "integer",
+          "minimum": 0
+        },
+        "usage": {
+          "description": "Token usage for this title's request (LLM records), for cost per title.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["input_tokens", "output_tokens", "batch"],
+          "properties": {
+            "input_tokens": { "type": "integer", "minimum": 0 },
+            "output_tokens": { "type": "integer", "minimum": 0 },
+            "cache_read_input_tokens": { "type": "integer", "minimum": 0 },
+            "batch": { "type": "boolean" }
+          }
+        },
+        "notes": {
+          "description": "Free-text provenance note (e.g. 'illustrative, not from a source summary'). Never shown to users.",
+          "type": "string",
+          "maxLength": 500
+        }
+      }
+    },
+
+    "labeled": {
+      "description": "A controlled label with a confidence.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["label", "confidence"],
+      "properties": {
+        "label": true,
+        "confidence": { "$ref": "#/$defs/confidence" }
+      }
+    },
+
+    "rationale_safe": {
+      "description": "Spoiler-safe text: premise and setup only (spoiler level 'none').",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rationale"],
+      "properties": { "rationale": { "type": "string", "minLength": 1, "maxLength": 280 } }
+    },
+    "rationale_spoiler": {
+      "description": "Spoiler-bearing text: may reveal anything. Hidden unless the viewer opts in.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rationale"],
+      "properties": { "rationale": { "type": "string", "minLength": 1, "maxLength": 400 } }
+    },
+
+    "layers": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["surface_story", "archetypal_plot", "mythic_blueprint", "structural_skeleton"],
+      "properties": {
+        "surface_story": { "$ref": "#/$defs/surface_story" },
+        "archetypal_plot": { "$ref": "#/$defs/archetypal_plot" },
+        "mythic_blueprint": { "$ref": "#/$defs/mythic_blueprint_layer" },
+        "structural_skeleton": { "$ref": "#/$defs/structural_skeleton" }
+      }
+    },
+
+    "surface_story": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["setting_period", "tones", "protagonist_structure", "safe_text", "spoiler_text"],
+      "properties": {
+        "setting_period": { "$ref": "#/$defs/setting_period" },
+        "tones": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/tone" },
+          "minItems": 1,
+          "maxItems": 3,
+          "uniqueItems": true
+        },
+        "protagonist_structure": { "$ref": "#/$defs/protagonist_structure" },
+        "safe_text": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["logline", "protagonist", "setting", "central_conflict"],
+          "properties": {
+            "logline": { "type": "string", "minLength": 1, "maxLength": 240 },
+            "protagonist": { "type": "string", "minLength": 1, "maxLength": 160 },
+            "setting": { "type": "string", "minLength": 1, "maxLength": 120 },
+            "central_conflict": { "type": "string", "minLength": 1, "maxLength": 200 }
+          }
+        },
+        "spoiler_text": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["resolution"],
+          "properties": {
+            "resolution": { "type": "string", "minLength": 1, "maxLength": 400 }
+          }
+        }
+      }
+    },
+
+    "archetypal_plot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["primary", "secondary", "safe_text", "spoiler_text"],
+      "properties": {
+        "primary": {
+          "$ref": "#/$defs/labeled",
+          "properties": { "label": { "$ref": "#/$defs/booker_plot" } }
+        },
+        "secondary": {
+          "description": "Up to two further Booker plots present, keyed by plot, valued by confidence. Must not repeat the primary. Empty object if none.",
+          "type": "object",
+          "propertyNames": { "$ref": "#/$defs/booker_plot" },
+          "additionalProperties": { "$ref": "#/$defs/confidence" },
+          "maxProperties": 2
+        },
+        "safe_text": { "$ref": "#/$defs/rationale_safe" },
+        "spoiler_text": { "$ref": "#/$defs/rationale_spoiler" }
+      }
+    },
+
+    "mythic_blueprint_layer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["blueprint", "stages_present", "safe_text", "spoiler_text"],
+      "properties": {
+        "blueprint": {
+          "$ref": "#/$defs/labeled",
+          "properties": { "label": { "$ref": "#/$defs/mythic_blueprint" } }
+        },
+        "stages_present": {
+          "description": "Hero's Journey stages judged present, keyed by stage, valued by confidence. A stage absent from the object is judged absent.",
+          "type": "object",
+          "propertyNames": { "$ref": "#/$defs/journey_stage" },
+          "additionalProperties": { "$ref": "#/$defs/confidence" }
+        },
+        "safe_text": { "$ref": "#/$defs/rationale_safe" },
+        "spoiler_text": { "$ref": "#/$defs/rationale_spoiler" }
+      }
+    },
+
+    "structural_skeleton": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["emotional_arc", "arc_points", "chronology", "safe_text", "spoiler_text"],
+      "properties": {
+        "emotional_arc": {
+          "$ref": "#/$defs/labeled",
+          "properties": { "label": { "$ref": "#/$defs/emotional_arc" } }
+        },
+        "arc_points": {
+          "description": "Protagonist fortune at t = 0.0, 0.1, ..., 1.0 of story time (11 values, t implicit), each in [-1, 1]. Spoiler level 'mild'.",
+          "type": "array",
+          "items": { "type": "number", "minimum": -1, "maximum": 1 },
+          "minItems": 11,
+          "maxItems": 11
+        },
+        "chronology": { "$ref": "#/$defs/chronology" },
+        "safe_text": { "$ref": "#/$defs/rationale_safe" },
+        "spoiler_text": { "$ref": "#/$defs/rationale_spoiler" }
+      }
+    },
+
+    "beat_tags_block": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tags", "spoiler_text"],
+      "properties": {
+        "tags": {
+          "description": "Beat tags judged present, keyed by tag, valued by confidence. A tag absent from the object is judged absent. Empty object if none apply.",
+          "type": "object",
+          "propertyNames": { "$ref": "#/$defs/beat_tag" },
+          "additionalProperties": { "$ref": "#/$defs/confidence" }
+        },
+        "spoiler_text": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["evidence"],
+          "properties": {
+            "evidence": {
+              "description": "Optional one-sentence evidence per present tag. Keys must be a subset of 'tags'.",
+              "type": "object",
+              "propertyNames": { "$ref": "#/$defs/beat_tag" },
+              "additionalProperties": { "type": "string", "minLength": 1, "maxLength": 200 }
+            }
+          }
+        }
+      }
+    }
+  }
+}

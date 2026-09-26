@@ -3,8 +3,12 @@
 # Rules for this file:
 # - Third-party actions are pinned to a full commit SHA (tag in the trailing comment).
 #   Bump them deliberately, never float on a moving tag.
-# - No job here uses repository secrets. Jobs that need secrets (deploys, EAS builds)
-#   go in separate workflows gated on the `main` branch and a GitHub Environment.
+# - No job here uses repository secrets. The repo is private on GitHub Free, so GitHub
+#   Environments are unavailable and every workflow can read every repo secret. Deploys
+#   and EAS builds go in separate workflows: prod ones are named deploy-prod*.yml, are
+#   workflow_dispatch-only, and are the only files allowed to reference *_PROD secrets
+#   (enforced by the "prod-secret guard" step below).
+# - CI is advisory: without branch protection nothing blocks a merge on a red run.
 name: CI
 
 on:
@@ -97,3 +101,12 @@ jobs:
           tar -xzf "$tarball" gitleaks
       - name: Scan git history
         run: ./gitleaks git --redact --verbose --exit-code 1 .
+      - name: Prod-secret guard (only deploy-prod*.yml may use *_PROD secrets)
+        run: |
+          offenders=$(grep -lE 'secrets\.[A-Z0-9_]+_PROD\b' .github/workflows/*.yml .github/workflows/*.yaml 2>/dev/null \
+            | grep -vE '/deploy-prod[^/]*\.ya?ml$' || true)
+          if [ -n "$offenders" ]; then
+            echo "::error title=prod secret outside deploy-prod workflow::$offenders"
+            exit 1
+          fi
+          echo "OK: no *_PROD secret referenced outside deploy-prod*.yml"

@@ -1,0 +1,82 @@
+{
+  "schema_version": "0.1.0",
+  "record_kind": "illustrative_example",
+  "title": {
+    "media_type": "tv_series",
+    "name": "Breaking Bad",
+    "release_year": 2008,
+    "tmdb_id": 1396,
+    "wikidata_id": null,
+    "series_status": "ended"
+  },
+  "provenance": {
+    "annotated_at": "2026-09-26T00:00:00Z",
+    "annotator": { "labeler_id": "data-pipeline-example" },
+    "sources": [],
+    "input_word_count": 0,
+    "notes": "Illustrative example written from general knowledge for schema review. Not derived from any source summary; not a gold label. Series-level annotation across the full run."
+  },
+  "outcome": "annotated",
+  "layers": {
+    "surface_story": {
+      "setting_period": "contemporary",
+      "tones": ["tense", "bleak"],
+      "protagonist_structure": "single",
+      "safe_text": {
+        "logline": "A mild, underpaid chemistry teacher facing a terminal diagnosis starts making illegal drugs to leave money for his family.",
+        "protagonist": "A brilliant but overlooked high-school chemistry teacher who feels life has cheated him.",
+        "setting": "Albuquerque, New Mexico, in the late 2000s.",
+        "central_conflict": "Keeping his double life hidden from his family while the criminal world he has entered grows more dangerous."
+      },
+      "spoiler_text": {
+        "resolution": "He builds a drug empire, loses his family's trust and most of what he built, and dies after a final act of revenge that also secures money for his children."
+      }
+    },
+    "archetypal_plot": {
+      "primary": { "label": "tragedy", "confidence": 0.9 },
+      "secondary": {},
+      "safe_text": {
+        "rationale": "Pride and a sense of being wronged push the protagonist into choices that feed his worst traits."
+      },
+      "spoiler_text": {
+        "rationale": "Each success deepens his corruption, and the story ends with his destruction, which is the Tragedy shape."
+      }
+    },
+    "mythic_blueprint": {
+      "blueprint": { "label": "anti_hero_descent", "confidence": 0.95 },
+      "stages_present": {
+        "ordinary_world": 0.9,
+        "call_to_adventure": 0.85,
+        "crossing_the_threshold": 0.85,
+        "tests_allies_enemies": 0.8
+      },
+      "safe_text": {
+        "rationale": "The first steps follow a hero's call to adventure, but the adventure is a crime he chooses for himself."
+      },
+      "spoiler_text": {
+        "rationale": "Instead of returning with something for others, he goes deeper into violence and self-justification, and his return home destroys what he claimed to protect."
+      }
+    },
+    "structural_skeleton": {
+      "emotional_arc": { "label": "icarus", "confidence": 0.85 },
+      "arc_points": [-0.4, -0.3, -0.1, 0.1, 0.3, 0.5, 0.7, 0.6, 0.1, -0.6, -0.9],
+      "chronology": "linear",
+      "safe_text": {
+        "rationale": "The story opens at a low point: illness, money worries and humiliation."
+      },
+      "spoiler_text": {
+        "rationale": "Power and money rise steadily through the middle seasons, peak, then collapse as his secrets come out and he loses everything."
+      }
+    }
+  },
+  "beat_tags": {
+    "tags": {
+      "pyrrhic_victory": 0.6
+    },
+    "spoiler_text": {
+      "evidence": {
+        "pyrrhic_victory": "His last plan succeeds against his enemies but he dies and his family is left broken."
+      }
+    }
+  }
+}

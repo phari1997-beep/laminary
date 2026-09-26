@@ -1,0 +1,86 @@
+{
+  "schema_version": "0.1.0",
+  "record_kind": "illustrative_example",
+  "title": {
+    "media_type": "movie",
+    "name": "Groundhog Day",
+    "release_year": 1993,
+    "tmdb_id": 137,
+    "wikidata_id": null
+  },
+  "provenance": {
+    "annotated_at": "2026-09-26T00:00:00Z",
+    "annotator": { "labeler_id": "data-pipeline-example" },
+    "sources": [],
+    "input_word_count": 0,
+    "notes": "Illustrative example written from general knowledge for schema review. Not derived from any source summary; not a gold label. Shows a low-confidence blueprint."
+  },
+  "outcome": "annotated",
+  "layers": {
+    "surface_story": {
+      "setting_period": "contemporary",
+      "tones": ["playful", "warm"],
+      "protagonist_structure": "single",
+      "safe_text": {
+        "logline": "A self-satisfied TV weatherman sent to cover a small-town festival wakes up to find he is living the same day again, and again.",
+        "protagonist": "A sarcastic, self-absorbed local TV weather presenter who thinks the assignment is beneath him.",
+        "setting": "A small Pennsylvania town in winter, on one repeating day.",
+        "central_conflict": "How to escape a day that will not end, when nothing he does carries over."
+      },
+      "spoiler_text": {
+        "resolution": "After exhausting indulgence and despair, he turns the endless day toward helping people and becoming someone worth loving, and only then does time move on."
+      }
+    },
+    "archetypal_plot": {
+      "primary": { "label": "rebirth", "confidence": 0.9 },
+      "secondary": { "comedy": 0.6 },
+      "safe_text": {
+        "rationale": "The protagonist begins emotionally closed off and trapped in a state he cannot escape by force."
+      },
+      "spoiler_text": {
+        "rationale": "His release comes only through inner change, the core of Rebirth. A romance kept apart by his own behavior resolves in union, a Comedy thread."
+      }
+    },
+    "mythic_blueprint": {
+      "blueprint": { "label": "heros_journey", "confidence": 0.5 },
+      "stages_present": {
+        "ordinary_world": 0.9,
+        "call_to_adventure": 0.8,
+        "refusal_of_the_call": 0.8,
+        "tests_allies_enemies": 0.6,
+        "ordeal": 0.8,
+        "resurrection": 0.6,
+        "return_with_elixir": 0.6
+      },
+      "safe_text": {
+        "rationale": "An unwilling hero is pulled out of his routine into a strange situation, though he never physically leaves town."
+      },
+      "spoiler_text": {
+        "rationale": "The descent into despair works as an ordeal and his changed self as a return, but the mentor and threshold stages are missing, so the fit is loose."
+      }
+    },
+    "structural_skeleton": {
+      "emotional_arc": { "label": "man_in_a_hole", "confidence": 0.8 },
+      "arc_points": [0.1, -0.2, -0.4, -0.3, -0.2, -0.5, -0.8, -0.6, -0.1, 0.5, 0.9],
+      "chronology": "linear",
+      "safe_text": {
+        "rationale": "A comfortable, if smug, starting point drops sharply once the repetition begins."
+      },
+      "spoiler_text": {
+        "rationale": "A brief hedonistic lift does not change the downward trend, which bottoms out in despair before a steady climb to the happiest point at the end."
+      }
+    }
+  },
+  "beat_tags": {
+    "tags": {
+      "time_loop": 0.99,
+      "redemption_arc": 0.9
+    },
+    "spoiler_text": {
+      "evidence": {
+        "time_loop": "The same day restarts every morning and only he remembers it.",
+        "redemption_arc": "He goes from contempt for the town to using each day to help its people."
+      }
+    }
+  }
+}

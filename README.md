@@ -23,7 +23,7 @@ How the project is run: `CLAUDE.md`. Environments and secrets: `docs/ENVIRONMENT
 Needs Python 3.12.
 
 ```sh
-cp .env.example .env          # fill in dev values only; .env is gitignored
+cp .env.example .env          # local stack values (Phases 0–1); .env is gitignored
 cd pipeline
 python3.12 -m venv .venv
 . .venv/bin/activate
@@ -32,7 +32,9 @@ ruff check .
 pytest
 ```
 
-CI runs the same checks, plus a gitleaks secret scan, on every push and PR to `main`.
+CI runs the same checks, plus a gitleaks secret scan, on every push to `main` and every PR into `main`. The repo is private on GitHub Free, so CI is advisory: check that it's green before merging.
+
+Local database (Phases 0–1 are local-first): install Docker Desktop and the Supabase CLI, then run `supabase start` from the repo root once `backend` has initialized `supabase/`. See `docs/ENVIRONMENTS.md`.
 
 ## Rules
 
