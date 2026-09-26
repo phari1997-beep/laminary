@@ -20,3 +20,5 @@
 | 2026-09-26 | v1 covers movies and TV at series level only, never episode by episode; ongoing series are annotated on episodes aired so far and refreshed when the summary changes | Answers PLAN 10.2; keeps scope small |
 | 2026-09-26 | Gold-set labelers work from the same summary the model sees | Measures the model, not the summary |
 | 2026-09-26 | Keep all 15 proposed browse rows for now; prune after the 500-title pilot shows row sizes | Not enough data to cut yet |
+| 2026-09-26 | Per-term spoiler levels (none / mild / major) approved as drafted | Hari reviewed; consistent with showing story shapes by default |
+| 2026-09-26 | Label display threshold raised from 0.70 to 0.80 confidence (tunable after the 500-title pilot) | Prefer fewer, more reliable labels; pilot will show the coverage cost |
