@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "laminary-pipeline"
+version = "0.0.1"
+description = "Laminary data pipelines: ingestion, LLM annotation, embeddings, evaluation."
+readme = { text = "See the repository README.md and docs/PLAN.md section 5.", content-type = "text/markdown" }
+# Pinned to the 3.12 line. CI uses the same version (.github/workflows/ci.yml).
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    # Runtime: annotation output is validated against the JSON schema (PLAN 5.4)
+    "jsonschema>=4.23,<5",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "ruff>=0.16,<0.17",  # minor pinned: new ruff minors add rules
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["laminary_pipeline*"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+# pycodestyle errors, pyflakes, isort, bugbear, pyupgrade
+select = ["E", "F", "I", "B", "UP"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers"
