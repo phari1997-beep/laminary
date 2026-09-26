@@ -19,6 +19,9 @@ from laminary_pipeline.arc import FALLBACK_CONFIDENCE_CAP, derive_arc
 
 SCHEMA_RESOURCE = ("laminary_pipeline", "schema/annotation.schema.json")
 MAX_SECONDARY_PLOTS = 2
+# Minimum confidence for showing a label or using it in a browse row (DECISIONS.md 2026-09-26).
+# To be re-tuned from gold-set calibration after the 500-title pilot.
+DISPLAY_CONFIDENCE_THRESHOLD = 0.80
 
 
 @cache

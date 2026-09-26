@@ -149,7 +149,15 @@
                 ]
               },
               "sources": {
-                "minItems": 1
+                "minItems": 1,
+                "items": {
+                  "$comment": "TMDB text may not be sent to an LLM until TMDB authorizes it in writing (docs/NARRATIVE_SCHEMA.md section 1).",
+                  "properties": {
+                    "kind": {
+                      "const": "wikipedia_plot"
+                    }
+                  }
+                }
               },
               "input_word_count": {
                 "minimum": 150
@@ -203,7 +211,15 @@
                 ]
               },
               "sources": {
-                "minItems": 1
+                "minItems": 1,
+                "items": {
+                  "$comment": "TMDB text may not be sent to an LLM until TMDB authorizes it in writing (docs/NARRATIVE_SCHEMA.md section 1).",
+                  "properties": {
+                    "kind": {
+                      "const": "wikipedia_plot"
+                    }
+                  }
+                }
               },
               "input_word_count": {
                 "minimum": 150

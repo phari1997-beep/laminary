@@ -404,6 +404,23 @@ REJECT_CASES: list[tuple[str, str, str, Any, str | None, str]] = [
     ("abstained with beat tags", "abstained", "beat_tags", FROM_BASE, None, ""),
     ("abstained with layers", "abstained", "layers", FROM_BASE, None, ""),
     ("gold without sources", "gold", "provenance/sources", [], "minItems", "provenance/sources"),
+    # TMDB text may not be an annotation input until TMDB authorizes LLM use in writing
+    (
+        "llm with tmdb_overview source",
+        "llm",
+        "provenance/sources/0/kind",
+        "tmdb_overview",
+        "const",
+        "provenance/sources/0/kind",
+    ),
+    (
+        "gold with tmdb_overview source",
+        "gold",
+        "provenance/sources/0/kind",
+        "tmdb_overview",
+        "const",
+        "provenance/sources/0/kind",
+    ),
     (
         "gold without guide_version",
         "gold",
