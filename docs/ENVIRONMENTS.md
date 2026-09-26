@@ -18,14 +18,14 @@ Governing decisions (`docs/DECISIONS.md`):
 | Purpose | All work in Phases 0–1, including the 500-title pilot. Day-to-day work and tests after that | Integration, availability sync, scaling annotation, scoring API | TestFlight testers, then store users |
 | Database | `supabase start` (Docker, local Postgres + pgvector), configured by `supabase/config.toml` | Supabase project `laminary-dev`, **Free** plan | Supabase project `laminary-prod`, **Pro** plan (about $25/month) |
 | Secrets live in | `.env` at repo root (gitignored) | GitHub repo secrets with a `_DEV` suffix, plus the Supabase dashboard (dev) | GitHub repo secrets with a `_PROD` suffix, plus the Supabase dashboard (prod) |
-| Migrations applied | By hand (`supabase db reset`) | By a deploy workflow after merge to `main` (added in Phase 2) | By a `workflow_dispatch`-only deploy workflow that Hari or the coordinator runs by hand, after the same migration has run on dev |
+| Migrations applied | By hand (`supabase db reset`) | By a deploy workflow after merge to `main` (added in Phase 2) | By a `workflow_dispatch`-only deploy workflow that Hari runs by hand ([OPEN]: whether the coordinator may trigger prod deploys), after the same migration has run on dev |
 | App builds | Expo Go / dev client | EAS profile `preview` (internal distribution, for the team only) | EAS profile `production`: **TestFlight builds and store builds** |
 | Data | Fixtures, then the 500-title pilot (Phase 1) | Full catalog as it scales (Phase 2) | Full catalog |
 
 Rules:
 - **Local-first until Phase 2.** In Phases 0–1, `.env` points at the local stack: `SUPABASE_URL=http://127.0.0.1:54321`, with keys and the DB URL from `supabase status`. From Phase 2 it points at dev. The local stack's keys are fixed defaults that exist only on your machine. Still, don't paste them anywhere; gitleaks will flag them.
 - **Two separate hosted projects**, not one project with two schemas, so a leaked dev key can't touch prod and a bad dev migration can't break users.
-- **Your local `.env` never holds prod credentials.** Anything that needs them runs in a `deploy-prod*.yml` workflow that is triggered **only** by `workflow_dispatch` (a manual run from the Actions tab). GitHub Free has no approval gate for private repos (section 3), so control comes from the manual trigger plus the CI guard described there.
+- **Your local `.env` never holds prod credentials.** Anything that needs them runs in a `deploy-prod*.yml` workflow that is triggered **only** by `workflow_dispatch` (a manual run from the Actions tab). GitHub Free has no approval gate for private repos (section 3). The manual trigger and the CI *prod-secret tripwire* (section 2) are a tripwire against accidental misuse, not access control: on GitHub Free, any workflow on any branch can read all repo secrets, so **write access to the repo is the real security boundary**.
 - Migrations flow one way: local, then dev, then prod. Nobody edits the prod schema in the dashboard.
 - **TestFlight points at prod.** EAS profiles go in `app/eas.json` once `frontend` sets up the Expo project (Phase 3): `development` for the local or dev stack, `preview` for internal builds against dev, and `production` for TestFlight and store builds against prod.
 
@@ -56,7 +56,7 @@ Rule: **no secret is ever committed.** Every variable appears, with empty values
 Rules:
 - Anything prefixed `EXPO_PUBLIC_` ships inside the app binary and web bundle. Only the Supabase URL, the anon key, and the PostHog ingestion key may carry that prefix. PostHog is used only by the app.
 - Use separate dev and prod keys for every vendor that allows it (Supabase always does). For Anthropic, create two keys in the Console so either can be revoked on its own and spend can be split by key.
-- **Only `deploy-prod*.yml` workflows may reference `*_PROD` secrets.** Without Environments, any workflow file can read any repo secret. The CI `secret-scan` job has a *prod-secret guard* step that fails if any other workflow references `secrets.*_PROD`.
+- **Only `deploy-prod*.yml` workflows may reference `*_PROD` secrets, and they must be `workflow_dispatch`-only.** The CI `secret-scan` job has a *prod-secret tripwire* step. It fails if any other workflow references a `*_PROD` secret or reads secrets in bulk (`secrets[...]`, `toJSON(secrets)`, `secrets: inherit`), or if a `deploy-prod*` workflow has any other trigger. This is a tripwire against accidental misuse, not access control. On GitHub Free, any workflow on any branch can read all repo secrets, and anyone with write access can edit the tripwire itself, so **write access to the repo is the real boundary**. Keep collaborators with write access to zero.
 - **Rotation:** rotate any key that shows up in a log, screenshot, chat, or commit. Revoke first, then rotate, then check the vendor's usage page for abuse. Detailed steps go in `docs/RUNBOOK.md` once there are live keys.
 - **Detection:** GitHub secret scanning and push protection aren't available for private user-owned repos on any individual plan (section 3). What we use instead:
   1. The CI `secret-scan` job runs gitleaks over the full git history on every push to `main` and every PR into `main`.
@@ -78,9 +78,9 @@ Runs on every push to `main`, every PR into `main`, and manual dispatch. It uses
 |---|---|---|
 | `pipeline` | Python 3.12, `pip install -e .[dev]`, `ruff check`, `pytest` in `pipeline/` | about 1 min |
 | `app` | Passes as a no-op until `app/package.json` exists, then runs `npm ci`, `npm run lint --if-present`, `npm test --if-present` on Node 22 | under 10 s now |
-| `secret-scan` | Installs a pinned, checksum-verified gitleaks 8.30.1, scans the full history, then runs the prod-secret guard | under 30 s |
+| `secret-scan` | Installs a pinned, checksum-verified gitleaks 8.30.1, scans the full history, then runs the prod-secret tripwire | under 30 s |
 
-**CI is advisory.** Branch protection and rulesets aren't available for private repos on GitHub Free, so a red CI run does **not** block a merge or a direct push. Before merging, Hari or the coordinator must check that every job on the PR (or on the commit) is green. QA's review includes confirming this.
+**CI is advisory.** Branch protection and rulesets aren't available for private repos on GitHub Free, so a red CI run does **not** block a merge or a direct push. Before merging, whoever merges must check that every job on the PR (or on the commit) is green. QA's review includes confirming this. Who may merge: Hari; the coordinator merging is [OPEN] (same question as whether the coordinator may trigger prod deploys).
 
 **What GitHub Free leaves out for this repo, and what GitHub Pro would add.** Source: GitHub's docs, read from the `github/docs` source repo (`data/reusables/gated-features/*.md` and `data/reusables/billing/actions-included-quotas.md`, commit `18945a31`, 2026-09-25). docs.github.com itself is blocked from the agent sandbox.
 
@@ -120,7 +120,7 @@ Items marked **[OPEN]** need a decision, and **$** means a recurring or one-time
 | 2 | Turn on **Dependabot alerts** (Settings, then Code security) | Phase 0 | Free | Secret scanning isn't available (section 3). The CI gitleaks job replaces it. *Optional:* install gitleaks locally and add the pre-commit hook (section 2) |
 | 3 | Check CI before every merge; CI is **advisory** | Phase 0 onward | Free | **[OPEN] option:** GitHub Pro (about $4/month, **$**) adds branch protection and Environments (environment secrets) for private repos. It does **not** add required reviewers or secret scanning. Not assumed |
 | 4 | Password manager vault for every account below; turn on 2FA everywhere | Phase 0 | | Recovery codes stored offline |
-| 5 | Install **Docker Desktop** (free for personal use) and the **Supabase CLI** | Phase 0/1 | Free | No account needed. This is the whole database for Phases 0–1 |
+| 5 | Install **Docker Desktop** (free for small businesses under Docker's terms (<250 staff, <$10M revenue); Colima is a free alternative) and the **Supabase CLI** | Phase 0/1 | Free | No account needed. This is the whole database for Phases 0–1 |
 | 6 | Anthropic Console: create org, set a **monthly spend limit**, create key `laminary-dev` (`laminary-prod` at Phase 3) | Phase 1 | **$** usage-based | Pilot of 500 titles first, run locally (PLAN 5.4). Hari approves scale-up spend |
 | 7 | TMDB account + API key; **confirm commercial terms** (PLAN 8) | Phase 1 | Free for non-commercial use | A commercial agreement may cost money **[OPEN]** |
 | 8 | Embedding provider account **[OPEN]** (data-pipeline to propose) | Phase 1 | **$** usage-based | |
@@ -128,7 +128,7 @@ Items marked **[OPEN]** need a decision, and **$** means a recurring or one-time
 | 10 | Create a Supabase personal access token; add the repo secret `SUPABASE_ACCESS_TOKEN`, plus the `*_DEV` secrets from section 2 | Phase 2 | Free | Only once the dev deploy workflow exists |
 | 11 | Availability vendor contract **[OPEN]** (PLAN 5.3, 10.3) | Phase 2 | **$** likely the largest recurring cost | Vendor comparison due before Phase 2 |
 | 12 | Job-heartbeat / uptime monitor **[OPEN]**, e.g. a free-tier dead-man's-switch service | Phase 2 (before the first scheduled job) | Free tier | sre will propose options with a comparison. Needed to alert on failed or stale availability syncs |
-| 13 | Create Supabase project `laminary-prod` on **Pro**, US region; add the `*_PROD` repo secrets | Phase 3 (when TestFlight testers arrive) | **$** about $25/month | **Decided** (DECISIONS 2026-09-26). Confirm current pricing at signup. Pro gives no pausing and daily backups |
+| 13 | Create Supabase project `laminary-prod` on **Pro**, US region (assumes US launch, PLAN 10.1 [OPEN]); add the `*_PROD` repo secrets | Phase 3 (when TestFlight testers arrive) | **$** about $25/month | **Decided** (DECISIONS 2026-09-26). Confirm current pricing at signup. Pro gives no pausing and daily backups |
 | 14 | PostHog Cloud project(s), US region (assumes US launch, PLAN 10.1 [OPEN]) | Phase 3 | Free tier | Used by the app only |
 | 15 | Expo account + EAS; create `EXPO_TOKEN` | Phase 3 | Free tier; **$** if build minutes run out | |
 | 16 | Apple Developer Program | Phase 3 (TestFlight) | **$** $99/year | |

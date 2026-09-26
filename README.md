@@ -14,7 +14,7 @@ Laminary is a watch app that recommends movies and series by story structure, no
 | `docs/` | coordinator + owners | Vision, plan, design, decisions, progress, environments |
 | `.github/workflows/` | sre | CI (`ci.yml`) |
 | `.claude/agents/` | coordinator | Subagent definitions |
-| `.env.example` | sre | Every env var the project uses, with empty values |
+| `.env.example` | sre | Every env var the project uses, with empty values (except the local `SUPABASE_URL`) |
 
 How the project is run: `CLAUDE.md`. Environments and secrets: `docs/ENVIRONMENTS.md`.
 
@@ -34,7 +34,7 @@ pytest
 
 CI runs the same checks, plus a gitleaks secret scan, on every push to `main` and every PR into `main`. The repo is private on GitHub Free, so CI is advisory: check that it's green before merging.
 
-Local database (Phases 0–1 are local-first): install Docker Desktop and the Supabase CLI, then run `supabase start` from the repo root once `backend` has initialized `supabase/`. See `docs/ENVIRONMENTS.md`.
+Local database (Phases 0–1 are local-first): install Docker Desktop (free for small businesses under Docker's terms (<250 staff, <$10M revenue); Colima is a free alternative) and the Supabase CLI, then run `supabase start` from the repo root once `backend` has initialized `supabase/`. See `docs/ENVIRONMENTS.md`.
 
 ## Rules
 
