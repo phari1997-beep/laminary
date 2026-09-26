@@ -7,3 +7,4 @@
 | 2026-09-25 | No generic AI aesthetics (see DESIGN.md) | Brand credibility with film-literate users |
 | 2026-09-25 | Marketing kept separate, parked for later | Focus on build first |
 | 2026-09-25 | GitHub repo stays private | Hari's call; keeps the work private before launch |
+| 2026-09-26 | Local-first data: Supabase CLI (Docker) locally for Phases 0–1; hosted free-tier dev project at Phase 2; hosted prod (Pro) only when TestFlight testers arrive | Storage estimate ~250–400 MB at 20K titles fits free tier; defers ~$25/mo until real users need uptime and backups |
