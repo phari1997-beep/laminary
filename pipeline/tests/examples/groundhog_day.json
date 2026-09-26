@@ -1,0 +1,237 @@
+{
+  "schema_version": "0.2.0",
+  "record_kind": "illustrative_example",
+  "title": {
+    "media_type": "movie",
+    "name": "Groundhog Day",
+    "release_year": 1993,
+    "tmdb_id": 137,
+    "wikidata_id": null
+  },
+  "provenance": {
+    "annotated_at": "2026-09-26T00:00:00Z",
+    "annotator": {
+      "labeler_id": "data-pipeline-example"
+    },
+    "sources": [],
+    "input_word_count": 0,
+    "notes": "Illustrative example written from general knowledge for schema review. Not derived from any source summary; not a gold label. Shows a low-confidence blueprint. Arc ambiguity: if the hedonistic stretch is read as a real rise (0.3 or more, e.g. t=0.4 at 0.0), the points have four major moves; the rule then raises the threshold to 0.5 and still yields man_in_a_hole."
+  },
+  "outcome": "annotated",
+  "layers": {
+    "surface_story": {
+      "setting_period": "contemporary",
+      "tones": [
+        "playful",
+        "warm"
+      ],
+      "protagonist_structure": "single",
+      "safe_text": {
+        "logline": "A self-satisfied TV weatherman sent to cover a small-town festival wakes up to find he is living the same day again, and again.",
+        "protagonist": "A sarcastic, self-absorbed local TV weather presenter who thinks the assignment is beneath him.",
+        "setting": "A small Pennsylvania town in winter, on one repeating day.",
+        "central_conflict": "How to escape a day that will not end, when nothing he does carries over."
+      },
+      "spoiler_text": {
+        "resolution": "After exhausting indulgence and despair, he turns the endless day toward helping people and becoming someone worth loving, and only then does time move on."
+      }
+    },
+    "archetypal_plot": {
+      "primary": {
+        "label": "rebirth",
+        "confidence": 0.9
+      },
+      "plots": {
+        "overcoming_the_monster": {
+          "present": false,
+          "confidence": 0.9
+        },
+        "rags_to_riches": {
+          "present": false,
+          "confidence": 0.8
+        },
+        "the_quest": {
+          "present": false,
+          "confidence": 0.8
+        },
+        "voyage_and_return": {
+          "present": false,
+          "confidence": 0.8
+        },
+        "comedy": {
+          "present": true,
+          "confidence": 0.6
+        },
+        "tragedy": {
+          "present": false,
+          "confidence": 0.95
+        },
+        "rebirth": {
+          "present": true,
+          "confidence": 0.9
+        },
+        "rebellion_against_the_one": {
+          "present": false,
+          "confidence": 0.85
+        },
+        "mystery": {
+          "present": false,
+          "confidence": 0.85
+        }
+      },
+      "safe_text": {
+        "rationale": "The protagonist begins emotionally closed off and trapped in a state he cannot escape by force."
+      },
+      "spoiler_text": {
+        "rationale": "His release comes only through inner change, the core of Rebirth. A romance kept apart by his own behavior resolves in union, a Comedy thread."
+      }
+    },
+    "mythic_blueprint": {
+      "blueprint": {
+        "label": "heros_journey",
+        "confidence": 0.5
+      },
+      "stages": {
+        "ordinary_world": {
+          "present": true,
+          "confidence": 0.9
+        },
+        "call_to_adventure": {
+          "present": true,
+          "confidence": 0.8
+        },
+        "refusal_of_the_call": {
+          "present": true,
+          "confidence": 0.8
+        },
+        "meeting_with_the_mentor": {
+          "present": false,
+          "confidence": 0.7
+        },
+        "crossing_the_first_threshold": {
+          "present": false,
+          "confidence": 0.7
+        },
+        "tests_allies_enemies": {
+          "present": true,
+          "confidence": 0.6
+        },
+        "approach_to_the_inmost_cave": {
+          "present": false,
+          "confidence": 0.7
+        },
+        "ordeal": {
+          "present": true,
+          "confidence": 0.8
+        },
+        "reward": {
+          "present": false,
+          "confidence": 0.7
+        },
+        "the_road_back": {
+          "present": false,
+          "confidence": 0.7
+        },
+        "resurrection": {
+          "present": true,
+          "confidence": 0.6
+        },
+        "return_with_the_elixir": {
+          "present": true,
+          "confidence": 0.6
+        }
+      },
+      "safe_text": {
+        "rationale": "An unwilling hero is pulled out of his routine into a strange situation, though he never physically leaves town."
+      },
+      "spoiler_text": {
+        "rationale": "The descent into despair works as an ordeal and his changed self as a return, but the mentor and threshold stages are missing, so the fit is loose."
+      }
+    },
+    "structural_skeleton": {
+      "emotional_arc": {
+        "label": "man_in_a_hole",
+        "confidence": 0.8,
+        "method": "derived",
+        "threshold_used": 0.3,
+        "net_change_fallback": false
+      },
+      "arc_points": [
+        0.1,
+        -0.2,
+        -0.4,
+        -0.3,
+        -0.2,
+        -0.5,
+        -0.8,
+        -0.6,
+        -0.1,
+        0.5,
+        0.9
+      ],
+      "chronology": "linear",
+      "safe_text": {
+        "rationale": "A comfortable, if smug, starting point drops sharply once the repetition begins."
+      },
+      "spoiler_text": {
+        "rationale": "His indulgent phase is fun but leaves him just as trapped, so fortune stays low; it bottoms out in despair before a steady climb to the happiest point at the end."
+      }
+    }
+  },
+  "beat_tags": {
+    "tags": {
+      "mentor_dies": {
+        "present": false,
+        "confidence": 0.85
+      },
+      "twist_ending": {
+        "present": false,
+        "confidence": 0.85
+      },
+      "unreliable_narrator": {
+        "present": false,
+        "confidence": 0.85
+      },
+      "found_family": {
+        "present": false,
+        "confidence": 0.85
+      },
+      "redemption_arc": {
+        "present": true,
+        "confidence": 0.9
+      },
+      "pyrrhic_victory": {
+        "present": false,
+        "confidence": 0.85
+      },
+      "time_loop": {
+        "present": true,
+        "confidence": 0.99
+      },
+      "heist_structure": {
+        "present": false,
+        "confidence": 0.85
+      },
+      "ensemble_convergence": {
+        "present": false,
+        "confidence": 0.85
+      },
+      "ambiguous_ending": {
+        "present": false,
+        "confidence": 0.85
+      }
+    },
+    "spoiler_text": {
+      "evidence": [
+        {
+          "tag": "time_loop",
+          "note": "The same day restarts every morning and only he remembers it."
+        },
+        {
+          "tag": "redemption_arc",
+          "note": "He goes from contempt for the town to using each day to help its people."
+        }
+      ]
+    }
+  }
+}

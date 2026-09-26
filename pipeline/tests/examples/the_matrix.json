@@ -1,0 +1,228 @@
+{
+  "schema_version": "0.2.0",
+  "record_kind": "illustrative_example",
+  "title": {
+    "media_type": "movie",
+    "name": "The Matrix",
+    "release_year": 1999,
+    "tmdb_id": 603,
+    "wikidata_id": null
+  },
+  "provenance": {
+    "annotated_at": "2026-09-26T00:00:00Z",
+    "annotator": {
+      "labeler_id": "data-pipeline-example"
+    },
+    "sources": [],
+    "input_word_count": 0,
+    "notes": "Illustrative example written from general knowledge for schema review. Not derived from any source summary; not a gold label."
+  },
+  "outcome": "annotated",
+  "layers": {
+    "surface_story": {
+      "setting_period": "mixed",
+      "tones": [
+        "tense",
+        "cerebral"
+      ],
+      "protagonist_structure": "single",
+      "safe_text": {
+        "logline": "A restless office programmer learns that the ordinary world he lives in is a constructed illusion, and is recruited by the rebels who want to free people from it.",
+        "protagonist": "A quiet software worker who moonlights as a hacker and suspects something about the world is wrong.",
+        "setting": "A simulated late-1990s city, and the ruined real world outside it.",
+        "central_conflict": "Whether he can accept what the rebels tell him about himself before the system's enforcers catch him."
+      },
+      "spoiler_text": {
+        "resolution": "He is killed inside the simulation, comes back, and discovers he can bend its rules, beating the enforcers and vowing to show others the truth."
+      }
+    },
+    "archetypal_plot": {
+      "primary": {
+        "label": "overcoming_the_monster",
+        "confidence": 0.85
+      },
+      "plots": {
+        "overcoming_the_monster": {
+          "present": true,
+          "confidence": 0.85
+        },
+        "rags_to_riches": {
+          "present": false,
+          "confidence": 0.8
+        },
+        "the_quest": {
+          "present": false,
+          "confidence": 0.7
+        },
+        "voyage_and_return": {
+          "present": false,
+          "confidence": 0.6
+        },
+        "comedy": {
+          "present": false,
+          "confidence": 0.95
+        },
+        "tragedy": {
+          "present": false,
+          "confidence": 0.95
+        },
+        "rebirth": {
+          "present": true,
+          "confidence": 0.55
+        },
+        "rebellion_against_the_one": {
+          "present": true,
+          "confidence": 0.6
+        },
+        "mystery": {
+          "present": false,
+          "confidence": 0.75
+        }
+      },
+      "safe_text": {
+        "rationale": "The story is driven by a hostile system and its agents that threaten the protagonist and the people fighting to free humanity."
+      },
+      "spoiler_text": {
+        "rationale": "The climax is a direct fight with the system's strongest enforcer, which the hero wins. Being woken from his pod and pulled free by Morpheus's crew adds a Rebirth thread; defying the power that runs everyone's lives adds Rebellion Against the One."
+      }
+    },
+    "mythic_blueprint": {
+      "blueprint": {
+        "label": "heros_journey",
+        "confidence": 0.95
+      },
+      "stages": {
+        "ordinary_world": {
+          "present": true,
+          "confidence": 0.95
+        },
+        "call_to_adventure": {
+          "present": true,
+          "confidence": 0.95
+        },
+        "refusal_of_the_call": {
+          "present": true,
+          "confidence": 0.8
+        },
+        "meeting_with_the_mentor": {
+          "present": true,
+          "confidence": 0.95
+        },
+        "crossing_the_first_threshold": {
+          "present": true,
+          "confidence": 0.95
+        },
+        "tests_allies_enemies": {
+          "present": true,
+          "confidence": 0.9
+        },
+        "approach_to_the_inmost_cave": {
+          "present": true,
+          "confidence": 0.8
+        },
+        "ordeal": {
+          "present": true,
+          "confidence": 0.9
+        },
+        "reward": {
+          "present": true,
+          "confidence": 0.7
+        },
+        "the_road_back": {
+          "present": true,
+          "confidence": 0.75
+        },
+        "resurrection": {
+          "present": true,
+          "confidence": 0.95
+        },
+        "return_with_the_elixir": {
+          "present": true,
+          "confidence": 0.8
+        }
+      },
+      "safe_text": {
+        "rationale": "An ordinary man is called out of his familiar life by a mysterious guide and must choose to cross into an unknown world."
+      },
+      "spoiler_text": {
+        "rationale": "Nearly every stage is explicit: mentor, threshold, training trials, a rescue mission as the ordeal, a death and return, and a closing promise to free others."
+      }
+    },
+    "structural_skeleton": {
+      "emotional_arc": {
+        "label": "man_in_a_hole",
+        "confidence": 0.8,
+        "method": "derived",
+        "threshold_used": 0.3,
+        "net_change_fallback": false
+      },
+      "arc_points": [
+        0.0,
+        -0.2,
+        -0.5,
+        -0.4,
+        -0.3,
+        -0.4,
+        -0.4,
+        -0.5,
+        -0.6,
+        -0.8,
+        0.9
+      ],
+      "chronology": "linear",
+      "safe_text": {
+        "rationale": "An uneasy but stable life is quickly upended by a revelation that leaves the hero with nothing familiar."
+      },
+      "spoiler_text": {
+        "rationale": "Fortune stays low through training, doubt and a failing rescue, bottoms out when he dies near the end, then jumps to its peak as he returns and wins."
+      }
+    }
+  },
+  "beat_tags": {
+    "tags": {
+      "mentor_dies": {
+        "present": false,
+        "confidence": 0.9
+      },
+      "twist_ending": {
+        "present": false,
+        "confidence": 0.6
+      },
+      "unreliable_narrator": {
+        "present": false,
+        "confidence": 0.95
+      },
+      "found_family": {
+        "present": false,
+        "confidence": 0.6
+      },
+      "redemption_arc": {
+        "present": false,
+        "confidence": 0.9
+      },
+      "pyrrhic_victory": {
+        "present": false,
+        "confidence": 0.85
+      },
+      "time_loop": {
+        "present": false,
+        "confidence": 0.99
+      },
+      "heist_structure": {
+        "present": false,
+        "confidence": 0.8
+      },
+      "ensemble_convergence": {
+        "present": false,
+        "confidence": 0.9
+      },
+      "ambiguous_ending": {
+        "present": false,
+        "confidence": 0.8
+      }
+    },
+    "spoiler_text": {
+      "evidence": []
+    }
+  }
+}

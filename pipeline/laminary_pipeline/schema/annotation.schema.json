@@ -1,0 +1,1549 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:laminary:schema:annotation:0.2.0",
+  "title": "Laminary title annotation",
+  "description": "DRAFT 0.2.0, pending Hari's approval. Stored contract for one title's narrative annotation (movie, or whole TV series at series level). Definitions: docs/NARRATIVE_SCHEMA.md. Display rule: text under any 'safe_text' key may always be shown; text under any 'spoiler_text' key is hidden unless the viewer opts in; labels carry the levels in 'x-laminary-spoiler-levels'. The model-facing output schema is derived from this file by laminary_pipeline.model_output.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "record_kind",
+    "title",
+    "provenance",
+    "outcome"
+  ],
+  "properties": {
+    "schema_version": {
+      "description": "Schema version the record conforms to.",
+      "const": "0.2.0"
+    },
+    "record_kind": {
+      "$ref": "#/$defs/record_kind"
+    },
+    "title": {
+      "$ref": "#/$defs/title"
+    },
+    "provenance": {
+      "$ref": "#/$defs/provenance"
+    },
+    "outcome": {
+      "$ref": "#/$defs/outcome"
+    },
+    "abstain_reason": {
+      "$ref": "#/$defs/abstain_reason"
+    },
+    "layers": {
+      "description": "Shape depends on record_kind (see allOf)."
+    },
+    "beat_tags": {
+      "description": "Shape depends on record_kind (see allOf)."
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "outcome": {
+            "const": "annotated"
+          }
+        },
+        "required": [
+          "outcome"
+        ]
+      },
+      "then": {
+        "required": [
+          "layers",
+          "beat_tags"
+        ],
+        "not": {
+          "required": [
+            "abstain_reason"
+          ]
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "outcome": {
+            "const": "abstained"
+          }
+        },
+        "required": [
+          "outcome"
+        ]
+      },
+      "then": {
+        "required": [
+          "abstain_reason"
+        ],
+        "properties": {
+          "layers": false,
+          "beat_tags": false
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "record_kind": {
+            "const": "gold_label"
+          }
+        },
+        "required": [
+          "record_kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "layers": {
+            "$ref": "#/$defs/gold_layers"
+          },
+          "beat_tags": {
+            "$ref": "#/$defs/gold_beat_tags"
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "layers": {
+            "$ref": "#/$defs/layers"
+          },
+          "beat_tags": {
+            "$ref": "#/$defs/beat_tags_block"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "record_kind": {
+            "const": "llm_annotation"
+          }
+        },
+        "required": [
+          "record_kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "title": {
+            "properties": {
+              "tmdb_id": {
+                "type": "integer"
+              }
+            }
+          },
+          "provenance": {
+            "required": [
+              "usage"
+            ],
+            "properties": {
+              "annotator": {
+                "required": [
+                  "model_version",
+                  "prompt_version",
+                  "run_id"
+                ]
+              },
+              "sources": {
+                "minItems": 1,
+                "items": {
+                  "$comment": "TMDB text may not be sent to an LLM until TMDB authorizes it in writing (docs/NARRATIVE_SCHEMA.md section 1).",
+                  "properties": {
+                    "kind": {
+                      "const": "wikipedia_plot"
+                    }
+                  }
+                }
+              },
+              "input_word_count": {
+                "minimum": 150
+              }
+            }
+          },
+          "layers": {
+            "properties": {
+              "structural_skeleton": {
+                "properties": {
+                  "emotional_arc": {
+                    "properties": {
+                      "method": {
+                        "const": "derived"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "record_kind": {
+            "const": "gold_label"
+          }
+        },
+        "required": [
+          "record_kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "title": {
+            "properties": {
+              "tmdb_id": {
+                "type": "integer"
+              }
+            }
+          },
+          "provenance": {
+            "properties": {
+              "annotator": {
+                "required": [
+                  "labeler_id",
+                  "guide_version"
+                ]
+              },
+              "sources": {
+                "minItems": 1,
+                "items": {
+                  "$comment": "TMDB text may not be sent to an LLM until TMDB authorizes it in writing (docs/NARRATIVE_SCHEMA.md section 1).",
+                  "properties": {
+                    "kind": {
+                      "const": "wikipedia_plot"
+                    }
+                  }
+                }
+              },
+              "input_word_count": {
+                "minimum": 150
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "record_kind": {
+            "const": "illustrative_example"
+          }
+        },
+        "required": [
+          "record_kind"
+        ]
+      },
+      "then": {
+        "properties": {
+          "provenance": {
+            "properties": {
+              "annotator": {
+                "required": [
+                  "labeler_id"
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "x-laminary-spoiler-levels": {
+    "description": "Default spoiler level of every viewer-visible controlled term (by $defs vocabulary name), and field-level levels. A single-choice field's level is the highest level in its vocabulary, so a hidden field shows the same placeholder whatever its value. Must match docs/NARRATIVE_SCHEMA.md (checked by pipeline/tests/test_schema.py).",
+    "vocabularies": {
+      "tone": {
+        "tense": "none",
+        "hopeful": "none",
+        "playful": "none",
+        "warm": "none",
+        "eerie": "none",
+        "melancholic": "none",
+        "cerebral": "none",
+        "bleak": "mild",
+        "bittersweet": "mild",
+        "triumphant": "mild"
+      },
+      "setting_period": {
+        "historical_past": "none",
+        "contemporary": "none",
+        "near_future": "none",
+        "far_future": "none",
+        "invented_world": "none",
+        "mixed": "none"
+      },
+      "protagonist_structure": {
+        "single": "none",
+        "dual": "none",
+        "ensemble": "none"
+      },
+      "booker_plot": {
+        "overcoming_the_monster": "none",
+        "rags_to_riches": "mild",
+        "the_quest": "none",
+        "voyage_and_return": "none",
+        "comedy": "none",
+        "tragedy": "mild",
+        "rebirth": "mild",
+        "rebellion_against_the_one": "none",
+        "mystery": "none"
+      },
+      "mythic_blueprint": {
+        "heros_journey": "none",
+        "heroines_journey": "none",
+        "anti_hero_descent": "mild",
+        "no_clear_blueprint": "none"
+      },
+      "journey_stage": {
+        "ordinary_world": "none",
+        "call_to_adventure": "none",
+        "refusal_of_the_call": "none",
+        "meeting_with_the_mentor": "none",
+        "crossing_the_first_threshold": "none",
+        "tests_allies_enemies": "none",
+        "approach_to_the_inmost_cave": "mild",
+        "ordeal": "mild",
+        "reward": "mild",
+        "the_road_back": "mild",
+        "resurrection": "mild",
+        "return_with_the_elixir": "mild"
+      },
+      "emotional_arc": {
+        "rags_to_riches": "mild",
+        "riches_to_rags": "mild",
+        "man_in_a_hole": "mild",
+        "icarus": "mild",
+        "cinderella": "mild",
+        "oedipus": "mild"
+      },
+      "chronology": {
+        "linear": "none",
+        "in_medias_res": "none",
+        "frame_narrative": "none",
+        "nonlinear": "none",
+        "reverse_chronology": "none"
+      },
+      "beat_tag": {
+        "mentor_dies": "major",
+        "twist_ending": "mild",
+        "unreliable_narrator": "major",
+        "found_family": "none",
+        "redemption_arc": "mild",
+        "pyrrhic_victory": "major",
+        "time_loop": "none",
+        "heist_structure": "none",
+        "ensemble_convergence": "none",
+        "ambiguous_ending": "mild"
+      }
+    },
+    "fields": {
+      "layers.surface_story.setting_period": "none",
+      "layers.surface_story.protagonist_structure": "none",
+      "layers.archetypal_plot.primary": "mild",
+      "layers.mythic_blueprint.blueprint": "mild",
+      "layers.structural_skeleton.emotional_arc": "mild",
+      "layers.structural_skeleton.arc_points": "mild",
+      "layers.structural_skeleton.chronology": "none"
+    }
+  },
+  "$defs": {
+    "confidence": {
+      "description": "Confidence in [0, 1] that a single-choice label is correct. Bands in docs/NARRATIVE_SCHEMA.md section 4.",
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "judgment_confidence": {
+      "description": "Confidence in a present/absent judgment. Always at least 0.5: below that, the opposite judgment is the better one.",
+      "type": "number",
+      "minimum": 0.5,
+      "maximum": 1
+    },
+    "record_kind": {
+      "enum": [
+        "llm_annotation",
+        "gold_label",
+        "illustrative_example"
+      ]
+    },
+    "media_type": {
+      "enum": [
+        "movie",
+        "tv_series"
+      ]
+    },
+    "series_status": {
+      "enum": [
+        "ended",
+        "ongoing"
+      ]
+    },
+    "source_kind": {
+      "enum": [
+        "wikipedia_plot",
+        "tmdb_overview"
+      ]
+    },
+    "source_license": {
+      "enum": [
+        "CC-BY-SA-4.0",
+        "CC-BY-SA-3.0",
+        "TMDB-API-terms"
+      ]
+    },
+    "outcome": {
+      "enum": [
+        "annotated",
+        "abstained"
+      ]
+    },
+    "abstain_reason": {
+      "enum": [
+        "summary_too_thin",
+        "summary_contradictory",
+        "not_a_narrative",
+        "summary_title_mismatch"
+      ]
+    },
+    "spoiler_level": {
+      "enum": [
+        "none",
+        "mild",
+        "major"
+      ]
+    },
+    "arc_method": {
+      "enum": [
+        "derived",
+        "labeler_assigned"
+      ]
+    },
+    "setting_period": {
+      "enum": [
+        "historical_past",
+        "contemporary",
+        "near_future",
+        "far_future",
+        "invented_world",
+        "mixed"
+      ]
+    },
+    "tone": {
+      "enum": [
+        "tense",
+        "hopeful",
+        "playful",
+        "warm",
+        "eerie",
+        "melancholic",
+        "cerebral",
+        "bleak",
+        "bittersweet",
+        "triumphant"
+      ]
+    },
+    "protagonist_structure": {
+      "enum": [
+        "single",
+        "dual",
+        "ensemble"
+      ]
+    },
+    "booker_plot": {
+      "enum": [
+        "overcoming_the_monster",
+        "rags_to_riches",
+        "the_quest",
+        "voyage_and_return",
+        "comedy",
+        "tragedy",
+        "rebirth",
+        "rebellion_against_the_one",
+        "mystery"
+      ]
+    },
+    "mythic_blueprint": {
+      "enum": [
+        "heros_journey",
+        "heroines_journey",
+        "anti_hero_descent",
+        "no_clear_blueprint"
+      ]
+    },
+    "journey_stage": {
+      "enum": [
+        "ordinary_world",
+        "call_to_adventure",
+        "refusal_of_the_call",
+        "meeting_with_the_mentor",
+        "crossing_the_first_threshold",
+        "tests_allies_enemies",
+        "approach_to_the_inmost_cave",
+        "ordeal",
+        "reward",
+        "the_road_back",
+        "resurrection",
+        "return_with_the_elixir"
+      ]
+    },
+    "emotional_arc": {
+      "enum": [
+        "rags_to_riches",
+        "riches_to_rags",
+        "man_in_a_hole",
+        "icarus",
+        "cinderella",
+        "oedipus"
+      ]
+    },
+    "chronology": {
+      "enum": [
+        "linear",
+        "in_medias_res",
+        "frame_narrative",
+        "nonlinear",
+        "reverse_chronology"
+      ]
+    },
+    "beat_tag": {
+      "enum": [
+        "mentor_dies",
+        "twist_ending",
+        "unreliable_narrator",
+        "found_family",
+        "redemption_arc",
+        "pyrrhic_victory",
+        "time_loop",
+        "heist_structure",
+        "ensemble_convergence",
+        "ambiguous_ending"
+      ]
+    },
+    "title": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "media_type",
+        "name",
+        "release_year",
+        "tmdb_id"
+      ],
+      "properties": {
+        "media_type": {
+          "$ref": "#/$defs/media_type"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 300
+        },
+        "release_year": {
+          "description": "Year of first release (for a series, first air year).",
+          "type": "integer",
+          "minimum": 1870,
+          "maximum": 2100
+        },
+        "tmdb_id": {
+          "description": "TMDB id in the namespace implied by media_type (movie or tv). Null only for illustrative examples.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        },
+        "wikidata_id": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^Q[1-9][0-9]*$"
+        },
+        "series_status": {
+          "description": "Series only. For 'ongoing', the annotation covers episodes aired as of the latest sources[].retrieved_at and is refreshed when any source content_sha256 changes.",
+          "$ref": "#/$defs/series_status"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "media_type": {
+                "const": "tv_series"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "series_status"
+            ]
+          },
+          "else": {
+            "not": {
+              "required": [
+                "series_status"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "One licensed plot summary the annotation was produced from. The summary text itself is not stored.",
+      "required": [
+        "kind",
+        "ref",
+        "revision",
+        "retrieved_at",
+        "license",
+        "word_count",
+        "content_sha256"
+      ],
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/source_kind"
+        },
+        "ref": {
+          "description": "Wikipedia article URL, or 'tmdb:movie/<id>' / 'tmdb:tv/<id>'.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        },
+        "revision": {
+          "description": "Wikipedia revision id, or TMDB retrieval date (YYYY-MM-DD).",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "retrieved_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "license": {
+          "$ref": "#/$defs/source_license"
+        },
+        "word_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "content_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "annotated_at",
+        "annotator",
+        "sources",
+        "input_word_count"
+      ],
+      "properties": {
+        "annotated_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "annotator": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [],
+          "properties": {
+            "model_version": {
+              "description": "Exact model id sent to the API (LLM records).",
+              "type": "string",
+              "minLength": 1
+            },
+            "prompt_version": {
+              "description": "Annotation prompt version (LLM records).",
+              "type": "string",
+              "minLength": 1
+            },
+            "run_id": {
+              "description": "Pipeline run / batch id, joins to cost reports (LLM records).",
+              "type": "string",
+              "minLength": 1
+            },
+            "labeler_id": {
+              "description": "Pseudonymous human labeler id (gold labels, examples).",
+              "type": "string",
+              "minLength": 1
+            },
+            "guide_version": {
+              "description": "Labeling guide version (gold labels).",
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "sources": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/source"
+          },
+          "maxItems": 5
+        },
+        "input_word_count": {
+          "description": "Total words of summary text sent to the annotator (0 when none).",
+          "type": "integer",
+          "minimum": 0
+        },
+        "usage": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Token usage for this title's request, for cost per title. Required on LLM records.",
+          "required": [
+            "input_tokens",
+            "output_tokens",
+            "batch"
+          ],
+          "properties": {
+            "input_tokens": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "output_tokens": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "cache_read_input_tokens": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "batch": {
+              "type": "boolean"
+            }
+          }
+        },
+        "notes": {
+          "description": "Internal provenance note. Never shown to users.",
+          "type": "string",
+          "maxLength": 500
+        }
+      }
+    },
+    "judgment": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "A present/absent judgment on one term.",
+      "required": [
+        "present",
+        "confidence"
+      ],
+      "properties": {
+        "present": {
+          "type": "boolean"
+        },
+        "confidence": {
+          "$ref": "#/$defs/judgment_confidence"
+        }
+      }
+    },
+    "gold_judgment": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Gold-label judgment; confidence optional.",
+      "required": [
+        "present"
+      ],
+      "properties": {
+        "present": {
+          "type": "boolean"
+        },
+        "confidence": {
+          "$ref": "#/$defs/judgment_confidence"
+        }
+      }
+    },
+    "rationale_safe": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Spoiler-safe text: premise and setup only (spoiler level 'none'). Always displayable.",
+      "required": [
+        "rationale"
+      ],
+      "properties": {
+        "rationale": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 280
+        }
+      }
+    },
+    "rationale_spoiler": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Spoiler-bearing text. Hidden unless the viewer opts in.",
+      "required": [
+        "rationale"
+      ],
+      "properties": {
+        "rationale": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 400
+        }
+      }
+    },
+    "surface_story": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "setting_period",
+        "tones",
+        "protagonist_structure",
+        "safe_text",
+        "spoiler_text"
+      ],
+      "properties": {
+        "setting_period": {
+          "$ref": "#/$defs/setting_period"
+        },
+        "tones": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/tone"
+          },
+          "minItems": 1,
+          "maxItems": 3,
+          "uniqueItems": true
+        },
+        "protagonist_structure": {
+          "$ref": "#/$defs/protagonist_structure"
+        },
+        "safe_text": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Spoiler-safe text: premise and setup only (spoiler level 'none'). Always displayable.",
+          "required": [
+            "logline",
+            "protagonist",
+            "setting",
+            "central_conflict"
+          ],
+          "properties": {
+            "logline": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 240
+            },
+            "protagonist": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 160
+            },
+            "setting": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 120
+            },
+            "central_conflict": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
+          }
+        },
+        "spoiler_text": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Spoiler-bearing text. Hidden unless the viewer opts in.",
+          "required": [
+            "resolution"
+          ],
+          "properties": {
+            "resolution": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 400
+            }
+          }
+        }
+      }
+    },
+    "emotional_arc_label": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Emotional arc. For method 'derived' the pipeline computes label, threshold_used and net_change_fallback from arc_points (docs/NARRATIVE_SCHEMA.md section 8).",
+      "required": [
+        "label",
+        "method"
+      ],
+      "properties": {
+        "label": {
+          "$ref": "#/$defs/emotional_arc"
+        },
+        "confidence": {
+          "$ref": "#/$defs/confidence"
+        },
+        "method": {
+          "$ref": "#/$defs/arc_method"
+        },
+        "threshold_used": {
+          "type": "number",
+          "minimum": 0.3,
+          "maximum": 2
+        },
+        "net_change_fallback": {
+          "type": "boolean"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "method": {
+                "const": "derived"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "threshold_used",
+              "net_change_fallback"
+            ]
+          }
+        }
+      ]
+    },
+    "archetypal_plot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "primary",
+        "plots",
+        "safe_text",
+        "spoiler_text"
+      ],
+      "properties": {
+        "primary": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "label",
+            "confidence"
+          ],
+          "properties": {
+            "label": {
+              "$ref": "#/$defs/booker_plot"
+            },
+            "confidence": {
+              "$ref": "#/$defs/confidence"
+            }
+          }
+        },
+        "plots": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Every Booker plot, judged present or absent as a major thread. The primary must be present; at most two others may be.",
+          "x-laminary-keys": "booker_plot",
+          "required": [
+            "overcoming_the_monster",
+            "rags_to_riches",
+            "the_quest",
+            "voyage_and_return",
+            "comedy",
+            "tragedy",
+            "rebirth",
+            "rebellion_against_the_one",
+            "mystery"
+          ],
+          "properties": {
+            "overcoming_the_monster": {
+              "$ref": "#/$defs/judgment"
+            },
+            "rags_to_riches": {
+              "$ref": "#/$defs/judgment"
+            },
+            "the_quest": {
+              "$ref": "#/$defs/judgment"
+            },
+            "voyage_and_return": {
+              "$ref": "#/$defs/judgment"
+            },
+            "comedy": {
+              "$ref": "#/$defs/judgment"
+            },
+            "tragedy": {
+              "$ref": "#/$defs/judgment"
+            },
+            "rebirth": {
+              "$ref": "#/$defs/judgment"
+            },
+            "rebellion_against_the_one": {
+              "$ref": "#/$defs/judgment"
+            },
+            "mystery": {
+              "$ref": "#/$defs/judgment"
+            }
+          }
+        },
+        "safe_text": {
+          "$ref": "#/$defs/rationale_safe"
+        },
+        "spoiler_text": {
+          "$ref": "#/$defs/rationale_spoiler"
+        }
+      }
+    },
+    "mythic_blueprint_layer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "blueprint",
+        "stages",
+        "safe_text",
+        "spoiler_text"
+      ],
+      "properties": {
+        "blueprint": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "label",
+            "confidence"
+          ],
+          "properties": {
+            "label": {
+              "$ref": "#/$defs/mythic_blueprint"
+            },
+            "confidence": {
+              "$ref": "#/$defs/confidence"
+            }
+          }
+        },
+        "stages": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Every Hero's Journey stage, judged present or absent.",
+          "x-laminary-keys": "journey_stage",
+          "required": [
+            "ordinary_world",
+            "call_to_adventure",
+            "refusal_of_the_call",
+            "meeting_with_the_mentor",
+            "crossing_the_first_threshold",
+            "tests_allies_enemies",
+            "approach_to_the_inmost_cave",
+            "ordeal",
+            "reward",
+            "the_road_back",
+            "resurrection",
+            "return_with_the_elixir"
+          ],
+          "properties": {
+            "ordinary_world": {
+              "$ref": "#/$defs/judgment"
+            },
+            "call_to_adventure": {
+              "$ref": "#/$defs/judgment"
+            },
+            "refusal_of_the_call": {
+              "$ref": "#/$defs/judgment"
+            },
+            "meeting_with_the_mentor": {
+              "$ref": "#/$defs/judgment"
+            },
+            "crossing_the_first_threshold": {
+              "$ref": "#/$defs/judgment"
+            },
+            "tests_allies_enemies": {
+              "$ref": "#/$defs/judgment"
+            },
+            "approach_to_the_inmost_cave": {
+              "$ref": "#/$defs/judgment"
+            },
+            "ordeal": {
+              "$ref": "#/$defs/judgment"
+            },
+            "reward": {
+              "$ref": "#/$defs/judgment"
+            },
+            "the_road_back": {
+              "$ref": "#/$defs/judgment"
+            },
+            "resurrection": {
+              "$ref": "#/$defs/judgment"
+            },
+            "return_with_the_elixir": {
+              "$ref": "#/$defs/judgment"
+            }
+          }
+        },
+        "safe_text": {
+          "$ref": "#/$defs/rationale_safe"
+        },
+        "spoiler_text": {
+          "$ref": "#/$defs/rationale_spoiler"
+        }
+      }
+    },
+    "structural_skeleton": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "emotional_arc",
+        "arc_points",
+        "chronology",
+        "safe_text",
+        "spoiler_text"
+      ],
+      "properties": {
+        "emotional_arc": {
+          "$ref": "#/$defs/emotional_arc_label"
+        },
+        "arc_points": {
+          "description": "Protagonist fortune at t = 0.0, 0.1, ..., 1.0 of story time (11 values, t implicit), each in [-1, 1].",
+          "type": "array",
+          "items": {
+            "type": "number",
+            "minimum": -1,
+            "maximum": 1
+          },
+          "minItems": 11,
+          "maxItems": 11
+        },
+        "chronology": {
+          "$ref": "#/$defs/chronology"
+        },
+        "safe_text": {
+          "$ref": "#/$defs/rationale_safe"
+        },
+        "spoiler_text": {
+          "$ref": "#/$defs/rationale_spoiler"
+        }
+      }
+    },
+    "layers": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "surface_story",
+        "archetypal_plot",
+        "mythic_blueprint",
+        "structural_skeleton"
+      ],
+      "properties": {
+        "surface_story": {
+          "$ref": "#/$defs/surface_story"
+        },
+        "archetypal_plot": {
+          "$ref": "#/$defs/archetypal_plot"
+        },
+        "mythic_blueprint": {
+          "$ref": "#/$defs/mythic_blueprint_layer"
+        },
+        "structural_skeleton": {
+          "$ref": "#/$defs/structural_skeleton"
+        }
+      }
+    },
+    "beat_tags_block": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "tags",
+        "spoiler_text"
+      ],
+      "properties": {
+        "tags": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Every beat tag, judged present or absent.",
+          "x-laminary-keys": "beat_tag",
+          "required": [
+            "mentor_dies",
+            "twist_ending",
+            "unreliable_narrator",
+            "found_family",
+            "redemption_arc",
+            "pyrrhic_victory",
+            "time_loop",
+            "heist_structure",
+            "ensemble_convergence",
+            "ambiguous_ending"
+          ],
+          "properties": {
+            "mentor_dies": {
+              "$ref": "#/$defs/judgment"
+            },
+            "twist_ending": {
+              "$ref": "#/$defs/judgment"
+            },
+            "unreliable_narrator": {
+              "$ref": "#/$defs/judgment"
+            },
+            "found_family": {
+              "$ref": "#/$defs/judgment"
+            },
+            "redemption_arc": {
+              "$ref": "#/$defs/judgment"
+            },
+            "pyrrhic_victory": {
+              "$ref": "#/$defs/judgment"
+            },
+            "time_loop": {
+              "$ref": "#/$defs/judgment"
+            },
+            "heist_structure": {
+              "$ref": "#/$defs/judgment"
+            },
+            "ensemble_convergence": {
+              "$ref": "#/$defs/judgment"
+            },
+            "ambiguous_ending": {
+              "$ref": "#/$defs/judgment"
+            }
+          }
+        },
+        "spoiler_text": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Spoiler-bearing text. Hidden unless the viewer opts in.",
+          "required": [
+            "evidence"
+          ],
+          "properties": {
+            "evidence": {
+              "description": "Optional one-sentence evidence for present tags. Each tag at most once, and only tags judged present.",
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "tag",
+                  "note"
+                ],
+                "properties": {
+                  "tag": {
+                    "$ref": "#/$defs/beat_tag"
+                  },
+                  "note": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  }
+                }
+              },
+              "maxItems": 10
+            }
+          }
+        }
+      }
+    },
+    "gold_layers": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Gold-label layers: only the scored labels are required.",
+      "required": [
+        "archetypal_plot",
+        "mythic_blueprint",
+        "structural_skeleton"
+      ],
+      "properties": {
+        "surface_story": {
+          "$ref": "#/$defs/surface_story"
+        },
+        "archetypal_plot": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "primary",
+            "plots"
+          ],
+          "properties": {
+            "primary": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "label"
+              ],
+              "properties": {
+                "label": {
+                  "$ref": "#/$defs/booker_plot"
+                },
+                "confidence": {
+                  "$ref": "#/$defs/confidence"
+                }
+              }
+            },
+            "plots": {
+              "type": "object",
+              "additionalProperties": false,
+              "description": "As in archetypal_plot.plots.",
+              "x-laminary-keys": "booker_plot",
+              "required": [
+                "overcoming_the_monster",
+                "rags_to_riches",
+                "the_quest",
+                "voyage_and_return",
+                "comedy",
+                "tragedy",
+                "rebirth",
+                "rebellion_against_the_one",
+                "mystery"
+              ],
+              "properties": {
+                "overcoming_the_monster": {
+                  "$ref": "#/$defs/gold_judgment"
+                },
+                "rags_to_riches": {
+                  "$ref": "#/$defs/gold_judgment"
+                },
+                "the_quest": {
+                  "$ref": "#/$defs/gold_judgment"
+                },
+                "voyage_and_return": {
+                  "$ref": "#/$defs/gold_judgment"
+                },
+                "comedy": {
+                  "$ref": "#/$defs/gold_judgment"
+                },
+                "tragedy": {
+                  "$ref": "#/$defs/gold_judgment"
+                },
+                "rebirth": {
+                  "$ref": "#/$defs/gold_judgment"
+                },
+                "rebellion_against_the_one": {
+                  "$ref": "#/$defs/gold_judgment"
+                },
+                "mystery": {
+                  "$ref": "#/$defs/gold_judgment"
+                }
+              }
+            },
+            "safe_text": {
+              "$ref": "#/$defs/rationale_safe"
+            },
+            "spoiler_text": {
+              "$ref": "#/$defs/rationale_spoiler"
+            }
+          }
+        },
+        "mythic_blueprint": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "blueprint",
+            "stages"
+          ],
+          "properties": {
+            "blueprint": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "label"
+              ],
+              "properties": {
+                "label": {
+                  "$ref": "#/$defs/mythic_blueprint"
+                },
+                "confidence": {
+                  "$ref": "#/$defs/confidence"
+                }
+              }
+            },
+            "stages": {
+              "type": "object",
+              "additionalProperties": false,
+              "description": "As in mythic_blueprint.stages.",
+              "x-laminary-keys": "journey_stage",
+              "required": [
+                "ordinary_world",
+                "call_to_adventure",
+                "refusal_of_the_call",
+                "meeting_with_the_mentor",
+                "crossing_the_first_threshold",
+                "tests_allies_enemies",
+                "approach_to_the_inmost_cave",
+                "ordeal",
+                "reward",
+                "the_road_back",
+                "resurrection",
+                "return_with_the_elixir"
+              ],
+              "properties": {
+                "ordinary_world": {
+                  "$ref": "#/$defs/gold_judgment"
+                },
+                "call_to_adventure": {
+                  "$ref": "#/$defs/gold_judgment"
+                },
+                "refusal_of_the_call": {
+                  "$ref": "#/$defs/gold_judgment"
+                },
+                "meeting_with_the_mentor": {
+                  "$ref": "#/$defs/gold_judgment"
+                },
+                "crossing_the_first_threshold": {
+                  "$ref": "#/$defs/gold_judgment"
+                },
+                "tests_allies_enemies": {
+                  "$ref": "#/$defs/gold_judgment"
+                },
+                "approach_to_the_inmost_cave": {
+                  "$ref": "#/$defs/gold_judgment"
+                },
+                "ordeal": {
+                  "$ref": "#/$defs/gold_judgment"
+                },
+                "reward": {
+                  "$ref": "#/$defs/gold_judgment"
+                },
+                "the_road_back": {
+                  "$ref": "#/$defs/gold_judgment"
+                },
+                "resurrection": {
+                  "$ref": "#/$defs/gold_judgment"
+                },
+                "return_with_the_elixir": {
+                  "$ref": "#/$defs/gold_judgment"
+                }
+              }
+            },
+            "safe_text": {
+              "$ref": "#/$defs/rationale_safe"
+            },
+            "spoiler_text": {
+              "$ref": "#/$defs/rationale_spoiler"
+            }
+          }
+        },
+        "structural_skeleton": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "emotional_arc"
+          ],
+          "properties": {
+            "emotional_arc": {
+              "$ref": "#/$defs/emotional_arc_label"
+            },
+            "arc_points": {
+              "description": "Protagonist fortune at t = 0.0, 0.1, ..., 1.0 of story time (11 values, t implicit), each in [-1, 1].",
+              "type": "array",
+              "items": {
+                "type": "number",
+                "minimum": -1,
+                "maximum": 1
+              },
+              "minItems": 11,
+              "maxItems": 11
+            },
+            "chronology": {
+              "$ref": "#/$defs/chronology"
+            },
+            "safe_text": {
+              "$ref": "#/$defs/rationale_safe"
+            },
+            "spoiler_text": {
+              "$ref": "#/$defs/rationale_spoiler"
+            }
+          }
+        }
+      }
+    },
+    "gold_beat_tags": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "tags"
+      ],
+      "properties": {
+        "tags": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "As in beat_tags.tags.",
+          "x-laminary-keys": "beat_tag",
+          "required": [
+            "mentor_dies",
+            "twist_ending",
+            "unreliable_narrator",
+            "found_family",
+            "redemption_arc",
+            "pyrrhic_victory",
+            "time_loop",
+            "heist_structure",
+            "ensemble_convergence",
+            "ambiguous_ending"
+          ],
+          "properties": {
+            "mentor_dies": {
+              "$ref": "#/$defs/gold_judgment"
+            },
+            "twist_ending": {
+              "$ref": "#/$defs/gold_judgment"
+            },
+            "unreliable_narrator": {
+              "$ref": "#/$defs/gold_judgment"
+            },
+            "found_family": {
+              "$ref": "#/$defs/gold_judgment"
+            },
+            "redemption_arc": {
+              "$ref": "#/$defs/gold_judgment"
+            },
+            "pyrrhic_victory": {
+              "$ref": "#/$defs/gold_judgment"
+            },
+            "time_loop": {
+              "$ref": "#/$defs/gold_judgment"
+            },
+            "heist_structure": {
+              "$ref": "#/$defs/gold_judgment"
+            },
+            "ensemble_convergence": {
+              "$ref": "#/$defs/gold_judgment"
+            },
+            "ambiguous_ending": {
+              "$ref": "#/$defs/gold_judgment"
+            }
+          }
+        },
+        "spoiler_text": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Spoiler-bearing text. Hidden unless the viewer opts in.",
+          "required": [
+            "evidence"
+          ],
+          "properties": {
+            "evidence": {
+              "description": "Optional one-sentence evidence for present tags. Each tag at most once, and only tags judged present.",
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "tag",
+                  "note"
+                ],
+                "properties": {
+                  "tag": {
+                    "$ref": "#/$defs/beat_tag"
+                  },
+                  "note": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  }
+                }
+              },
+              "maxItems": 10
+            }
+          }
+        }
+      }
+    }
+  }
+}

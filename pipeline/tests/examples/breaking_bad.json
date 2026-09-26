@@ -1,0 +1,234 @@
+{
+  "schema_version": "0.2.0",
+  "record_kind": "illustrative_example",
+  "title": {
+    "media_type": "tv_series",
+    "name": "Breaking Bad",
+    "release_year": 2008,
+    "tmdb_id": 1396,
+    "wikidata_id": null,
+    "series_status": "ended"
+  },
+  "provenance": {
+    "annotated_at": "2026-09-26T00:00:00Z",
+    "annotator": {
+      "labeler_id": "data-pipeline-example"
+    },
+    "sources": [],
+    "input_word_count": 0,
+    "notes": "Illustrative example written from general knowledge for schema review. Not derived from any source summary; not a gold label. Series-level annotation across the full run."
+  },
+  "outcome": "annotated",
+  "layers": {
+    "surface_story": {
+      "setting_period": "contemporary",
+      "tones": [
+        "tense",
+        "bleak"
+      ],
+      "protagonist_structure": "single",
+      "safe_text": {
+        "logline": "A mild, underpaid chemistry teacher facing a terminal diagnosis starts making illegal drugs to leave money for his family.",
+        "protagonist": "A brilliant but overlooked high-school chemistry teacher who feels life has cheated him.",
+        "setting": "Albuquerque, New Mexico, in the late 2000s.",
+        "central_conflict": "Keeping his double life hidden from his family while the criminal world he has entered grows more dangerous."
+      },
+      "spoiler_text": {
+        "resolution": "He builds a drug empire, loses his family's trust and most of what he built, and dies after a final act of revenge that also secures money for his children."
+      }
+    },
+    "archetypal_plot": {
+      "primary": {
+        "label": "tragedy",
+        "confidence": 0.9
+      },
+      "plots": {
+        "overcoming_the_monster": {
+          "present": false,
+          "confidence": 0.8
+        },
+        "rags_to_riches": {
+          "present": false,
+          "confidence": 0.75
+        },
+        "the_quest": {
+          "present": false,
+          "confidence": 0.8
+        },
+        "voyage_and_return": {
+          "present": false,
+          "confidence": 0.8
+        },
+        "comedy": {
+          "present": false,
+          "confidence": 0.8
+        },
+        "tragedy": {
+          "present": true,
+          "confidence": 0.9
+        },
+        "rebirth": {
+          "present": false,
+          "confidence": 0.8
+        },
+        "rebellion_against_the_one": {
+          "present": false,
+          "confidence": 0.8
+        },
+        "mystery": {
+          "present": false,
+          "confidence": 0.7
+        }
+      },
+      "safe_text": {
+        "rationale": "A man who feels passed over by life takes a first illegal step to provide for his family."
+      },
+      "spoiler_text": {
+        "rationale": "Pride and a sense of being wronged drive each choice; every success deepens his corruption, and the story ends with his destruction, which is the Tragedy shape."
+      }
+    },
+    "mythic_blueprint": {
+      "blueprint": {
+        "label": "anti_hero_descent",
+        "confidence": 0.95
+      },
+      "stages": {
+        "ordinary_world": {
+          "present": true,
+          "confidence": 0.9
+        },
+        "call_to_adventure": {
+          "present": true,
+          "confidence": 0.85
+        },
+        "refusal_of_the_call": {
+          "present": false,
+          "confidence": 0.6
+        },
+        "meeting_with_the_mentor": {
+          "present": false,
+          "confidence": 0.6
+        },
+        "crossing_the_first_threshold": {
+          "present": true,
+          "confidence": 0.85
+        },
+        "tests_allies_enemies": {
+          "present": true,
+          "confidence": 0.8
+        },
+        "approach_to_the_inmost_cave": {
+          "present": false,
+          "confidence": 0.7
+        },
+        "ordeal": {
+          "present": false,
+          "confidence": 0.7
+        },
+        "reward": {
+          "present": false,
+          "confidence": 0.7
+        },
+        "the_road_back": {
+          "present": false,
+          "confidence": 0.7
+        },
+        "resurrection": {
+          "present": false,
+          "confidence": 0.7
+        },
+        "return_with_the_elixir": {
+          "present": false,
+          "confidence": 0.7
+        }
+      },
+      "safe_text": {
+        "rationale": "An ordinary man answers an unexpected call that takes him out of his everyday life."
+      },
+      "spoiler_text": {
+        "rationale": "Instead of returning with something for others, he goes deeper into violence and self-justification, and his return home destroys what he claimed to protect."
+      }
+    },
+    "structural_skeleton": {
+      "emotional_arc": {
+        "label": "icarus",
+        "confidence": 0.85,
+        "method": "derived",
+        "threshold_used": 0.3,
+        "net_change_fallback": false
+      },
+      "arc_points": [
+        -0.4,
+        -0.3,
+        -0.1,
+        0.1,
+        0.3,
+        0.5,
+        0.7,
+        0.6,
+        0.1,
+        -0.6,
+        -0.9
+      ],
+      "chronology": "linear",
+      "safe_text": {
+        "rationale": "The story opens at a low point: illness, money worries and humiliation."
+      },
+      "spoiler_text": {
+        "rationale": "Power and money rise steadily through the middle seasons, peak, then collapse as his secrets come out and he loses everything."
+      }
+    }
+  },
+  "beat_tags": {
+    "tags": {
+      "mentor_dies": {
+        "present": false,
+        "confidence": 0.8
+      },
+      "twist_ending": {
+        "present": false,
+        "confidence": 0.8
+      },
+      "unreliable_narrator": {
+        "present": false,
+        "confidence": 0.8
+      },
+      "found_family": {
+        "present": false,
+        "confidence": 0.8
+      },
+      "redemption_arc": {
+        "present": false,
+        "confidence": 0.6
+      },
+      "pyrrhic_victory": {
+        "present": true,
+        "confidence": 0.6
+      },
+      "time_loop": {
+        "present": false,
+        "confidence": 0.8
+      },
+      "heist_structure": {
+        "present": false,
+        "confidence": 0.8
+      },
+      "ensemble_convergence": {
+        "present": false,
+        "confidence": 0.8
+      },
+      "ambiguous_ending": {
+        "present": false,
+        "confidence": 0.8
+      }
+    },
+    "spoiler_text": {
+      "evidence": [
+        {
+          "tag": "pyrrhic_victory",
+          "note": "His last plan succeeds against his enemies but he dies and his family is left broken."
+        }
+      ]
+    }
+  }
+}

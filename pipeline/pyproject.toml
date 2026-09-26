@@ -24,6 +24,10 @@ dev = [
 where = ["."]
 include = ["laminary_pipeline*"]
 
+[tool.setuptools.package-data]
+# Annotation JSON schema ships inside the package (loaded via importlib.resources).
+laminary_pipeline = ["schema/*.json"]
+
 [tool.ruff]
 target-version = "py312"
 line-length = 100
