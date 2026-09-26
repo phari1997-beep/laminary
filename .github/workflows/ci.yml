@@ -6,8 +6,9 @@
 # - No job here uses repository secrets. The repo is private on GitHub Free, so GitHub
 #   Environments are unavailable and every workflow can read every repo secret. Deploys
 #   and EAS builds go in separate workflows: prod ones are named deploy-prod*.yml, are
-#   workflow_dispatch-only, and are the only files allowed to reference *_PROD secrets
-#   (enforced by the "prod-secret guard" step below).
+#   workflow_dispatch-only (a convention until Phase 3), and are the only files allowed
+#   to reference PROD secrets (checked by the "prod-secret tripwire" step below; a
+#   tripwire against accidental misuse, not access control).
 # - CI is advisory: without branch protection nothing blocks a merge on a red run.
 name: CI
 
@@ -101,12 +102,26 @@ jobs:
           tar -xzf "$tarball" gitleaks
       - name: Scan git history
         run: ./gitleaks git --redact --verbose --exit-code 1 .
-      - name: Prod-secret guard (only deploy-prod*.yml may use *_PROD secrets)
+      - name: Prod-secret tripwire (not access control; see docs/ENVIRONMENTS.md)
+        # Fails if a workflow other than deploy-prod*.yml reads a PROD secret, reads secrets
+        # in bulk, or invokes a deploy-prod workflow. grep exit 1 = clean; >1 = fail closed.
+        # Known limit: a text match. Deliberate evasion (string building, workflow IDs,
+        # composite actions) is possible; this catches accidents only.
         run: |
-          offenders=$(grep -lE 'secrets\.[A-Z0-9_]+_PROD\b' .github/workflows/*.yml .github/workflows/*.yaml 2>/dev/null \
-            | grep -vE '/deploy-prod[^/]*\.ya?ml$' || true)
-          if [ -n "$offenders" ]; then
-            echo "::error title=prod secret outside deploy-prod workflow::$offenders"
+          shopt -s nullglob
+          files=()
+          for f in .github/workflows/*.yml .github/workflows/*.yaml; do
+            case "${f##*/}" in deploy-prod*) ;; *) files+=("$f") ;; esac
+          done
+          [ ${#files[@]} -gt 0 ] || { echo "::error::no workflow files found; failing closed"; exit 2; }
+          # [-] keeps this regex from matching its own source text.
+          re='secrets\.[A-Za-z0-9_]*PROD|secrets\[|toJSON\(secrets\)|secrets:[[:space:]]*inherit|workflow[[:space:]]+run[[:space:]].*deploy[-]prod|workflows/deploy[-]prod'
+          rc=0; hits=$(grep -liE "$re" "${files[@]}") || rc=$?
+          if [ "$rc" -gt 1 ]; then echo "::error::tripwire grep failed (exit $rc); failing closed"; exit 2; fi
+          if [ "$rc" -eq 0 ]; then
+            while IFS= read -r f; do
+              echo "::error file=$f::prod secret, bulk secret, or deploy-prod reference outside deploy-prod*.yml"
+            done <<< "$hits"
             exit 1
           fi
-          echo "OK: no *_PROD secret referenced outside deploy-prod*.yml"
+          echo "OK: prod-secret tripwire clean (${#files[@]} workflow files checked)"
