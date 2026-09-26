@@ -24,9 +24,13 @@ import pytest
 from jsonschema import Draft202012Validator
 
 from laminary_pipeline.annotation import (
+    ALLOWED_INPUT_LICENSES,
+    DISPLAY_CONFIDENCE_THRESHOLD,
     SCHEMA_RESOURCE,
     load_schema,
+    require_wikipedia_sources,
     semantic_errors,
+    usable_arc_label,
     validate_record,
     validator,
 )
@@ -414,6 +418,62 @@ REJECT_CASES: list[tuple[str, str, str, Any, str | None, str]] = [
         "provenance/sources/0/kind",
     ),
     (
+        "llm with TMDB license",
+        "llm",
+        "provenance/sources/0/license",
+        "TMDB-API-terms",
+        "enum",
+        "provenance/sources/0/license",
+    ),
+    (
+        "llm with non-Wikipedia ref",
+        "llm",
+        "provenance/sources/0/ref",
+        "tmdb:movie/137",
+        "pattern",
+        "provenance/sources/0/ref",
+    ),
+    (
+        "llm with other-language Wikipedia ref",
+        "llm",
+        "provenance/sources/0/ref",
+        "https://de.wikipedia.org/wiki/Und_t%C3%A4glich_gr%C3%BC%C3%9Ft_das_Murmeltier",
+        "pattern",
+        "provenance/sources/0/ref",
+    ),
+    (
+        "gold with TMDB license",
+        "gold",
+        "provenance/sources/0/license",
+        "TMDB-API-terms",
+        "enum",
+        "provenance/sources/0/license",
+    ),
+    (
+        "llm arc without confidence",
+        "llm",
+        f"{SKEL}/emotional_arc/confidence",
+        DELETE,
+        "required",
+        f"{SKEL}/emotional_arc",
+    ),
+    (
+        "derived arc without reduced_shape",
+        "llm",
+        f"{SKEL}/emotional_arc/reduced_shape",
+        DELETE,
+        "required",
+        f"{SKEL}/emotional_arc",
+    ),
+    (
+        "threshold above 2",
+        "llm",
+        f"{SKEL}/emotional_arc/threshold_used",
+        2.1,
+        "maximum",
+        f"{SKEL}/emotional_arc/threshold_used",
+    ),
+    (
         "gold with tmdb_overview source",
         "gold",
         "provenance/sources/0/kind",
@@ -508,6 +568,16 @@ def test_semantic_checks_catch_errors() -> None:
             label="riches_to_rags", net_change_fallback=True, confidence=0.8
         )
 
+    def reduced_mismatch(r: dict) -> None:
+        r[skel[0]][skel[1]]["emotional_arc"]["reduced_shape"] = True
+
+    def reduced_conf(r: dict) -> None:
+        w = [0.2, -0.4, -0.5, 0.2, 0.3, -0.3, -0.4, 0.1, 0.5, 0.6, 0.7]
+        r[skel[0]][skel[1]]["arc_points"] = w
+        r[skel[0]][skel[1]]["emotional_arc"].update(
+            label="rags_to_riches", threshold_used=0.8, reduced_shape=True, confidence=0.9
+        )
+
     def word_count(r: dict) -> None:
         r["provenance"]["input_word_count"] = 500
 
@@ -518,6 +588,8 @@ def test_semantic_checks_catch_errors() -> None:
         (evidence_duplicate, "more than once"),
         (wrong_arc, "does not match derivation"),
         (fallback_conf, "below 0.5"),
+        (reduced_mismatch, "does not match derivation"),
+        (reduced_conf, "below 0.5"),
         (word_count, "input_word_count"),
     ]:
         found = errs(fn)
@@ -703,3 +775,67 @@ def test_free_text_walk_sees_nullable_string_types() -> None:
     fake = {"$defs": {}, "type": "object", "properties": {"x": {"type": ["string", "null"]}}}
     nodes = [resolve(fake, raw) for _, raw in walk(fake, fake, ("root",))]
     assert any(is_string_type(n) for n in nodes)
+
+
+# ---------- input gate and consumer rule ----------
+
+
+def wiki_source(**over: Any) -> dict[str, Any]:
+    src = copy.deepcopy(llm_record()["provenance"]["sources"][0])
+    src.update(over)
+    return src
+
+
+def test_input_license_constant_matches_schema() -> None:
+    assert ALLOWED_INPUT_LICENSES == set(schema_enums()["input_license"])
+
+
+def test_require_wikipedia_sources_accepts_wikipedia() -> None:
+    sources = [wiki_source(), wiki_source(license="CC-BY-SA-3.0")]
+    assert require_wikipedia_sources(sources) is sources
+
+
+@pytest.mark.parametrize(
+    "sources",
+    [
+        [],
+        [wiki_source(kind="tmdb_overview")],
+        [wiki_source(license="TMDB-API-terms")],
+        [wiki_source(ref="tmdb:movie/137")],
+        [wiki_source(ref="https://de.wikipedia.org/wiki/X")],
+        [wiki_source(ref="http://en.wikipedia.org/wiki/X")],
+        [{k: v for k, v in wiki_source().items() if k != "license"}],
+        ["https://en.wikipedia.org/wiki/X"],
+        [wiki_source(), wiki_source(kind="tmdb_overview")],  # one bad source rejects the title
+    ],
+    ids=[
+        "empty",
+        "tmdb kind",
+        "tmdb license",
+        "tmdb ref",
+        "de wikipedia",
+        "http",
+        "missing license",
+        "not an object",
+        "one bad of two",
+    ],
+)
+def test_require_wikipedia_sources_fails_closed(sources: list[Any]) -> None:
+    with pytest.raises(ValueError):
+        require_wikipedia_sources(sources)
+
+
+def test_usable_arc_label_consumer_rule() -> None:
+    rec = llm_record()
+    arc = rec["layers"]["structural_skeleton"]["emotional_arc"]
+    assert arc["confidence"] >= DISPLAY_CONFIDENCE_THRESHOLD
+    assert usable_arc_label(rec) == arc["label"]
+    for flag in ("net_change_fallback", "reduced_shape"):
+        flagged = copy.deepcopy(rec)
+        flagged["layers"]["structural_skeleton"]["emotional_arc"].update({flag: True})
+        flagged["layers"]["structural_skeleton"]["emotional_arc"]["confidence"] = 1.0
+        assert usable_arc_label(flagged) is None, flag  # ignored whatever the confidence
+    low = copy.deepcopy(rec)
+    low["layers"]["structural_skeleton"]["emotional_arc"]["confidence"] = 0.79
+    assert usable_arc_label(low) is None
+    assert usable_arc_label(abstained_record()) is None

@@ -1,6 +1,6 @@
 # Narrative taxonomy and annotation schema
 
-**Status: DRAFT v0.2.0.** Owner: data-pipeline. Includes Hari's decisions of 2026-09-26 (`docs/DECISIONS.md`); items still marked **[OPEN]** are listed in section 16. The schema becomes 1.0.0 once QA passes and Hari approves the final draft.
+**Status: DRAFT v0.3.0.** Owner: data-pipeline. Includes Hari's decisions of 2026-09-26 (`docs/DECISIONS.md`); items still marked **[OPEN]** are listed in section 16. The schema becomes 1.0.0 once QA passes and Hari approves the final draft.
 
 - Stored record contract: `pipeline/laminary_pipeline/schema/annotation.schema.json` (JSON Schema draft 2020-12, shipped as package data)
 - Model-facing output schema: derived in code, `laminary_pipeline/model_output.py` (section 11)
@@ -15,7 +15,7 @@ This document is the single source of definitions for the annotation prompt, the
 
 ## 1. Ground rules
 
-1. **Wikipedia plot sections only.** The only annotation input is Wikipedia plot sections (CC BY-SA). Never scripts, subtitles, or book texts. **Never send TMDB overviews or any other TMDB text to Claude, and never embed them**: search results quoting TMDB's terms say that use with LLM/AI query-response systems needs TMDB's written authorization, and that training or validating ML/AI systems on TMDB content is prohibited. The schema enforces this: LLM and gold records may only cite `wikipedia_plot` sources. TMDB is used only for IDs and display metadata, subject to Hari's commercial agreement (PLAN §8). The summary text is not stored in the record; the record stores a reference, revision and hash of each source (section 10).
+1. **Wikipedia plot sections only.** The only annotation input is Wikipedia plot sections (CC BY-SA). Never scripts, subtitles, or book texts. **Never send TMDB overviews or any other TMDB text to Claude, and never embed them**: search results quoting TMDB's terms say that use with LLM/AI query-response systems needs TMDB's written authorization, and that training or validating ML/AI systems on TMDB content is prohibited. The schema enforces this: LLM and gold records may only cite `wikipedia_plot` sources with a CC BY-SA `license` and an `https://en.wikipedia.org/` `ref`. **Phase 1 requirement:** the prompt builder and the embedding input must pass their sources through `require_wikipedia_sources()` in `laminary_pipeline/annotation.py`. It fails closed: one non-Wikipedia, non-CC-BY-SA or non-en.wikipedia.org source rejects the whole title, and an empty list is rejected too. It is unit-tested. TMDB is used only for IDs and display metadata, subject to Hari's commercial agreement (PLAN §8). The summary text is not stored in the record; the record stores a reference, revision and hash of each source (section 10).
 2. **Minimum summary: 150 words** (decided 2026-09-26). Titles with less summary text are skipped before any model call, and get no narrative data. The schema enforces this on LLM and gold records. Since TMDB text is excluded, this in practice requires a Wikipedia plot section of at least 150 words.
 3. **No guessing from a title.** Annotate only what the supplied summary supports. Do not fill gaps from outside knowledge of the title. If the summary can't support the four layers, the correct output is `outcome: "abstained"`, not a low-confidence guess.
 4. **Own words.** Every free-text field is written fresh. Never copy or closely paraphrase sentences from the source.
@@ -30,7 +30,7 @@ TMDB's written authorization for LLM use is **[OPEN]**, owned by Hari (section 1
 ## 2. Record at a glance
 
 ```
-schema_version        "0.2.0"
+schema_version        "0.3.0"
 record_kind           llm_annotation | gold_label | illustrative_example
 title                 media_type, name, release_year, tmdb_id, wikidata_id, series_status (TV only)
 provenance            annotated_at, annotator{...}, sources[...], input_word_count, usage{...}, notes
@@ -61,7 +61,16 @@ Promise 3 in VISION.md: spoilers are hidden unless the viewer opts in.
 | `mild` | Shape | Reveals the overall direction or tone of the ending (up or down, twist or no twist) without saying what happens. |
 | `major` | Spoiler | Reveals specific events after the setup: who dies, what the twist is, how the conflict resolves. |
 
-**Default visibility (decided 2026-09-26).** Levels `none` and `mild` are shown by default: story-shape labels (emotional arc, Booker plot, blueprint) and the arc line are visible. Everything `major`, and all `spoiler_text`, is hidden until the viewer opts in. A viewer setting that hides story shapes as well would hide `mild` too; the rules below keep that consistent.
+**Default visibility.** Labels fall into two display groups. Each group has a highest level shown by default. Everything `major`, and all `spoiler_text`, is hidden in both groups until the viewer opts in.
+
+| Group | Fields | Shown by default up to |
+|---|---|---|
+| Story shape | `primary`, `plots`, `blueprint`, `stages`, `emotional_arc`, `arc_points`, `setting_period`, `protagonist_structure`, `chronology` | `mild` (decided 2026-09-26) |
+| Beat tags and tones | `tags`, `tones` | `none` (draft default; **[OPEN]** question 4) |
+
+Question 4 is a one-line change: if Hari decides `mild` beat tags and tones are visible by default, the second row's value becomes `mild`. The same table would also cover a viewer setting that hides story shapes (hypothetical; none is planned): it would set the first row to `none`.
+
+"Visible level" below means the level shown for the label's group.
 
 **Rule 1: free text is structurally split.** Every block that carries text has two sibling objects:
 
@@ -74,9 +83,9 @@ No free-text field exists outside these two objects (enforced by a test). A fron
 
 **Rule 3: single-choice fields are hidden whole.** A single-choice field (the primary plot, the blueprint, the emotional arc, setting period, protagonist structure, chronology) has a field-level spoiler level equal to the highest level in its vocabulary (`x-laminary-spoiler-levels.fields`). When that level is hidden, the field shows the same placeholder whatever its value, so "hidden" can't itself reveal a dark ending. The arc line (`arc_points`) is level `mild`.
 
-**Rule 4: presence sets hide per term, silently.** For `tones`, `plots`, `stages` and `tags`, terms above the visible level are simply not mentioned. The UI never shows a count, gap or "and 1 more" that would reveal a hidden term exists.
+**Rule 4: presence sets hide per term, silently.** For `tones`, `plots`, `stages` and `tags`, terms above their group's visible level are simply not mentioned. The UI never shows a count, gap or "and 1 more" that would reveal a hidden term exists.
 
-**Rule 5: derived content inherits the highest level it uses.** Any text or grouping computed from labels (why-lines, browse-row membership, share cards, "more like this" explanations) carries the highest spoiler level of the labels it uses. Default views may only use labels at visible levels. Example: a why-line built on `mentor_dies` is `major` and can't appear in a default view, even if every other label it uses is `none`.
+**Rule 5: derived content inherits the highest level it uses.** Any text or grouping computed from labels (why-lines, browse-row membership, share cards, "more like this" explanations) carries the highest spoiler level of the labels it uses. Default views may only use labels at or below their group's visible level. Example: a why-line built on `mentor_dies` is `major` and can't appear in a default view, even if every other label it uses is `none`.
 
 The per-term spoiler levels in the vocabulary tables were approved as drafted (decided 2026-09-26), including `redemption_arc` at `mild`.
 
@@ -187,8 +196,9 @@ Common confusions:
 - **Rebirth vs the `redemption_arc` beat tag.** Rebirth is the whole story's engine. A redemption arc tag can apply to any character, including a secondary one, inside any plot.
 - **Quest vs Voyage and Return.** In a Quest the protagonist chooses a goal and the story ends on reaching it. In Voyage and Return the protagonist is thrown into the other world and the story ends on getting home.
 - **Comedy vs playful tone.** A very funny film about defeating a villain is `overcoming_the_monster` with a `playful` tone.
-- **Rebellion Against "The One" vs Overcoming the Monster.** The Monster is an outside threat that invades or endangers the protagonist's world and is fought in order to destroy it. "The One" *is* the order of the protagonist's world, and the story is about refusing to be absorbed by it. When a hero fights a controlling system's enforcers and wins, both may be present; pick the primary by what the story spends most of its time on.
+- **Rebellion Against "The One" vs Overcoming the Monster.** The Monster is an outside threat that invades or endangers the protagonist's world and is fought in order to destroy it. "The One" *is* the order of the protagonist's world, and the story is about refusing to be absorbed by it. When a hero fights a controlling system's enforcers and wins, both may be present; pick the primary by what the story spends most of its time on. "The One" is always the ruling power, never the hero. A hero called "the One" by the story (as in The Matrix) says nothing about this plot.
 - **Mystery vs `twist_ending`.** A late surprise doesn't make a Mystery. Mystery requires an investigation that drives the plot. A thriller built around a hidden secret is not a Mystery unless a character's inquiry is the engine.
+- **Mystery vs The Quest.** Both involve searching. In a Quest the goal is known and the story is the journey to reach it. In a Mystery the question is what happened, and the story is working it out. A hunt for a missing person is a Quest if their whereabouts drive a journey, and a Mystery if uncovering what happened to them is the point.
 - **Mystery vs Overcoming the Monster.** A detective hunting a killer can be both. If the story is organized around working out what happened, it's Mystery; if it is organized around stopping an identified threat, it's Overcoming the Monster.
 
 ---
@@ -260,10 +270,14 @@ The six core arcs (Reagan et al., 2016, after Vonnegut) are defined by the direc
 
 1. **Major move.** A rise or fall of at least 0.3 from the most recent peak or trough. Smaller wobbles are ignored. Differences are rounded to 6 decimals before comparing, so a move of exactly 0.3 counts.
 2. **One to three major moves** map directly to an arc (table below).
-3. **Four or more major moves** (common in long series): raise the threshold in steps of 0.1 (0.4, 0.5, ...) until at most three moves remain, then map. The threshold used is stored in `emotional_arc.threshold_used`.
-4. **No major moves** (a flat or gentle story, at any threshold): fall back to the direction of the net change, last point minus first point. A net rise maps to `rags_to_riches`; a net fall, or exactly zero, maps to `riches_to_rags`. The record sets `net_change_fallback` to true and the stored confidence is capped at 0.49, so these labels fall below the 0.80 display threshold. There is deliberately no "flat" arc term (section 16, question 3).
+3. **Four or more major moves** (common in long series): raise the threshold in steps of 0.1 (0.4, 0.5, ...) until at most three moves remain, then map. The threshold stops at 2.0, the full fortune range. The threshold used is stored in `emotional_arc.threshold_used`. The record sets `reduced_shape` to true when the reduction lands on a single move, or needs a threshold of 0.6 or more. Without this, a W or M shape can collapse into one confident leg: the W in the tests reduces to `rags_to_riches` at 0.8.
+4. **No major moves** (a flat or gentle story), **or still four or more at 2.0** (for example, swings between the extremes): fall back to the direction of the net change, last point minus first point. A net rise maps to `rags_to_riches`; a net fall, or exactly zero, maps to `riches_to_rags`. The record sets `net_change_fallback` to true. There is deliberately no "flat" arc term (section 16, question 3).
 
-Stored confidence for a derived arc is the annotator's `arc_confidence` (how well the points capture the story), capped as above.
+The move detection is symmetric: reversing the points in time, or flipping their sign, reverses or flips the moves. A sub-threshold opening move is dropped exactly like a sub-threshold closing one. This is property-tested.
+
+**Consumer rule: flagged arc labels are ignored.** Browse rows, why-lines, "more like this", share cards and title pages ignore an `emotional_arc` label when `net_change_fallback` or `reduced_shape` is true, whatever its confidence and the display threshold. The arc line itself may still be drawn, since the points are valid. Stored confidence for these labels is also capped at 0.49, but the rule does not depend on that. Helper: `usable_arc_label()` in `laminary_pipeline/annotation.py`.
+
+Stored confidence for a derived arc is the annotator's `arc_confidence` (how well the points capture the story), capped at 0.49 for flagged labels. It is required on LLM records.
 
 <!-- vocab:emotional_arc -->
 | Value | Name | Spoiler | Definition |
@@ -278,10 +292,12 @@ Stored confidence for a derived arc is the annotator's `arc_confidence` (how wel
 <!-- vocab:arc_method -->
 | Value | Name | Definition |
 |---|---|---|
-| `derived` | Derived | Label computed from `arc_points` by the rule above. Required on LLM records; `threshold_used` and `net_change_fallback` must match the rule. |
+| `derived` | Derived | Label computed from `arc_points` by the rule above. Required on LLM records; `threshold_used`, `net_change_fallback` and `reduced_shape` must match the rule. |
 | `labeler_assigned` | Labeler-assigned | A gold labeler chose the label directly (arc points optional). |
 
-**Comparing gold and model arcs.** The primary arc metric compares the model's derived label with the gold label, whichever method the gold labeler used. When the gold record also has arc points, the evaluation additionally reports (a) agreement between labels derived from both point sets, and (b) mean absolute difference between the two point sets, as a shape distance.
+**Gold guide for flat stories.** A gold labeler who judges that a story has no major move assigns the net-change label by the same rule (`rags_to_riches` for a net rise, `riches_to_rags` otherwise) and sets `net_change_fallback` to true, using method `labeler_assigned`. If question 3 adds a flat term, the labeler uses that term instead.
+
+**Comparing gold and model arcs.** The primary arc metric compares the model's derived label with the gold label, whichever method the gold labeler used. Titles where either side is flagged (`net_change_fallback` or `reduced_shape`) are scored and reported separately, not mixed into the headline accuracy. When the gold record also has arc points, the evaluation additionally reports (a) agreement between labels derived from both point sets, and (b) mean absolute difference between the two point sets, as a shape distance.
 
 Confusions:
 
@@ -353,7 +369,7 @@ Confusions:
 
 **Annotated as of, and refresh (decided 2026-09-26).** A record's "as of" date is the latest `retrieved_at` among its `sources`. Displays for `ongoing` series should say so ("covers episodes aired up to" that date). Ingestion re-fetches sources on its normal schedule; when any source's `content_sha256` changes, the title is re-annotated and the new record replaces the old one. Ended series and movies follow the same rule, which also catches substantial Wikipedia rewrites.
 
-Each entry in `provenance.sources` records `kind`, `ref` (Wikipedia URL or `tmdb:movie/<id>`), `revision` (Wikipedia revision id or TMDB retrieval date), `retrieved_at`, `license`, `word_count` and `content_sha256` of the exact text sent to the model. With `model_version`, `prompt_version` and the hash, any record can be reproduced or detected as stale.
+Each entry in `provenance.sources` records `kind`, `ref` (a Wikipedia URL; `tmdb:movie/<id>` style refs appear only in illustrative records, since TMDB text is not an allowed input), `revision` (Wikipedia revision id), `retrieved_at`, `license`, `word_count` and `content_sha256` of the exact text sent to the model. With `model_version`, `prompt_version` and the hash, any record can be reproduced or detected as stale.
 
 <!-- vocab:source_kind -->
 | Value | Name | Definition |
@@ -367,6 +383,14 @@ Each entry in `provenance.sources` records `kind`, `ref` (Wikipedia URL or `tmdb
 | `CC-BY-SA-4.0` | CC BY-SA 4.0 | Wikipedia text from revisions under CC BY-SA 4.0 (current). |
 | `CC-BY-SA-3.0` | CC BY-SA 3.0 | Wikipedia text from older revisions under CC BY-SA 3.0. |
 | `TMDB-API-terms` | TMDB API terms | TMDB content, used under the TMDB API terms (attribution required; commercial agreement pending, PLAN §8). |
+
+<!-- vocab:input_license -->
+| Value | Name | Definition |
+|---|---|---|
+| `CC-BY-SA-4.0` | CC BY-SA 4.0 | Allowed license for a source on an LLM or gold record (Wikipedia, current revisions). |
+| `CC-BY-SA-3.0` | CC BY-SA 3.0 | Allowed license for a source on an LLM or gold record (Wikipedia, older revisions). |
+
+The `input_license` subset is what LLM and gold records may cite, together with a `wikipedia_plot` kind and an `https://en.wikipedia.org/` ref. `TMDB-API-terms` stays in `source_license` for illustrative records and future use.
 
 `provenance.usage` records token counts per title (and whether the Batch API was used) so cost per title is known after every run; it is required on LLM records. `provenance.notes` is internal only.
 
@@ -407,6 +431,8 @@ Claude's structured outputs accept only a subset of JSON Schema. Per the structu
 
 A failure on any of these is treated like invalid output: the title is retried or sent for review, never stored.
 
+**First step of Phase 1: one live structured-output call.** The schema's grammar complexity ("Schema is too complex for compilation" and the compile timeout) can only be tested against the API. Before building the batch pipeline, send one real request with `model_output_schema()` and a single Wikipedia summary, and record the result, latency and token usage. This spends money, so it goes through Hari's Phase 1 spend approval with the pilot.
+
 ---
 
 ## 12. Checks beyond JSON Schema
@@ -415,7 +441,7 @@ Implemented in `annotation.semantic_errors()` and run by `validate_record()` on 
 
 1. The `primary` plot is judged present in `plots`, and at most two other plots are present.
 2. `evidence` lists each tag at most once, and only tags judged present.
-3. For a derived `emotional_arc`: `label`, `threshold_used` and `net_change_fallback` equal what the rule in section 8 gives for `arc_points`, and a fallback label has confidence below 0.5.
+3. For a derived `emotional_arc`: `label`, `threshold_used`, `net_change_fallback` and `reduced_shape` equal what the rule in section 8 gives for `arc_points`, and a flagged label has confidence below 0.5.
 4. For LLM records: `input_word_count` equals the sum of `sources[].word_count`.
 5. Date-times are checked as RFC 3339 (the validator registers its own `date-time` format check, because jsonschema skips it without an optional package).
 
@@ -433,6 +459,8 @@ Done at ingestion, not here: `tmdb_id` exists in TMDB and its title and year mat
 
 `prompt_version` changes whenever the annotation prompt text changes (including definition wording pulled from this document), and `model_version` records the exact model id. Evaluation results are always reported per (schema_version, prompt_version, model_version).
 
+0.2.0 → 0.3.0 changes: `emotional_arc.reduced_shape` added; the threshold search stops at 2.0; `confidence` is required on LLM arcs; LLM and gold sources must have a CC BY-SA license and an en.wikipedia.org ref.
+
 0.1.0 → 0.2.0 changes: presence maps became fixed-key judgments; `emotional_arc` is derived; Booker has nine plots; Vogler stage names are exact; gold records are lighter; `usage` is required on LLM records; the 150-word gate is enforced.
 
 ---
@@ -446,7 +474,7 @@ Run on the ~100-title gold set after each prompt iteration, reported per (schema
 | `primary` plot | Exact-match accuracy and Cohen's kappa against gold. |
 | `plots`, `stages`, `tags` | Per-term precision, recall and F1 of "present", plus accuracy per term. |
 | `blueprint` | Exact-match accuracy. |
-| `emotional_arc` | Exact-match accuracy of the derived label vs gold; shape distance when gold has points (section 8). |
+| `emotional_arc` | Exact-match accuracy of the derived label vs gold, on titles where neither side is flagged. Fallback titles and reduced-shape titles are reported separately (count and agreement). Shape distance when gold has points (section 8). |
 | Surface fields | Accuracy of `setting_period`, `protagonist_structure`, `chronology`; overlap of `tones`. Informational only. |
 | Calibration | Accuracy per confidence band (section 4); the display threshold is tuned from this. |
 | Abstention | Abstention rate, and abstentions on titles gold labelers could label. |
@@ -458,7 +486,7 @@ If the leak metric misses its target, the fix is prompt work (tighter setup-only
 
 - **Field:** "archetype" means `archetypal_plot.primary.label`.
 - **Matching rule (strict):** the model's primary equals the gold primary. Target: at least 80% over gold titles.
-- **Emotional arc reported separately, not gating:** exact-match accuracy of the derived `emotional_arc` label against gold.
+- **Emotional arc reported separately, not gating:** exact-match accuracy of the derived `emotional_arc` label against gold, with fallback and reduced-shape titles broken out.
 - **Also reported, not gating:** lenient plot agreement (the model's primary is judged present in the gold `plots`), and kappa.
 - **Abstentions:** the model abstaining on a gold-labeled title counts as a miss.
 
@@ -468,18 +496,18 @@ If the leak metric misses its target, the fix is prompt work (tighter setup-only
 
 Decided 2026-09-26: keep all 15 for now and prune after the 500-title pilot shows row sizes. Row names are working titles; final copy belongs to frontend and Hari. Each row uses only labels at or above the 0.80 display threshold (re-tunable after the pilot).
 
-The "Spoiler" column is the highest level any label in the row's query carries. Under the decided default (`none` and `mild` visible) every row may appear in default views. If a viewer hides story shapes, rows marked `mild` must be hidden too (section 3, rule 5).
+The "Spoiler" column is the highest level any label in the row's query carries, and the group it comes from (section 3). Arc rows use only usable arc labels (section 8 consumer rule), so fallback and reduced-shape labels never appear in rows 1 to 4.
 
 | # | Working row name | Query | Spoiler | Rationale |
 |---|---|---|---|---|
 | 1 | Down and back up | arc `man_in_a_hole` | mild | The most common satisfying shape; big, varied row that anchors the concept. |
 | 2 | Rise and fall | arc `icarus` | mild | Instantly understood; covers crime sagas, biopics and cautionary tales across genres. |
 | 3 | Lost it all, won it back | arc `cinderella` | mild | Distinct from row 1 (the early rise), so it teaches that shape matters, not just the ending. |
-| 4 | Slow climb | arc `rags_to_riches` without `net_change_fallback` | mild | Underdog stories without a big setback. Fallback labels are excluded (their confidence is capped anyway). |
-| 5 | Monsters to beat | primary `overcoming_the_monster` | none | Largest Booker bucket; spans horror, action and sports. |
-| 6 | There and back again | primary `voyage_and_return` | none | Clear shape that crosses kids' films, sci-fi and dramas. |
-| 7 | The long road | primary `the_quest` | none | Pairs naturally with Hero's Journey titles. |
-| 8 | Second chances | primary `rebirth`, or `redemption_arc` present | mild | Emotionally distinct pull that genre browsing can't express. |
+| 4 | Slow climb | arc `rags_to_riches` | mild | Underdog stories without a big setback. Most exposed to flagged labels (both fallbacks and collapsed W/M shapes land here), which the consumer rule excludes. |
+| 5 | Monsters to beat | primary `overcoming_the_monster` | mild | Largest Booker bucket; spans horror, action and sports. |
+| 6 | There and back again | primary `voyage_and_return` | mild | Clear shape that crosses kids' films, sci-fi and dramas. |
+| 7 | The long road | primary `the_quest` | mild | Pairs naturally with Hero's Journey titles. |
+| 8 | Second chances | primary `rebirth`, or `redemption_arc` present | mild (tag half: beat-tag group) | Emotionally distinct pull that genre browsing can't express. |
 | 9 | Beautiful downfalls | primary `tragedy` | mild | For viewers who want weight; honest labeling of what they're getting. |
 | 10 | The full hero's journey | blueprint `heros_journey` with 9 or more stages present | mild | Shows off the Mythic Blueprint layer. `mild` because the query uses late stages. |
 | 11 | Stories that go dark | blueprint `anti_hero_descent` | mild | Prestige-TV heavy; strong for series-level TV. |
@@ -490,7 +518,9 @@ The "Spoiler" column is the highest level any label in the row's query carries. 
 
 Re-check against the new rules:
 
-- **No row leaks under the decided defaults.** No query uses a `major` term.
+- **No row uses a `major` term.**
+- **Rows 5 to 7 changed from `none` to `mild`.** Membership reveals the `primary` plot, and `primary` is a single-choice field whose level is the highest in its vocabulary (`mild`, section 3 rule 3).
+- **Row 8 under the question 4 draft default:** `redemption_arc` is a `mild` beat tag, hidden by default, so the default view of row 8 uses only primary `rebirth`. If question 4 makes `mild` tags visible, row 8 uses both halves.
 - **Row 10 changed from `none` to `mild`**, because counting stage coverage uses late stages such as `resurrection` (rule 5).
 - **Row 8:** `redemption_arc` on a villain reveals that the villain turns; Hari approved it at `mild`, so the row stands.
 - **Rows left out:** rows built on `major` tags and on `twist_ending` stay out, since the row name would spoil every title in it.
@@ -520,4 +550,5 @@ Still **[OPEN] — Hari decides:**
 
 1. **Phase 1 exit metric.** Confirm the proposal in section 14: exact match on `archetypal_plot.primary.label` against the gold set, at least 80%, with abstentions counted as misses, and `emotional_arc` accuracy reported separately. The alternative is lenient plot matching.
 2. **TMDB written authorization for LLM use (Hari).** Until TMDB authorizes it in writing, no TMDB text is sent to Claude or embedded. If TMDB restricts use more broadly, `tmdb_id` (currently required) may need to give way to another primary identifier. Wikidata (CC0) carries identifiers for many films and series (including TMDB and IMDb ids) and could supply cross-IDs, though its coverage of newer or niche titles needs checking. Moving off `tmdb_id` would be a schema change coordinated with backend. Display metadata (posters, runtimes) would then need another licensed source; that question sits with PLAN §5.1, not this schema.
-3. **Flat stories.** Stories with no major move get a fallback arc label at low confidence (section 8), so they never appear in arc rows. Is that acceptable for v1, or should a "flat" or "steady" arc term be considered after the pilot? That would be a taxonomy change.
+3. **Flat stories.** Stories with no major move get a flagged fallback label that consumers ignore (section 8), so they never appear in arc rows or why-lines, and gold labelers mark them the same way. Is that acceptable for v1, or should a "flat" or "steady" arc term be considered after the pilot? That would be a taxonomy change. Collapsed W/M shapes (`reduced_shape`) are handled the same way and need no decision.
+4. **Visibility of `mild` beat tags and tones.** Should `mild` beat tags (`twist_ending`, `redemption_arc`, `ambiguous_ending`) and `mild` tones (`bleak`, `bittersweet`, `triumphant`) be visible by default like story shapes, or hidden until opt-in? The draft default is **hidden**. Either answer is a one-line change to the table in section 3. It also decides whether row 8's `redemption_arc` half appears in default views.

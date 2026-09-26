@@ -148,6 +148,7 @@ def to_record(
             "method": "derived",
             "threshold_used": derivation.threshold_used,
             "net_change_fallback": derivation.net_change_fallback,
+            "reduced_shape": derivation.reduced_shape,
         },
         "arc_points": points,
         "chronology": skel["chronology"],
@@ -160,7 +161,12 @@ def to_record(
 
 
 def from_record(record: dict[str, Any]) -> dict[str, Any]:
-    """Inverse of ``to_record`` for a full (non-gold) record. Used for tests and prompt examples."""
+    """Inverse of ``to_record`` for a full (non-gold) record. Used for tests and prompt examples.
+
+    ``arc_confidence`` is the stored ``emotional_arc.confidence``. For fallback or
+    reduced-shape arcs that is the capped value (at most 0.49), not the model's original one,
+    which the record does not keep.
+    """
     if record["outcome"] == "abstained":
         return {
             "outcome": "abstained",

@@ -8,6 +8,7 @@ Validation has two parts:
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime
 from functools import cache
 from importlib import resources
@@ -22,6 +23,10 @@ MAX_SECONDARY_PLOTS = 2
 # Minimum confidence for showing a label or using it in a browse row (DECISIONS.md 2026-09-26).
 # To be re-tuned from gold-set calibration after the 500-title pilot.
 DISPLAY_CONFIDENCE_THRESHOLD = 0.80
+# The only sources allowed as annotation or embedding input until TMDB authorizes LLM use in
+# writing (docs/NARRATIVE_SCHEMA.md section 1). Mirrors the schema's rule for LLM/gold records.
+ALLOWED_INPUT_LICENSES = frozenset({"CC-BY-SA-4.0", "CC-BY-SA-3.0"})
+WIKIPEDIA_REF = re.compile(r"^https://en\.wikipedia\.org/")
 
 
 @cache
@@ -102,14 +107,51 @@ def semantic_errors(record: dict[str, Any]) -> list[str]:
             errors.append("derived emotional_arc without arc_points")
         else:
             d = derive_arc(skel["arc_points"])
-            got = (arc["label"], arc["threshold_used"], arc["net_change_fallback"])
-            want = (d.label, d.threshold_used, d.net_change_fallback)
+            fields = ("label", "threshold_used", "net_change_fallback", "reduced_shape")
+            got = tuple(arc[f] for f in fields)
+            want = tuple(getattr(d, f) for f in fields)
             if got != want:
                 errors.append(f"emotional_arc {got} does not match derivation {want}")
             conf = arc.get("confidence")
-            if d.net_change_fallback and conf is not None and conf > FALLBACK_CONFIDENCE_CAP:
-                errors.append("net-change fallback arc must have confidence below 0.5")
+            if d.unreliable and conf is not None and conf > FALLBACK_CONFIDENCE_CAP:
+                errors.append("fallback or reduced-shape arc must have confidence below 0.5")
     return errors
+
+
+def require_wikipedia_sources(sources: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Fail-closed gate for anything sent to the model or embedded (prompt builder, embeddings).
+
+    Returns the sources unchanged if every one is a Wikipedia plot section under CC BY-SA with
+    an en.wikipedia.org ref; raises ValueError otherwise, including for an empty list or any
+    missing field. Never filters silently: one bad source rejects the whole title.
+    """
+    if not sources:
+        raise ValueError("no sources: refusing to build model or embedding input")
+    for i, src in enumerate(sources):
+        if not isinstance(src, dict):
+            raise ValueError(f"source {i} is not an object")
+        kind, license_, ref = src.get("kind"), src.get("license"), src.get("ref")
+        if kind != "wikipedia_plot":
+            raise ValueError(f"source {i}: kind {kind!r} is not allowed as input")
+        if license_ not in ALLOWED_INPUT_LICENSES:
+            raise ValueError(f"source {i}: license {license_!r} is not allowed as input")
+        if not isinstance(ref, str) or not WIKIPEDIA_REF.match(ref):
+            raise ValueError(f"source {i}: ref {ref!r} is not an en.wikipedia.org URL")
+    return sources
+
+
+def usable_arc_label(record: dict[str, Any]) -> str | None:
+    """The emotional-arc label a consumer may use (rows, why-lines, "more like this", title
+    pages), or None. Fallback and reduced-shape labels are never usable, whatever their
+    confidence; other labels need DISPLAY_CONFIDENCE_THRESHOLD."""
+    if record.get("outcome") != "annotated":
+        return None
+    arc = record["layers"]["structural_skeleton"]["emotional_arc"]
+    if arc.get("net_change_fallback") or arc.get("reduced_shape"):
+        return None
+    if arc.get("confidence", 0.0) < DISPLAY_CONFIDENCE_THRESHOLD:
+        return None
+    return arc["label"]
 
 
 def validate_record(record: dict[str, Any]) -> list[str]:

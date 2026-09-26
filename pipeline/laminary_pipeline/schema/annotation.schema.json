@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:laminary:schema:annotation:0.2.0",
+  "$id": "urn:laminary:schema:annotation:0.3.0",
   "title": "Laminary title annotation",
-  "description": "DRAFT 0.2.0, pending Hari's approval. Stored contract for one title's narrative annotation (movie, or whole TV series at series level). Definitions: docs/NARRATIVE_SCHEMA.md. Display rule: text under any 'safe_text' key may always be shown; text under any 'spoiler_text' key is hidden unless the viewer opts in; labels carry the levels in 'x-laminary-spoiler-levels'. The model-facing output schema is derived from this file by laminary_pipeline.model_output.",
+  "description": "DRAFT 0.3.0, pending Hari's approval. Stored contract for one title's narrative annotation (movie, or whole TV series at series level). Definitions: docs/NARRATIVE_SCHEMA.md. Display rule: text under any 'safe_text' key may always be shown; text under any 'spoiler_text' key is hidden unless the viewer opts in; labels carry the levels in 'x-laminary-spoiler-levels'. The model-facing output schema is derived from this file by laminary_pipeline.model_output.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -15,7 +15,7 @@
   "properties": {
     "schema_version": {
       "description": "Schema version the record conforms to.",
-      "const": "0.2.0"
+      "const": "0.3.0"
     },
     "record_kind": {
       "$ref": "#/$defs/record_kind"
@@ -155,6 +155,12 @@
                   "properties": {
                     "kind": {
                       "const": "wikipedia_plot"
+                    },
+                    "license": {
+                      "$ref": "#/$defs/input_license"
+                    },
+                    "ref": {
+                      "pattern": "^https://en\\.wikipedia\\.org/"
                     }
                   }
                 }
@@ -169,6 +175,9 @@
               "structural_skeleton": {
                 "properties": {
                   "emotional_arc": {
+                    "required": [
+                      "confidence"
+                    ],
                     "properties": {
                       "method": {
                         "const": "derived"
@@ -217,6 +226,12 @@
                   "properties": {
                     "kind": {
                       "const": "wikipedia_plot"
+                    },
+                    "license": {
+                      "$ref": "#/$defs/input_license"
+                    },
+                    "ref": {
+                      "pattern": "^https://en\\.wikipedia\\.org/"
                     }
                   }
                 }
@@ -395,6 +410,12 @@
         "CC-BY-SA-4.0",
         "CC-BY-SA-3.0",
         "TMDB-API-terms"
+      ]
+    },
+    "input_license": {
+      "enum": [
+        "CC-BY-SA-4.0",
+        "CC-BY-SA-3.0"
       ]
     },
     "outcome": {
@@ -873,7 +894,7 @@
     "emotional_arc_label": {
       "type": "object",
       "additionalProperties": false,
-      "description": "Emotional arc. For method 'derived' the pipeline computes label, threshold_used and net_change_fallback from arc_points (docs/NARRATIVE_SCHEMA.md section 8).",
+      "description": "Emotional arc. For method 'derived' the pipeline computes label, threshold_used, net_change_fallback and reduced_shape from arc_points (docs/NARRATIVE_SCHEMA.md section 8). Consumers ignore the label when net_change_fallback or reduced_shape is true.",
       "required": [
         "label",
         "method"
@@ -895,6 +916,9 @@
         },
         "net_change_fallback": {
           "type": "boolean"
+        },
+        "reduced_shape": {
+          "type": "boolean"
         }
       },
       "allOf": [
@@ -909,7 +933,8 @@
           "then": {
             "required": [
               "threshold_used",
-              "net_change_fallback"
+              "net_change_fallback",
+              "reduced_shape"
             ]
           }
         }
