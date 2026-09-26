@@ -151,6 +151,7 @@ def test_flat_arc_output_gets_capped_fallback_label() -> None:
         "method": "derived",
         "threshold_used": 0.3,
         "net_change_fallback": True,
+        "reduced_shape": False,
     }
     assert validate_record(record) == []
 
@@ -192,3 +193,27 @@ def test_out_of_range_arc_point_raises() -> None:
     output["layers"]["structural_skeleton"]["arc_points"]["t05"] = 1.4
     with pytest.raises(ValueError):
         to_record(output, record_kind="llm_annotation", title=title, provenance=llm_provenance())
+
+
+@pytest.mark.parametrize(
+    ("points", "flag"),
+    [
+        ([0.2, -0.4, -0.5, 0.2, 0.3, -0.3, -0.4, 0.1, 0.5, 0.6, 0.7], "reduced_shape"),
+        ([1.0, -1.0] * 5 + [1.0], "net_change_fallback"),
+    ],
+    ids=["W shape", "full-range oscillation"],
+)
+def test_flagged_arcs_produce_valid_capped_records(points: list[float], flag: str) -> None:
+    """Regression: oscillation used to derive threshold 2.1, which the schema rejects."""
+    output, title = base_output()
+    skel = output["layers"]["structural_skeleton"]
+    skel["arc_points"] = dict(zip(ARC_KEYS, points, strict=True))
+    skel["arc_confidence"] = 0.95
+    record = to_record(
+        output, record_kind="llm_annotation", title=title, provenance=llm_provenance()
+    )
+    arc = record["layers"]["structural_skeleton"]["emotional_arc"]
+    assert arc[flag] is True
+    assert arc["confidence"] == 0.49
+    assert arc["threshold_used"] <= 2.0
+    assert validate_record(record) == []

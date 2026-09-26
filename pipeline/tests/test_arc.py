@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import random
+
 import pytest
 
 from laminary_pipeline.arc import (
@@ -57,6 +59,7 @@ def test_flat_story_falls_back_to_net_change(points: list[float], label: str) ->
     d = derive_arc(points)
     assert d.label == label
     assert d.net_change_fallback
+    assert not d.reduced_shape
     assert d.legs == ()
     assert derived_confidence(0.9, d) == FALLBACK_CONFIDENCE_CAP
     assert derived_confidence(0.3, d) == 0.3
@@ -77,7 +80,8 @@ def test_long_series_zigzag_reduces_to_dominant_shape() -> None:
     assert len(major_moves(points, 0.3)) >= 4
     d = derive_arc(points)
     assert d.label == "icarus"
-    assert d.threshold_used > 0.3
+    assert d.threshold_used == 0.4
+    assert not d.reduced_shape
 
 
 def test_oscillation_with_no_large_scale_shape_falls_back() -> None:
@@ -96,3 +100,53 @@ def test_confidence_not_capped_without_fallback() -> None:
 def test_invalid_points_raise(points: list[float]) -> None:
     with pytest.raises(ValueError):
         derive_arc(points)
+
+
+W_SHAPE = [0.2, -0.4, -0.5, 0.2, 0.3, -0.3, -0.4, 0.1, 0.5, 0.6, 0.7]
+M_SHAPE = [-p for p in W_SHAPE]
+
+
+@pytest.mark.parametrize(
+    ("points", "label"), [(W_SHAPE, "rags_to_riches"), (M_SHAPE, "riches_to_rags")], ids=["W", "M"]
+)
+def test_w_and_m_collapse_to_one_leg_and_are_flagged(points: list[float], label: str) -> None:
+    assert len(major_moves(points, 0.3)) >= 4
+    d = derive_arc(points)
+    assert (d.label, d.threshold_used, len(d.legs)) == (label, 0.8, 1)
+    assert d.reduced_shape and not d.net_change_fallback and d.unreliable
+    assert derived_confidence(0.95, d) == FALLBACK_CONFIDENCE_CAP
+
+
+def test_reduction_needing_threshold_0_6_is_flagged_even_with_two_legs() -> None:
+    points = [0.0, -0.8, -0.3, -0.8, -0.3, -0.8, -0.3, 0.2, 0.5, 0.8, 0.8]
+    assert len(major_moves(points, 0.5)) >= 4
+    d = derive_arc(points)
+    assert (d.label, d.threshold_used) == ("man_in_a_hole", 0.6)
+    assert d.reduced_shape
+
+
+def test_small_reductions_are_not_flagged() -> None:
+    d = derive_arc([0.1, -0.2, -0.4, -0.3, 0.0, -0.5, -0.8, -0.6, -0.1, 0.5, 0.9])
+    assert d.threshold_used == 0.5 and len(d.legs) == 2
+    assert not d.reduced_shape and not d.unreliable
+
+
+def test_full_range_oscillation_stops_at_threshold_2() -> None:
+    points = [1.0, -1.0] * 5 + [1.0]
+    assert len(major_moves(points, 2.0)) >= 4  # moves of exactly 2.0 still count
+    d = derive_arc(points)
+    assert d.threshold_used == 2.0  # schema maximum; never 2.1
+    assert d.net_change_fallback and d.label == "riches_to_rags"  # net change is zero
+
+
+def test_move_detection_is_symmetric_in_time_and_sign() -> None:
+    """The opening sub-threshold move is dropped exactly like the closing one."""
+    flip = {"up": "down", "down": "up"}
+    rng = random.Random(20260926)
+    for _ in range(3000):
+        points = [round(rng.uniform(-1, 1), 1) for _ in range(11)]
+        for threshold in (0.3, 0.5, 0.8, 1.2):
+            moves = major_moves(points, threshold)
+            reversed_moves = tuple(flip[m] for m in reversed(moves))
+            assert major_moves(points[::-1], threshold) == reversed_moves
+            assert major_moves([-p for p in points], threshold) == tuple(flip[m] for m in moves)

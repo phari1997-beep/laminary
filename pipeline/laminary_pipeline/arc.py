@@ -7,10 +7,20 @@ annotation prompt, the gold-set guide and the pipeline all agree:
    peak or trough. Smaller wobbles are ignored. Deltas are rounded to 6 decimals before the
    comparison, so a move of exactly 0.3 counts despite float error (0.7 - 0.4 = 0.2999...).
 2. One to three major moves map directly to one of the six arcs.
-3. Four or more moves: raise the threshold in 0.1 steps until at most three remain.
-4. No major moves (a flat or gentle story, at any threshold): fall back to the direction of the
-   net change, end minus start (rise -> rags_to_riches, fall -> riches_to_rags). A net change of
-   exactly zero counts as a fall. Fallback labels have confidence capped below 0.5.
+3. Four or more moves: raise the threshold in 0.1 steps until at most three remain, up to a
+   maximum of 2.0 (the full fortune range). The label is flagged ``reduced_shape`` when the
+   reduction lands on a single move, or needs a threshold of 0.6 or more: a W or M shape can
+   otherwise collapse into one confident leg.
+4. No major moves (a flat or gentle story), or still four or more at 2.0: fall back to the
+   direction of the net change, end minus start (rise -> rags_to_riches, fall ->
+   riches_to_rags). A net change of exactly zero counts as a fall.
+
+Fallback and reduced labels have confidence capped below 0.5, and consumers ignore them
+(docs/NARRATIVE_SCHEMA.md section 8).
+
+``major_moves`` is symmetric: reversing the points in time, or flipping their sign, reverses or
+flips the moves. A sub-threshold opening move is dropped exactly like a sub-threshold closing
+move (property-tested in tests/test_arc.py).
 """
 
 from __future__ import annotations
@@ -21,6 +31,8 @@ from dataclasses import dataclass
 ARC_POINT_COUNT = 11
 MAJOR_MOVE = 0.3
 THRESHOLD_STEP = 0.1
+MAX_THRESHOLD = 2.0
+REDUCED_SHAPE_THRESHOLD = 0.6
 FALLBACK_CONFIDENCE_CAP = 0.49
 _DECIMALS = 6
 
@@ -40,6 +52,12 @@ class ArcDerivation:
     threshold_used: float
     legs: tuple[str, ...]
     net_change_fallback: bool
+    reduced_shape: bool
+
+    @property
+    def unreliable(self) -> bool:
+        """True when consumers must ignore the label (fallback or reduced shape)."""
+        return self.net_change_fallback or self.reduced_shape
 
 
 def _reaches(delta: float, threshold: float) -> bool:
@@ -84,17 +102,21 @@ def derive_arc(points: Sequence[float]) -> ArcDerivation:
     threshold = MAJOR_MOVE
     while True:
         legs = major_moves(points, threshold)
+        reduced = threshold > MAJOR_MOVE
         if 1 <= len(legs) <= 3:
-            return ArcDerivation(LEGS_TO_ARC[legs], round(threshold, 1), legs, False)
-        if not legs:
+            flag = reduced and (
+                len(legs) == 1 or round(threshold, _DECIMALS) >= REDUCED_SHAPE_THRESHOLD
+            )
+            return ArcDerivation(LEGS_TO_ARC[legs], round(threshold, 1), legs, False, flag)
+        if not legs or round(threshold, _DECIMALS) >= MAX_THRESHOLD:
             net = round(points[-1] - points[0], _DECIMALS)
             label = "rags_to_riches" if net > 0 else "riches_to_rags"
-            return ArcDerivation(label, round(threshold, 1), (), True)
+            return ArcDerivation(label, round(threshold, 1), (), True, reduced)
         threshold += THRESHOLD_STEP  # 4+ moves: look at a coarser scale
 
 
 def derived_confidence(model_confidence: float, derivation: ArcDerivation) -> float:
-    """Confidence stored for a derived label: the model's, capped for net-change fallbacks."""
-    if derivation.net_change_fallback:
+    """Confidence stored for a derived label: the model's, capped for fallback or reduced shapes."""
+    if derivation.unreliable:
         return min(model_confidence, FALLBACK_CONFIDENCE_CAP)
     return model_confidence
