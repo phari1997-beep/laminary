@@ -1,29 +1,36 @@
 # Narrative taxonomy and annotation schema
 
-**Status: DRAFT v0.1.0, awaiting Hari's approval.** Owner: data-pipeline. Once approved, the schema becomes v1.0.0.
+**Status: DRAFT v0.2.0.** Owner: data-pipeline. Includes Hari's decisions of 2026-09-26 (`docs/DECISIONS.md`); items still marked **[OPEN]** are listed in section 16. The schema becomes 1.0.0 once QA passes and Hari approves the final draft.
 
-- Machine contract: `pipeline/schema/annotation.schema.json` (JSON Schema draft 2020-12)
-- Illustrative examples: `pipeline/schema/examples/`
-- Consistency test: `pipeline/tests/test_schema.py` checks that every vocabulary table in this document matches the schema's enums and spoiler levels exactly. Edit both together.
+- Stored record contract: `pipeline/laminary_pipeline/schema/annotation.schema.json` (JSON Schema draft 2020-12, shipped as package data)
+- Model-facing output schema: derived in code, `laminary_pipeline/model_output.py` (section 11)
+- Arc derivation rule: `laminary_pipeline/arc.py` (section 8)
+- Validation (schema + semantic checks): `laminary_pipeline/annotation.py` (section 12)
+- Illustrative examples (test data, not shipped): `pipeline/tests/examples/`
+- Consistency tests: `pipeline/tests/test_schema.py` checks that every vocabulary table here matches the schema's enums and spoiler levels exactly, and that every backticked identifier in this document exists in the schema. Edit both together.
 
-This document is the single source of definitions for three things: the annotation prompt, the gold-set labeling guide, and the frontend's display rules. Definitions are written so that a model or a person reading only a plot summary can apply them the same way.
+This document is the single source of definitions for the annotation prompt, the gold-set labeling guide, and the frontend's display rules. Definitions are written so that a model or a person reading only a plot summary can apply them the same way.
 
 ---
 
 ## 1. Ground rules
 
-1. **Licensed summaries only.** Input is Wikipedia plot sections (CC BY-SA) and TMDB overviews. Never scripts, subtitles, or book texts. The summary text is not stored in the annotation record; the record stores a reference, revision and hash of each source (section 10).
-2. **No guessing from a title.** Annotate only what the supplied summary supports. Do not use outside knowledge of the title to fill gaps. If the summary is too thin to support the four layers, the correct output is `outcome: "abstained"`, not a low-confidence guess. The pipeline also skips titles below a word-count gate before calling the model (proposed 150 words total; open question 6).
-3. **Own words.** Every free-text field is written fresh. Never copy or closely paraphrase sentences from the source. (Also avoids share-alike complications with Wikipedia text; see open question 5.)
-4. **Describe, don't grade.** Text explains the story's shape. No quality judgments ("brilliant", "weak third act").
-5. **Scope.** One record per movie or per whole TV series (all aired seasons together). No episode-level or season-level records in v1.
+1. **Licensed summaries only.** Input is Wikipedia plot sections (CC BY-SA) and TMDB overviews. Never scripts, subtitles, or book texts. The summary text is not stored in the record; the record stores a reference, revision and hash of each source (section 10).
+2. **Minimum summary: 150 words** (decided 2026-09-26). Titles with less summary text in total are skipped before any model call, and get no narrative data. The schema enforces this on LLM and gold records.
+3. **No guessing from a title.** Annotate only what the supplied summary supports. Do not fill gaps from outside knowledge of the title. If the summary can't support the four layers, the correct output is `outcome: "abstained"`, not a low-confidence guess.
+4. **Own words.** Every free-text field is written fresh. Never copy or closely paraphrase sentences from the source.
+5. **Attribution (decided 2026-09-26).** Title pages attribute Wikipedia wherever displayed analysis is derived from its plot summaries. Display requirement for frontend: show attribution when any entry in `provenance.sources` has `kind` of `wikipedia_plot`.
+6. **Describe, don't grade.** Text explains the story's shape. No quality judgments.
+7. **Scope (decided 2026-09-26).** Movies, and TV at series level only: one record per whole series, never per episode or season. Ongoing series are annotated on the episodes aired so far and refreshed when the summary changes (section 10).
+
+Whether TMDB's API terms allow sending overviews to a third-party LLM and storing the output is **[OPEN]** (section 16, question 3). Until answered, Phase 1 pilots should prefer Wikipedia plot sections.
 
 ---
 
 ## 2. Record at a glance
 
 ```
-schema_version        "0.1.0"
+schema_version        "0.2.0"
 record_kind           llm_annotation | gold_label | illustrative_example
 title                 media_type, name, release_year, tmdb_id, wikidata_id, series_status (TV only)
 provenance            annotated_at, annotator{...}, sources[...], input_word_count, usage{...}, notes
@@ -31,30 +38,21 @@ outcome               annotated | abstained
 abstain_reason        (only when abstained)
 layers                (only when annotated)
   surface_story         setting_period, tones[], protagonist_structure, safe_text{...}, spoiler_text{...}
-  archetypal_plot       primary{label,confidence}, secondary{plot: confidence}, safe_text, spoiler_text
-  mythic_blueprint      blueprint{label,confidence}, stages_present{stage: confidence}, safe_text, spoiler_text
-  structural_skeleton   emotional_arc{label,confidence}, arc_points[11], chronology, safe_text, spoiler_text
-beat_tags             (only when annotated) tags{tag: confidence}, spoiler_text{evidence{tag: text}}
+  archetypal_plot       primary{label, confidence}, plots{<every plot>: judgment}, safe_text, spoiler_text
+  mythic_blueprint      blueprint{label, confidence}, stages{<every stage>: judgment}, safe_text, spoiler_text
+  structural_skeleton   emotional_arc{label, confidence, method, ...}, arc_points[11], chronology, safe_text, spoiler_text
+beat_tags             (only when annotated) tags{<every tag>: judgment}, spoiler_text{evidence[{tag, note}]}
 ```
 
-Every object is closed (`additionalProperties: false`), so a typo'd or invented field fails validation.
+A **judgment** is `{present: true|false, confidence}` (section 4). Every object is closed (`additionalProperties: false`), so a typo'd or invented field fails validation.
 
-**Who fills what.** The model produces `outcome`, `abstain_reason`, `layers` and `beat_tags`. The pipeline fills `schema_version`, `record_kind`, `title` and `provenance`; the model never writes provenance.
+**Who fills what.** The model produces `outcome`, `abstain_reason`, `layers` (minus `emotional_arc`) and `beat_tags`, in the model-facing shape of section 11. The pipeline fills `schema_version`, `record_kind`, `title`, `provenance`, and derives `emotional_arc` from the arc points (section 8).
 
 ---
 
 ## 3. Spoiler handling
 
-Promise 3 in VISION.md: spoilers are hidden unless the viewer opts in. The schema enforces this in two ways.
-
-**Free text is structurally split.** Every block that carries text has two sibling objects:
-
-- `safe_text`: always displayable. Must stay at spoiler level `none`.
-- `spoiler_text`: hidden by default. May reveal anything.
-
-A frontend that drops every `spoiler_text` key, at any depth, is guaranteed to show no spoiler text. No free-text field exists outside these two objects.
-
-**Controlled labels carry a fixed spoiler level.** Some labels reveal the ending by their nature (a Tragedy label says it ends badly). Each term's level is fixed in the vocabulary tables below and machine-readable in the schema under `x-laminary-spoiler-levels`. The arc line (`arc_points`) is level `mild`, since its end point shows whether things end well.
+Promise 3 in VISION.md: spoilers are hidden unless the viewer opts in.
 
 <!-- vocab:spoiler_level -->
 | Value | Name | Definition |
@@ -63,31 +61,48 @@ A frontend that drops every `spoiler_text` key, at any depth, is guaranteed to s
 | `mild` | Shape | Reveals the overall direction or tone of the ending (up or down, twist or no twist) without saying what happens. |
 | `major` | Spoiler | Reveals specific events after the setup: who dies, what the twist is, how the conflict resolves. |
 
-Rule for `safe_text`: if a sentence would only make sense to someone who has seen past the first quarter of the story, it belongs in `spoiler_text`.
+**Default visibility (decided 2026-09-26).** Levels `none` and `mild` are shown by default: story-shape labels (emotional arc, Booker plot, blueprint) and the arc line are visible. Everything `major`, and all `spoiler_text`, is hidden until the viewer opts in. A viewer setting that hides story shapes as well would hide `mild` too; the rules below keep that consistent.
 
-Default visibility of `mild` labels (story shapes, the arc line) is **open question 1**: the product's core browse feature is built on them, so hiding them by default would hide the product.
+**Rule 1: free text is structurally split.** Every block that carries text has two sibling objects:
+
+- `safe_text`: always displayable. Must stay at spoiler level `none`. If a sentence only makes sense to someone who has seen past the first quarter of the story, it belongs in `spoiler_text`.
+- `spoiler_text`: hidden by default. May reveal anything.
+
+No free-text field exists outside these two objects (enforced by a test). A frontend that drops every `spoiler_text` key, at any depth, shows no spoiler text.
+
+**Rule 2: each controlled term has a fixed level**, given in the vocabulary tables below and machine-readable in the schema under `x-laminary-spoiler-levels.vocabularies`. Per-instance overrides are not allowed.
+
+**Rule 3: single-choice fields are hidden whole.** A single-choice field (the primary plot, the blueprint, the emotional arc, setting period, protagonist structure, chronology) has a field-level spoiler level equal to the highest level in its vocabulary (`x-laminary-spoiler-levels.fields`). When that level is hidden, the field shows the same placeholder whatever its value, so "hidden" can't itself reveal a dark ending. The arc line (`arc_points`) is level `mild`.
+
+**Rule 4: presence sets hide per term, silently.** For `tones`, `plots`, `stages` and `tags`, terms above the visible level are simply not mentioned. The UI never shows a count, gap or "and 1 more" that would reveal a hidden term exists.
+
+**Rule 5: derived content inherits the highest level it uses.** Any text or grouping computed from labels (why-lines, browse-row membership, share cards, "more like this" explanations) carries the highest spoiler level of the labels it uses. Default views may only use labels at visible levels. Example: a why-line built on `mentor_dies` is `major` and can't appear in a default view, even if every other label it uses is `none`.
+
+The per-term table below and the 0.70 display threshold (section 4) still need Hari's sign-off: **[OPEN]**, section 16 question 1.
 
 ---
 
 ## 4. Confidence
 
-Every judgment that is scored in evaluation carries a `confidence` in [0, 1]: the primary plot, secondary plots, the blueprint, each Hero's Journey stage, the emotional arc, and each beat tag. Descriptive surface fields (setting period, tones, protagonist structure, chronology) carry none.
+Two kinds of scored judgment:
 
-Confidence means "how likely is this label to match a careful human reading of the same summary." Bands, used in both the prompt and the labeling guide:
+- **Single-choice labels** (`primary`, `blueprint`, `emotional_arc`): always present. `confidence` in [0, 1] is the chance the label matches a careful human reading of the same summary. Below 0.50 means "best available fit, and it is weak."
+- **Presence judgments** (every term in `plots`, `stages`, `tags`): the annotator judges **every** term present or absent, and `confidence` in [0.5, 1] is confidence in that judgment. It can't go below 0.5, because then the opposite judgment would be the better one.
+
+Because every term gets an explicit judgment, "absent" is always stated. A key that is missing can only happen in a record from an older schema version that predates the term, and it means **not assessed** (section 13).
+
+Descriptive surface fields (setting period, tones, protagonist structure, chronology) carry no confidence. On gold labels, confidence is optional throughout.
+
+Bands, used in both the prompt and the labeling guide:
 
 | Range | Meaning |
 |---|---|
 | 0.90 to 1.00 | The summary states it directly, or it is unmistakable. |
 | 0.70 to 0.89 | Strongly implied; a careful reader would agree. |
 | 0.50 to 0.69 | Plausible; reasonable readers could disagree. |
-| below 0.50 | Weak. |
+| below 0.50 | Weak (single-choice labels only). |
 
-Two kinds of judgment:
-
-- **Single-choice labels** (`primary`, `blueprint`, `emotional_arc`): always present; pick the best fit. A confidence below 0.50 means "best available fit, and it is weak."
-- **Presence sets** (`secondary`, `stages_present`, `beat_tags.tags`): include an item only if you judge it present (confidence 0.50 or higher). An item missing from the object is a judgment that it is absent. An empty object is valid.
-
-Proposed display rule (tunable after the pilot, not a product decision): show a label on a title page or in a browse row only at confidence 0.70 or higher. Calibration is checked against the gold set: of labels given 0.8, about 80% should match the gold label.
+Proposed display rule **[OPEN]**: show a label on a title page or use it for a browse row only at confidence 0.70 or higher. Calibration is checked against the gold set: of labels given 0.8, about 80% should match (section 14).
 
 ---
 
@@ -98,7 +113,7 @@ What happens on the surface: who, where, when, and what they are up against.
 | Field | Type | Meaning |
 |---|---|---|
 | `setting_period` | enum | When the story mainly takes place, relative to its release. |
-| `tones` | 1 to 3 enums | The dominant feel while watching. Feeds the mood filter. |
+| `tones` | 1 to 3 enums | The dominant feel while watching. Internal labels for now; frontend proposes user-facing mood names in Phase 3 (decided 2026-09-26). |
 | `protagonist_structure` | enum | How many people the story is centered on. |
 | `safe_text.logline` | ≤240 chars | One or two sentences stating the premise. Setup only. |
 | `safe_text.protagonist` | ≤160 chars | Who the main character is at the start. |
@@ -141,14 +156,14 @@ Confusion: `playful` is a tone and says nothing about plot. A playful film can b
 
 ---
 
-## 6. Layer 2: Archetypal Plot (Booker's seven basic plots)
+## 6. Layer 2: Archetypal Plot (Booker's basic plots)
 
-Which of Christopher Booker's seven plots best describes the story's engine: what drives events from start to finish.
+Which of Christopher Booker's plots best describes the story's engine: what drives events from start to finish. v1 uses all nine: the seven basic plots plus Rebellion Against "The One" and Mystery (decided 2026-09-26).
 
 | Field | Meaning |
 |---|---|
 | `primary` | The single best-fitting plot, with confidence. Always present. |
-| `secondary` | Up to two more plots that are clearly present as major threads. Must not repeat the primary. |
+| `plots` | A judgment for every plot: is it present as a major thread? The primary must be judged present. At most two other plots may be present (the "secondary" plots). |
 | `safe_text.rationale` | Why, using setup-level evidence only. ≤280 chars. |
 | `spoiler_text.rationale` | Full reasoning. ≤400 chars. |
 
@@ -162,6 +177,8 @@ Which of Christopher Booker's seven plots best describes the story's engine: wha
 | `comedy` | Comedy (Booker) | none | Confusion, misunderstanding, disguise or social obstacles keep people apart; the story ends when the confusion is cleared and they are united or reconciled. Not the same as "funny." |
 | `tragedy` | Tragedy | mild | A flaw, ambition or transgression draws the protagonist down a path that ends in their destruction or death. Apply only when the downfall is the ending. |
 | `rebirth` | Rebirth | mild | The protagonist falls under a dark power or deadened state (curse, bitterness, spiritual numbness) and is freed from it by another person or by a transforming realization; the story is about that release. |
+| `rebellion_against_the_one` | Rebellion Against "The One" | none | The protagonist defies an all-powerful authority or system that governs their whole world (a state, an institution, a controlling order); the story follows that defiance through to escape, overthrow, or the rebel's defeat and submission. |
+| `mystery` | Mystery | none | A character, often an outsider such as a detective, reporter or curious bystander, investigates a puzzling event, usually a crime; the investigation and the uncovering of the truth drive the story. |
 
 Common confusions:
 
@@ -170,31 +187,33 @@ Common confusions:
 - **Rebirth vs the `redemption_arc` beat tag.** Rebirth is the whole story's engine. A redemption arc tag can apply to any character, including a secondary one, inside any plot.
 - **Quest vs Voyage and Return.** In a Quest the protagonist chooses a goal and the story ends on reaching it. In Voyage and Return the protagonist is thrown into the other world and the story ends on getting home.
 - **Comedy vs playful tone.** A very funny film about defeating a villain is `overcoming_the_monster` with a `playful` tone.
-- **Not in the list.** Booker's later additions (Rebellion Against "The One", Mystery) are excluded in v1 (open question 3). Stories that fit none of the seven still get the best fit with a low confidence.
+- **Rebellion Against "The One" vs Overcoming the Monster.** The Monster is an outside threat that invades or endangers the protagonist's world and is fought in order to destroy it. "The One" *is* the order of the protagonist's world, and the story is about refusing to be absorbed by it. When a hero fights a controlling system's enforcers and wins, both may be present; pick the primary by what the story spends most of its time on.
+- **Mystery vs `twist_ending`.** A late surprise doesn't make a Mystery. Mystery requires an investigation that drives the plot. A thriller built around a hidden secret is not a Mystery unless a character's inquiry is the engine.
+- **Mystery vs Overcoming the Monster.** A detective hunting a killer can be both. If the story is organized around working out what happened, it's Mystery; if it is organized around stopping an identified threat, it's Overcoming the Monster.
 
 ---
 
 ## 7. Layer 3: Mythic Blueprint
 
-Whether the story follows a mythic journey pattern, which one, and how many Hero's Journey stages it covers.
+Whether the story follows a mythic journey pattern, which one, and which Hero's Journey stages it covers.
 
 | Field | Meaning |
 |---|---|
 | `blueprint` | The best-fitting journey pattern, with confidence. Always present. |
-| `stages_present` | Hero's Journey stages judged present, each with confidence. Recorded for every blueprint, including variants, so coverage is comparable across titles. |
+| `stages` | A judgment for every Hero's Journey stage. Recorded for every blueprint, including variants, so coverage is comparable across titles. |
 | `safe_text.rationale` / `spoiler_text.rationale` | As in Layer 2. |
 
 <!-- vocab:mythic_blueprint -->
 | Value | Name | Spoiler | Definition |
 |---|---|---|---|
 | `heros_journey` | Hero's Journey | none | The protagonist leaves a familiar world, is tested in an unfamiliar one, survives a decisive ordeal largely through their own growth, and returns changed, bringing back something of value to others. |
-| `heroines_journey` | Heroine's Journey | none | A journey whose strength comes through connection: the protagonist is cut off or descends, gathers or rebuilds a network of allies, and resolves the story by restoring or forming a community rather than through a solitary victory. Not about the protagonist's gender. |
-| `anti_hero_descent` | Anti-hero descent | mild | A morally compromised protagonist's journey runs downward: each step takes them deeper into wrongdoing or self-destruction, and there is no return that benefits others. |
-| `no_clear_blueprint` | No clear blueprint | none | None of the three patterns organizes the story (slice-of-life, pure procedurals, many ensemble dramas). Stages may still be listed if individually present. |
+| `heroines_journey` | Heroine's Journey | none | A journey whose strength comes through connection: the protagonist is cut off or descends, gathers or rebuilds a network of allies, and resolves the story by restoring or forming a community rather than through a solitary victory. Not about the protagonist's gender. Follows Gail Carriger, The Heroine's Journey (2020). |
+| `anti_hero_descent` | Anti-hero descent | mild | A morally compromised protagonist's journey runs downward: each step takes them deeper into wrongdoing or self-destruction, and there is no return that benefits others. In-house Laminary definition, not from a published model. |
+| `no_clear_blueprint` | No clear blueprint | none | None of the three patterns organizes the story (slice-of-life, pure procedurals, many ensemble dramas). Stages may still be judged present individually. |
 
 Confusions: an unlikable protagonist who ends up redeemed is not an `anti_hero_descent`; that is usually `heros_journey` or `rebirth` with a `redemption_arc` tag. A found-family story is not automatically a Heroine's Journey; it must also resolve through the network.
 
-Stages follow Christopher Vogler's 12-stage film version of Campbell's monomyth (open question 2):
+Stages follow Christopher Vogler's 12-stage film version of Campbell's monomyth, from The Writer's Journey (decided 2026-09-26). Names are Vogler's own.
 
 <!-- vocab:journey_stage -->
 | Value | Name | Spoiler | Definition |
@@ -202,17 +221,17 @@ Stages follow Christopher Vogler's 12-stage film version of Campbell's monomyth 
 | `ordinary_world` | Ordinary World | none | The protagonist's normal life is shown before the adventure, establishing what they lack or want. |
 | `call_to_adventure` | Call to Adventure | none | An event, message or challenge disrupts normal life and invites or forces a new course. |
 | `refusal_of_the_call` | Refusal of the Call | none | The protagonist hesitates, resists or declines the call, at least at first. |
-| `meeting_the_mentor` | Meeting the Mentor | none | A guide figure gives advice, training, a gift or confidence needed for the journey. |
-| `crossing_the_threshold` | Crossing the Threshold | none | The protagonist commits and enters the unfamiliar world or situation; there is no easy way back. |
+| `meeting_with_the_mentor` | Meeting with the Mentor | none | A guide figure gives advice, training, a gift or confidence needed for the journey. |
+| `crossing_the_first_threshold` | Crossing the First Threshold | none | The protagonist commits and enters the unfamiliar world or situation; there is no easy way back. |
 | `tests_allies_enemies` | Tests, Allies, Enemies | none | In the new world, the protagonist faces trials and learns who can be trusted. |
-| `approach_to_inmost_cave` | Approach to the Inmost Cave | mild | Preparation for and movement toward the place or moment of greatest danger. |
+| `approach_to_the_inmost_cave` | Approach to the Inmost Cave | mild | Preparation for and movement toward the place or moment of greatest danger. |
 | `ordeal` | Ordeal | mild | The central crisis: a confrontation with death, defeat or the protagonist's greatest fear. |
-| `reward` | Reward | mild | Having survived the ordeal, the protagonist gains something: an object, knowledge, reconciliation or a new strength. |
-| `road_back` | The Road Back | mild | The protagonist sets out to return or finish, often chased or facing consequences of the ordeal. |
+| `reward` | Reward (Seizing the Sword) | mild | Having survived the ordeal, the protagonist gains something: an object, knowledge, reconciliation or a new strength. |
+| `the_road_back` | The Road Back | mild | The protagonist sets out to return or finish, often chased or facing consequences of the ordeal. |
 | `resurrection` | Resurrection | mild | A final, climactic test where the protagonist is nearly destroyed and emerges transformed. |
-| `return_with_elixir` | Return with the Elixir | mild | The protagonist comes home or to a new equilibrium bringing something that benefits others. |
+| `return_with_the_elixir` | Return with the Elixir | mild | The protagonist comes home or to a new equilibrium bringing something that benefits others. |
 
-A stage counts as present only if the summary shows an identifiable story event that performs its function. Ordeal vs Resurrection: the ordeal is the midpoint-to-late central crisis; resurrection is the final climactic test. If the summary shows only one such crisis near the end, mark `resurrection` and not `ordeal`.
+A stage counts as present only if the summary shows an identifiable story event that performs its function. Ordeal vs Resurrection: the ordeal is the midpoint-to-late central crisis; resurrection is the final climactic test. If the summary shows only one such crisis near the end, mark `resurrection` present and `ordeal` absent.
 
 ---
 
@@ -222,37 +241,52 @@ The shape of the story over time and how it is told.
 
 | Field | Meaning |
 |---|---|
-| `emotional_arc` | Which of the six core emotional arcs best matches the protagonist's fortune over the story, with confidence. |
-| `arc_points` | Exactly 11 numbers: the protagonist's fortune at t = 0.0, 0.1, ..., 1.0. Drawn as the story-shape arc line. Spoiler level `mild`. |
+| `arc_points` | Exactly 11 numbers: the protagonist's fortune at t = 0.0, 0.1, ..., 1.0. Drawn as the story-shape arc line. Spoiler level `mild`. Written by the annotator. |
+| `emotional_arc` | Which of the six core arcs the points trace. **Derived by the pipeline** from `arc_points` with the rule below (method `derived`); the model never picks it. |
 | `chronology` | How story events are ordered in the telling. |
 | `safe_text.rationale` / `spoiler_text.rationale` | As in Layer 2. |
 
 ### Arc points
 
 - **t** is position in the telling, from the first scene (0.0) to the last (1.0), in presentation order, not in-world chronology. For a TV series, t spans the whole aired run. t is implicit: the i-th value is at t = i/10.
-- **Fortune** is the protagonist's overall situation and well-being as the story presents it: safety, status, relationships, hope. Range -1 (the worst state the story puts them in) to +1 (the best). 0 is neither good nor bad. For `ensemble` stories use the central group's collective fortune.
+- **Fortune** is the protagonist's actual situation as the story presents it: safety, status, relationships, prospects. Range -1 (the worst state the story puts them in) to +1 (the best); 0 is neither good nor bad. For `ensemble` stories use the central group's collective fortune.
+- **Situation, not mood.** Fortune tracks the protagonist's circumstances, not how they feel in the moment. Enjoying oneself while still trapped does not raise fortune; only a real change in the situation does (escape, a gain that lasts, a relationship that changes). Example: a character stuck in a time loop who spends a stretch indulging himself is still trapped, so fortune stays low.
 - Values need not start at 0. Use one or two decimal places.
-- For `ongoing` series, the arc covers the aired run as of the source revision.
+- For `ongoing` series, the points cover episodes aired as of the source revision.
 
-### Emotional arcs
+### Deriving the emotional arc
 
-The six core arcs (Reagan et al., 2016, after Vonnegut). They are defined by the direction of the **major moves** in fortune. A major move is a rise or fall of at least 0.3 from the most recent peak or trough; smaller wobbles are ignored. The label must agree with `arc_points` under this rule; the pipeline checks it (section 11).
+The six core arcs (Reagan et al., 2016, after Vonnegut) are defined by the directions of the story's **major moves**. The same rule is used by the pipeline, the gold-set guide and the checker (`laminary_pipeline/arc.py`):
+
+1. **Major move.** A rise or fall of at least 0.3 from the most recent peak or trough. Smaller wobbles are ignored. Differences are rounded to 6 decimals before comparing, so a move of exactly 0.3 counts.
+2. **One to three major moves** map directly to an arc (table below).
+3. **Four or more major moves** (common in long series): raise the threshold in steps of 0.1 (0.4, 0.5, ...) until at most three moves remain, then map. The threshold used is stored in `emotional_arc.threshold_used`.
+4. **No major moves** (a flat or gentle story, at any threshold): fall back to the direction of the net change, last point minus first point. A net rise maps to `rags_to_riches`; a net fall, or exactly zero, maps to `riches_to_rags`. The record sets `net_change_fallback` to true and the stored confidence is capped at 0.49, so these labels fall below the display threshold. There is deliberately no "flat" arc term (section 16, question 4).
+
+Stored confidence for a derived arc is the annotator's `arc_confidence` (how well the points capture the story), capped as above.
 
 <!-- vocab:emotional_arc -->
 | Value | Name | Spoiler | Definition |
 |---|---|---|---|
-| `rags_to_riches` | Rags to Riches (arc) | mild | One major move: a sustained rise. Fortune ends clearly higher than it starts, with no major setback along the way. |
-| `riches_to_rags` | Riches to Rags | mild | One major move: a sustained fall. Fortune ends clearly lower than it starts, with no major recovery. |
-| `man_in_a_hole` | Man in a Hole | mild | Two major moves: fall, then rise. Things go wrong, then recover, usually above where they fell from. |
+| `rags_to_riches` | Rags to Riches (arc) | mild | One major move: a sustained rise. Also the fallback label for a story with no major moves and a net rise. |
+| `riches_to_rags` | Riches to Rags | mild | One major move: a sustained fall. Also the fallback label for a story with no major moves and a net fall or no net change. |
+| `man_in_a_hole` | Man in a Hole | mild | Two major moves: fall, then rise. Things go wrong, then recover. |
 | `icarus` | Icarus | mild | Two major moves: rise, then fall. Success builds and then collapses. |
-| `cinderella` | Cinderella | mild | Three major moves: rise, fall, rise. Early gains are lost in a crisis, then regained, usually for good. |
+| `cinderella` | Cinderella | mild | Three major moves: rise, fall, rise. Early gains are lost in a crisis, then regained. |
 | `oedipus` | Oedipus | mild | Three major moves: fall, rise, fall. An early blow, a recovery, then a final collapse. |
+
+<!-- vocab:arc_method -->
+| Value | Name | Definition |
+|---|---|---|
+| `derived` | Derived | Label computed from `arc_points` by the rule above. Required on LLM records; `threshold_used` and `net_change_fallback` must match the rule. |
+| `labeler_assigned` | Labeler-assigned | A gold labeler chose the label directly (arc points optional). |
+
+**Comparing gold and model arcs.** The primary arc metric compares the model's derived label with the gold label, whichever method the gold labeler used. When the gold record also has arc points, the evaluation additionally reports (a) agreement between labels derived from both point sets, and (b) mean absolute difference between the two point sets, as a shape distance.
 
 Confusions:
 
 - **Rags to Riches arc vs Booker plot:** see Layer 2. The arc is a steady rise only.
 - **Man in a Hole vs Cinderella:** Cinderella has a distinct rise *before* the fall. If the story opens stable and things go wrong early, it is Man in a Hole.
-- **Four or more major moves** (common in long series): choose the arc matching the largest-scale shape and lower the confidence. Smooth the `arc_points` so they express that dominant shape only if the summary supports it; do not invent moves to fit a label.
 
 <!-- vocab:chronology -->
 | Value | Name | Spoiler | Definition |
@@ -267,7 +301,9 @@ Confusions:
 
 ## 9. Beat tags
 
-Recurring story beats that cut across the four layers. `beat_tags.tags` holds the tags judged present with confidence; `beat_tags.spoiler_text.evidence` optionally holds one sentence of evidence per present tag (keys must be a subset of `tags`). Evidence is always spoiler text, even for `none`-level tags.
+Recurring story beats that cut across the four layers. `beat_tags.tags` holds a judgment for every tag. `beat_tags.spoiler_text.evidence` optionally holds one sentence of evidence per present tag, as a list of `tag` and `note` pairs, each tag at most once and only for tags judged present. Evidence is always spoiler text, even for `none`-level tags.
+
+No tags will be added until the gold set shows which are reliable; then 10 to 20 more may be added as a minor version (decided 2026-09-26).
 
 <!-- vocab:beat_tag -->
 | Value | Name | Spoiler | Definition |
@@ -285,7 +321,7 @@ Recurring story beats that cut across the four layers. `beat_tags.tags` holds th
 
 Confusions:
 
-- **Twist ending vs unreliable narrator:** an unreliable narrator often produces a twist; tag both when both apply. A twist that doesn't come from a narrator's distortion is `twist_ending` only.
+- **Twist ending vs unreliable narrator:** an unreliable narrator often produces a twist; judge both present when both apply. A twist that doesn't come from a narrator's distortion is `twist_ending` only.
 - **Ambiguous ending vs twist ending:** a twist answers a question differently than expected; an ambiguous ending declines to answer.
 - **Pyrrhic victory vs Tragedy:** in a pyrrhic victory the protagonist does win. In a Tragedy they are destroyed; both may apply.
 - **Time loop vs nonlinear chronology:** a time loop is an in-world event; nonlinear is a way of telling.
@@ -297,9 +333,11 @@ Confusions:
 <!-- vocab:record_kind -->
 | Value | Name | Definition |
 |---|---|---|
-| `llm_annotation` | LLM annotation | Produced by the annotation pipeline. Requires `annotator.model_version`, `prompt_version`, `run_id`, an integer `tmdb_id`, and at least one source. |
-| `gold_label` | Gold label | Hand-labeled for evaluation. Requires `annotator.labeler_id`, `guide_version`, an integer `tmdb_id`, and at least one source (the summary the labeler was shown). |
+| `llm_annotation` | LLM annotation | Produced by the annotation pipeline. Requires `annotator.model_version`, `prompt_version`, `run_id`, `provenance.usage`, an integer `tmdb_id`, at least one source, `input_word_count` of 150 or more, and a derived `emotional_arc`. |
+| `gold_label` | Gold label | Hand-labeled for evaluation from the same summary the model sees (decided 2026-09-26). Requires `annotator.labeler_id`, `guide_version`, an integer `tmdb_id`, at least one source and `input_word_count` of 150 or more. Only the scored labels are required (below). |
 | `illustrative_example` | Illustrative example | Hand-written for documentation and tests. Never loaded into the product. Requires `annotator.labeler_id`. |
+
+**Gold records are light.** An annotated gold record must have: `primary`, `plots`, `blueprint`, `stages`, `emotional_arc` (either method) and `tags`. Everything else (Surface Story, free text, arc points, chronology, evidence, confidences) is optional.
 
 <!-- vocab:media_type -->
 | Value | Name | Definition |
@@ -311,15 +349,17 @@ Confusions:
 | Value | Name | Definition |
 |---|---|---|
 | `ended` | Ended | No further seasons are expected. |
-| `ongoing` | Ongoing | More seasons may come; the annotation covers the aired run as of the source revision and should be re-run when the summary changes. |
+| `ongoing` | Ongoing | More seasons may come. The annotation covers episodes aired as of the source revision. |
+
+**Annotated as of, and refresh (decided 2026-09-26).** A record's "as of" date is the latest `retrieved_at` among its `sources`. Displays for `ongoing` series should say so ("covers episodes aired up to" that date). Ingestion re-fetches sources on its normal schedule; when any source's `content_sha256` changes, the title is re-annotated and the new record replaces the old one. Ended series and movies follow the same rule, which also catches substantial Wikipedia rewrites.
 
 Each entry in `provenance.sources` records `kind`, `ref` (Wikipedia URL or `tmdb:movie/<id>`), `revision` (Wikipedia revision id or TMDB retrieval date), `retrieved_at`, `license`, `word_count` and `content_sha256` of the exact text sent to the model. With `model_version`, `prompt_version` and the hash, any record can be reproduced or detected as stale.
 
 <!-- vocab:source_kind -->
 | Value | Name | Definition |
 |---|---|---|
-| `wikipedia_plot` | Wikipedia plot section | The "Plot" (or "Synopsis" / "Premise") section of the English Wikipedia article, as plain text. CC BY-SA. |
-| `tmdb_overview` | TMDB overview | The `overview` field from TMDB's API for the title. |
+| `wikipedia_plot` | Wikipedia plot section | The "Plot" (or "Synopsis" / "Premise") section of the English Wikipedia article, as plain text. CC BY-SA; triggers the attribution requirement in section 1. |
+| `tmdb_overview` | TMDB overview | The overview field from TMDB's API for the title. Use pending question 3. |
 
 <!-- vocab:source_license -->
 | Value | Name | Definition |
@@ -328,7 +368,7 @@ Each entry in `provenance.sources` records `kind`, `ref` (Wikipedia URL or `tmdb
 | `CC-BY-SA-3.0` | CC BY-SA 3.0 | Wikipedia text from older revisions under CC BY-SA 3.0. |
 | `TMDB-API-terms` | TMDB API terms | TMDB content, used under the TMDB API terms (attribution required; commercial agreement pending, PLAN §8). |
 
-`provenance.usage` records token counts per title (and whether it went through the Batch API) so cost per title can be computed after every run. `provenance.notes` is internal only.
+`provenance.usage` records token counts per title (and whether the Batch API was used) so cost per title is known after every run; it is required on LLM records. `provenance.notes` is internal only.
 
 <!-- vocab:outcome -->
 | Value | Name | Definition |
@@ -339,71 +379,144 @@ Each entry in `provenance.sources` records `kind`, `ref` (Wikipedia URL or `tmdb
 <!-- vocab:abstain_reason -->
 | Value | Name | Definition |
 |---|---|---|
-| `summary_too_thin` | Summary too thin | The summary covers only the premise, or too little of the story to judge arc, plot and ending. |
+| `summary_too_thin` | Summary too thin | The summary passes the word gate but covers only the premise, or too little of the story to judge arc, plot and ending. |
 | `summary_contradictory` | Summary contradictory | Sources disagree on major events, or the summary is internally inconsistent. |
 | `not_a_narrative` | Not a narrative | The title has no story to annotate (concert film, stand-up special, most documentaries, reality or competition TV). |
 | `summary_title_mismatch` | Summary/title mismatch | The summary appears to describe a different work (a remake, a namesake, the source novel). |
 
 ---
 
-## 11. Checks beyond JSON Schema
+## 11. Model-facing output schema
 
-JSON Schema covers shape, enums and ranges. These semantic checks run in the pipeline validator (Phase 1) and, for the examples, in `pipeline/tests/test_schema.py`:
+Claude's structured outputs accept only a subset of JSON Schema. Per the structured-outputs documentation (platform.claude.com, "JSON Schema limitations" and "Schema complexity limits", read 2026-09-26): no `minimum`/`maximum`, no `minLength`/`maxLength`, no array constraints except `minItems` of 0 or 1, `additionalProperties` only `false` (so no key-to-value maps), no `if`/`then`, at most 24 optional properties, and at most 16 union-typed properties per request.
 
-1. `archetypal_plot.secondary` does not contain `primary.label`.
-2. `beat_tags.spoiler_text.evidence` keys are a subset of `beat_tags.tags` keys.
-3. `emotional_arc.label` agrees with `arc_points` under the major-move rule (moves of 0.3 or more). In production a mismatch flags the record for review or retry rather than silently passing.
-4. `tmdb_id` exists in TMDB and its title and year match (ingestion time).
-5. For LLM records: `input_word_count` equals the sum of `sources[].word_count` and is at or above the gate.
+`model_output_schema()` in `laminary_pipeline/model_output.py` derives the schema sent to the API from the stored schema:
+
+- All `$ref`s are inlined, and unsupported keywords are stripped.
+- Presence judgments are fixed-key objects (every term is a required key), not maps. This works within the limits, and it forces a judgment on every term. A nullable confidence per term (29 of them) would exceed the 16-union limit, which is why a judgment is `{present, confidence}` rather than a confidence or null.
+- `arc_points` is an object with 11 required keys, `t00` to `t10`, so the grammar enforces the count. The model also returns `arc_confidence`. It does not return `emotional_arc`.
+- `layers` and `beat_tags` are nullable (null when abstaining), and `abstain_reason` accepts null when annotating, so every property is required. That makes 2 union-typed properties and 0 optional ones.
+
+`to_record()` converts a model output to a stored record (deriving the arc), and `annotation.validate_record()` then checks it. **Constraints enforced only on the client side**, after the model responds:
+
+- Numeric ranges: `confidence` in [0, 1], judgment confidence in [0.5, 1], `arc_points` in [-1, 1].
+- String lengths on all text fields.
+- `tones`: at most 3, no repeats.
+- `evidence`: at most 10 entries.
+- Every semantic check in section 12.
+
+A failure on any of these is treated like invalid output: the title is retried or sent for review, never stored.
 
 ---
 
-## 12. Versioning
+## 12. Checks beyond JSON Schema
 
-`schema_version` is semantic versioning, fixed by `const` in the schema so a record can't claim a version it doesn't conform to.
+Implemented in `annotation.semantic_errors()` and run by `validate_record()` on every record:
+
+1. The `primary` plot is judged present in `plots`, and at most two other plots are present.
+2. `evidence` lists each tag at most once, and only tags judged present.
+3. For a derived `emotional_arc`: `label`, `threshold_used` and `net_change_fallback` equal what the rule in section 8 gives for `arc_points`, and a fallback label has confidence below 0.5.
+4. For LLM records: `input_word_count` equals the sum of `sources[].word_count`.
+5. Date-times are checked as RFC 3339 (the validator registers its own `date-time` format check, because jsonschema skips it without an optional package).
+
+Done at ingestion, not here: `tmdb_id` exists in TMDB and its title and year match.
+
+---
+
+## 13. Versioning
+
+`schema_version` is semantic versioning, fixed by `const` in the schema so a record can't claim a version it doesn't conform to. It stays 0.x until Hari approves the final draft.
 
 - **Major** (1.0.0 → 2.0.0): a field or term is removed, renamed or redefined. Old records must be migrated or re-annotated. Backend is told first; they own the migration.
-- **Minor** (1.0.0 → 1.1.0): a new optional field or a new vocabulary term. Old records still validate, but they were never asked about the new term, so evaluation and browse rows must treat them as "not assessed," not "absent," until they are re-run.
+- **Minor** (1.0.0 → 1.1.0): a new optional field or a new vocabulary term. For fixed-key judgments a new term is a new required key, so old records validate against their own version only. They are treated as **not assessed** for the new term until re-run, never as "absent".
 - **Patch** (1.0.0 → 1.0.1): wording in this document only, with no change to what a label means.
 
-Separately, `prompt_version` changes whenever the annotation prompt text changes (including definition wording pulled from this document), and `model_version` records the exact model id. Evaluation results are always reported per (schema_version, prompt_version, model_version). v0.1.0 is the draft; approval makes it 1.0.0.
+`prompt_version` changes whenever the annotation prompt text changes (including definition wording pulled from this document), and `model_version` records the exact model id. Evaluation results are always reported per (schema_version, prompt_version, model_version).
+
+0.1.0 → 0.2.0 changes: presence maps became fixed-key judgments; `emotional_arc` is derived; Booker has nine plots; Vogler stage names are exact; gold records are lighter; `usage` is required on LLM records; the 150-word gate is enforced.
 
 ---
 
-## 13. Proposed top-level browse rows **[OPEN] — Hari decides**
+## 14. Phase 1 evaluation plan
 
-Candidates for the 10 to 15 rows in "Browse by Story Shape" (PLAN §3, §4). Row names are working titles in the VISION voice; final copy belongs to frontend and Hari. Each row is a query over labels at confidence 0.70 or higher. The spoiler column is the highest level the row's name reveals about every title in it.
+Run on the ~100-title gold set after each prompt iteration, reported per (schema_version, prompt_version, model_version) together with cost per title.
+
+| Category | Metric |
+|---|---|
+| `primary` plot | Exact-match accuracy and Cohen's kappa against gold. |
+| `plots`, `stages`, `tags` | Per-term precision, recall and F1 of "present", plus accuracy per term. |
+| `blueprint` | Exact-match accuracy. |
+| `emotional_arc` | Exact-match accuracy of the derived label vs gold; shape distance when gold has points (section 8). |
+| Surface fields | Accuracy of `setting_period`, `protagonist_structure`, `chronology`; overlap of `tones`. Informational only. |
+| Calibration | Accuracy per confidence band (section 4); the display threshold is tuned from this. |
+| Abstention | Abstention rate, and abstentions on titles gold labelers could label. |
+| **Spoiler leaks** | Gold labelers flag any `safe_text` that goes past the setup, graded `mild` or `major`. Target: 0 `major` leaks; report the `mild` rate. |
+
+**Spoiler-leak trade-off (not a decision).** `logline` and `central_conflict` could be generated from the TMDB overview alone, which is premise-only by nature and should leak less. That needs a second model call per title (more cost, both calls still counted in `usage`), and depends on question 3. Revisit only if the leak metric misses its target.
+
+**Phase 1 exit metric: [OPEN]** (question 2). PLAN §5.5 says "at least 80% top-level archetype agreement". Proposal:
+
+- **Field:** "archetype" means `archetypal_plot.primary.label`.
+- **Matching rule (strict):** the model's primary equals the gold primary. Target: at least 80% over gold titles.
+- **Also reported, not gating:** lenient agreement (the model's primary is judged present in the gold `plots`), kappa, and emotional-arc accuracy.
+- **Abstentions:** the model abstaining on a gold-labeled title counts as a miss.
+
+---
+
+## 15. Browse rows
+
+Decided 2026-09-26: keep all 15 for now and prune after the 500-title pilot shows row sizes. Row names are working titles; final copy belongs to frontend and Hari. Each row uses labels at the display threshold (0.70 proposed).
+
+The "Spoiler" column is the highest level any label in the row's query carries. Under the decided default (`none` and `mild` visible) every row may appear in default views. If a viewer hides story shapes, rows marked `mild` must be hidden too (section 3, rule 5).
 
 | # | Working row name | Query | Spoiler | Rationale |
 |---|---|---|---|---|
 | 1 | Down and back up | arc `man_in_a_hole` | mild | The most common satisfying shape; big, varied row that anchors the concept. |
 | 2 | Rise and fall | arc `icarus` | mild | Instantly understood; covers crime sagas, biopics and cautionary tales across genres. |
 | 3 | Lost it all, won it back | arc `cinderella` | mild | Distinct from row 1 (the early rise), so it teaches that shape matters, not just the ending. |
-| 4 | Slow climb | arc `rags_to_riches` | mild | Underdog stories without a big setback; good for comfort viewing. |
-| 5 | Monsters to beat | Booker `overcoming_the_monster` | none | Largest Booker bucket; spans horror, action and sports. Spoiler-safe. |
-| 6 | There and back again | Booker `voyage_and_return` | none | Clear, spoiler-safe shape that crosses kids' films, sci-fi and dramas. |
-| 7 | The long road | Booker `the_quest` | none | Spoiler-safe; pairs naturally with Hero's Journey titles. |
-| 8 | Second chances | Booker `rebirth` or tag `redemption_arc` | mild | Emotionally distinct pull that genre browsing can't express. |
-| 9 | Beautiful downfalls | Booker `tragedy` | mild | For viewers who want weight; honest labeling of what they're getting. |
-| 10 | The full hero's journey | blueprint `heros_journey` with 9+ stages present | none | Shows off the Mythic Blueprint layer; stage coverage makes it more than a genre. |
+| 4 | Slow climb | arc `rags_to_riches` without `net_change_fallback` | mild | Underdog stories without a big setback. Fallback labels are excluded (their confidence is capped anyway). |
+| 5 | Monsters to beat | primary `overcoming_the_monster` | none | Largest Booker bucket; spans horror, action and sports. |
+| 6 | There and back again | primary `voyage_and_return` | none | Clear shape that crosses kids' films, sci-fi and dramas. |
+| 7 | The long road | primary `the_quest` | none | Pairs naturally with Hero's Journey titles. |
+| 8 | Second chances | primary `rebirth`, or `redemption_arc` present | mild | Emotionally distinct pull that genre browsing can't express. See the borderline note below. |
+| 9 | Beautiful downfalls | primary `tragedy` | mild | For viewers who want weight; honest labeling of what they're getting. |
+| 10 | The full hero's journey | blueprint `heros_journey` with 9 or more stages present | mild | Shows off the Mythic Blueprint layer. `mild` because the query uses late stages. |
 | 11 | Stories that go dark | blueprint `anti_hero_descent` | mild | Prestige-TV heavy; strong for series-level TV. |
-| 12 | Chosen families | tag `found_family` | none | Spoiler-safe and very popular; cuts across genre. |
-| 13 | Again and again | tag `time_loop` | none | Small but beloved niche; very "a little nerdy about stories." |
-| 14 | The big job | tag `heist_structure` | none | Structure-first row that genre lists only half-cover. |
-| 15 | Paths that cross | tag `ensemble_convergence` or `chronology` `nonlinear` | none | Represents the Structural Skeleton's telling-order side. |
+| 12 | Chosen families | `found_family` present | none | Very popular; cuts across genre. |
+| 13 | Again and again | `time_loop` present | none | Small but beloved niche. |
+| 14 | The big job | `heist_structure` present | none | Structure-first row that genre lists only half-cover. |
+| 15 | Paths that cross | `ensemble_convergence` present, or chronology `nonlinear` | none | Represents the telling-order side of the Structural Skeleton. |
 
-Deliberately left out: rows built on `major` tags (`mentor_dies`, `unreliable_narrator`, `pyrrhic_victory`) and `twist_ending`, because a row name like "Twist endings" spoils every title in it. `ambiguous_ending` and `oedipus` / `riches_to_rags` are reasonable reserves if pilot counts show enough titles. Row sizes can't be known until the 500-title pilot; any row with fewer than about 20 available titles in a user's services should probably be hidden.
+Re-check against the new rules:
+
+- **No row leaks under the decided defaults.** No query uses a `major` term.
+- **Row 10 changed from `none` to `mild`**, because counting stage coverage uses late stages such as `resurrection` (rule 5).
+- **Row 8 is borderline.** `redemption_arc` on a villain reveals that the villain turns. It stays `mild` pending question 1.
+- **Rows left out:** rows built on `major` tags and on `twist_ending` stay out, since the row name would spoil every title in it.
+- **New plots:** `rebellion_against_the_one` and `mystery` are not rows yet. Both are spoiler-safe and are natural candidates if the pilot shows enough titles.
 
 ---
 
-## 14. Open questions for Hari
+## 16. Decisions and open questions
 
-1. **Are story shapes spoilers?** Arc labels, the arc line, Tragedy, Rebirth and a few tags are `mild`: they reveal the direction of the ending but no events. Recommendation: show `none` and `mild` by default (the product is built on shape), hide `major` labels and all `spoiler_text` until the viewer opts in. Alternative: hide `mild` too, which would hide browse rows 1 to 4, 8, 9 and 11 and the arc line by default.
-2. **Hero's Journey stage model.** Proposed: Vogler's 12 stages (film-oriented, easier to label from summaries) rather than Campbell's 17. Heroine's Journey is defined operationally (strength through connection and community) rather than by Murdock's 10 stages, which are hard to judge from plot summaries. Approve both?
-3. **Booker's two later plots** (Rebellion Against "The One", Mystery): leave out of v1? Recommendation: leave out; add in a minor version if gold-set labelers keep reaching for them.
-4. **Tone vocabulary** (10 terms, section 5) will drive the Phase 3 mood filter. Approve the list, or should frontend propose mood names first?
-5. **LLM-written spoiler text derived from Wikipedia plots.** Resolutions and rationales are written in the model's own words, but they are derived from CC BY-SA text. Do we treat displayed analysis as needing Wikipedia attribution on the title page (frontend already owns Wikipedia attribution, PLAN §8)? This is a legal-terms question.
-6. **Minimum summary length.** Proposed gate: at least 150 words of summary in total. TMDB overviews alone rarely reach this, so in practice most annotated titles will need a Wikipedia plot section. This trades catalog coverage for accuracy; titles below the gate get no narrative data and can't appear in shape rows.
-7. **Beat tag list is thin.** Ten tags (from PLAN §4) is a small base for "more like this" and one-line whys. OK to propose 10 to 20 more after the gold set shows which are reliable, as a minor version?
-8. **Ongoing TV series.** Proposed: annotate the aired run and re-annotate when the summary changes (the content hash detects it). Their arc may change as seasons air. Acceptable, or exclude ongoing series from shape rows?
-9. **Gold-set instructions.** Should labelers label from the same summary the model sees (measures annotation accuracy against the text) or from their memory of watching (measures truth, but penalizes the model for gaps in the summary)? Recommendation: label from the summary, and let labelers flag where the summary itself is misleading.
+Decided by Hari on 2026-09-26 (logged in `docs/DECISIONS.md`) and reflected above:
+
+- **Spoiler visibility:** story shapes and the arc line are visible by default, and plot spoilers are hidden (section 3).
+- **Journey stages:** Vogler's 12 stages (section 7).
+- **Booker plots:** keep Rebellion Against "The One" and Mystery, for 9 plots (section 6).
+- **Tones:** internal labels only; frontend proposes mood names in Phase 3 (section 5).
+- **Attribution:** Wikipedia attribution on title pages (section 1).
+- **Summary gate:** 150-word minimum (section 1).
+- **Beat tags:** no new tags until after the gold set (section 9).
+- **TV scope:** movies plus series-level TV, with ongoing series refreshed on summary change (sections 1, 10).
+- **Gold protocol:** gold labelers use the same summary as the model (section 10).
+- **Browse rows:** keep all 15 until the pilot (section 15).
+
+Still **[OPEN] — Hari decides:**
+
+1. **Per-term spoiler levels and the display threshold.**
+   - Approve the spoiler column in every vocabulary table in sections 5 to 9, and the 0.70 confidence threshold for showing a label or using it in a row.
+   - Borderline case: `redemption_arc` is `mild`, but on a villain it reveals a turn. Keep it `mild`, raise it to `major` (which would drop row 8's tag half), or accept it as is?
+2. **Phase 1 exit metric.** Approve the proposal in section 14: strict match on `archetypal_plot.primary.label`, at least 80%, with abstentions counted as misses. The alternative is lenient matching.
+3. **TMDB API terms.** Do they allow sending TMDB overviews to a third-party LLM (Claude) and storing the derived output? Until answered, the pipeline should annotate from Wikipedia plot sections and hold `tmdb_overview` as a source.
+4. **Flat stories.** Stories with no major move get a fallback arc label at low confidence (section 8), so they never appear in arc rows. Is that acceptable for v1, or should a "flat" or "steady" arc term be considered after the pilot? That would be a taxonomy change.

@@ -1,11 +1,12 @@
-"""Tests for the narrative annotation schema (pipeline/schema/annotation.schema.json).
+"""Tests for the stored annotation schema and its documentation.
 
 Checks that:
-- the schema is valid JSON Schema draft 2020-12;
-- every example in pipeline/schema/examples/ validates and passes the semantic checks
-  from docs/NARRATIVE_SCHEMA.md section 11;
-- every controlled vocabulary in the schema matches the tables in docs/NARRATIVE_SCHEMA.md
-  exactly (values and spoiler levels), and vice versa;
+- the packaged schema loads via importlib.resources and is valid JSON Schema draft 2020-12;
+- every example in tests/examples/ passes schema and semantic validation;
+- the schema rejects known-bad records for the intended reason, and the semantic checks
+  catch what JSON Schema can't;
+- docs/NARRATIVE_SCHEMA.md matches the schema mechanically: vocabulary tables, spoiler levels,
+  and every backticked identifier;
 - all free text under layers and beat tags sits inside a safe_text or spoiler_text object.
 """
 
@@ -15,59 +16,46 @@ import copy
 import json
 import re
 from collections.abc import Iterator
+from importlib import resources
 from pathlib import Path
 from typing import Any
 
 import pytest
 from jsonschema import Draft202012Validator
 
-PIPELINE_DIR = Path(__file__).resolve().parents[1]
-REPO_ROOT = PIPELINE_DIR.parent
-SCHEMA_PATH = PIPELINE_DIR / "schema" / "annotation.schema.json"
-EXAMPLES_DIR = PIPELINE_DIR / "schema" / "examples"
-DOC_PATH = REPO_ROOT / "docs" / "NARRATIVE_SCHEMA.md"
+from laminary_pipeline.annotation import (
+    SCHEMA_RESOURCE,
+    load_schema,
+    semantic_errors,
+    validate_record,
+    validator,
+)
+from laminary_pipeline.model_output import model_output_schema
 
-ARC_POINT_COUNT = 11
-MAJOR_MOVE = 0.3
-ARC_LEGS = {
-    ("up",): "rags_to_riches",
-    ("down",): "riches_to_rags",
-    ("down", "up"): "man_in_a_hole",
-    ("up", "down"): "icarus",
-    ("up", "down", "up"): "cinderella",
-    ("down", "up", "down"): "oedipus",
-}
-
+TESTS_DIR = Path(__file__).resolve().parent
+EXAMPLES_DIR = TESTS_DIR / "examples"
+DOC_PATH = TESTS_DIR.parents[1] / "docs" / "NARRATIVE_SCHEMA.md"
 EXAMPLE_PATHS = sorted(EXAMPLES_DIR.glob("*.json"))
+LEVEL_ORDER = {"none": 0, "mild": 1, "major": 2}
 
 
 # ---------- helpers ----------
 
 
-def load_schema() -> dict[str, Any]:
-    return json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
-
-
-def validator() -> Draft202012Validator:
-    return Draft202012Validator(load_schema())
-
-
-def load_example(path: Path) -> dict[str, Any]:
+def load_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def schema_enums(schema: dict[str, Any]) -> dict[str, list[str]]:
-    return {name: d["enum"] for name, d in schema["$defs"].items() if "enum" in d}
+def example(name: str) -> dict[str, Any]:
+    return load_json(EXAMPLES_DIR / f"{name}.json")
 
 
 def resolve(schema: dict[str, Any], node: Any) -> Any:
-    """Follow a local '#/$defs/<name>' $ref, if present."""
+    """Follow local '#/$defs/<name>' $refs, merging sibling keywords."""
     while isinstance(node, dict) and "$ref" in node:
-        ref = node["$ref"]
-        assert ref.startswith("#/$defs/"), f"unexpected non-local $ref {ref}"
-        merged = {k: v for k, v in node.items() if k != "$ref"}
-        target = schema["$defs"][ref.removeprefix("#/$defs/")]
-        node = {**target, **merged} if merged else target
+        target = schema["$defs"][node["$ref"].removeprefix("#/$defs/")]
+        siblings = {k: v for k, v in node.items() if k != "$ref"}
+        node = {**target, **siblings}
     return node
 
 
@@ -78,26 +66,42 @@ def ref_name(node: Any) -> str | None:
 
 
 def walk(schema: dict[str, Any], node: Any, path: tuple[str, ...]) -> Iterator[tuple]:
-    """Yield (path, raw_node) for every subschema reachable under node, following $refs."""
+    """Yield (path, raw_node) for every subschema under node, following $refs."""
     yield path, node
     node = resolve(schema, node)
     if not isinstance(node, dict):
         return
     for key, sub in node.get("properties", {}).items():
         yield from walk(schema, sub, (*path, key))
-    if isinstance(node.get("additionalProperties"), dict):
-        yield from walk(schema, node["additionalProperties"], (*path, "*"))
-    if isinstance(node.get("propertyNames"), dict):
-        yield from walk(schema, node["propertyNames"], (*path, "<key>"))
-    if isinstance(node.get("items"), dict):
-        yield from walk(schema, node["items"], (*path, "[]"))
+    for key in ("additionalProperties", "items"):
+        if isinstance(node.get(key), dict):
+            yield from walk(schema, node[key], (*path, "[]"))
 
 
-def parse_doc_vocabularies() -> dict[str, list[list[str]]]:
-    """Return {vocab_name: [row cells]} for each '<!-- vocab:NAME -->' table in the doc."""
-    lines = DOC_PATH.read_text(encoding="utf-8").splitlines()
-    vocabs: dict[str, list[list[str]]] = {}
+def viewer_roots() -> list[tuple[str, str]]:
+    return [
+        ("layers", "layers"),
+        ("layers", "gold_layers"),
+        ("beat_tags", "beat_tags_block"),
+        ("beat_tags", "gold_beat_tags"),
+    ]
+
+
+def is_string_type(node: dict[str, Any]) -> bool:
+    t = node.get("type")
+    return t == "string" or (isinstance(t, list) and "string" in t)
+
+
+TABLE_ROW = re.compile(r"^`[A-Za-z0-9_.-]+`$")
+SEPARATOR = re.compile(r"^\|(\s*:?-+:?\s*\|)+$")
+
+
+def parse_vocab_tables(text: str) -> dict[str, list[list[str]]]:
+    """{vocab: rows} for each '<!-- vocab:NAME -->' table. Strict: after the header and
+    separator, every row must be a vocabulary row whose first cell is one backticked term."""
+    lines = text.splitlines()
     marker = re.compile(r"^<!-- vocab:([a-z_]+) -->$")
+    vocabs: dict[str, list[list[str]]] = {}
     i = 0
     while i < len(lines):
         m = marker.match(lines[i].strip())
@@ -105,78 +109,49 @@ def parse_doc_vocabularies() -> dict[str, list[list[str]]]:
         if not m:
             continue
         name = m.group(1)
-        assert name not in vocabs, f"duplicate vocab marker {name}"
-        rows: list[list[str]] = []
-        # skip to the table, then read until it ends
-        while i < len(lines) and not lines[i].startswith("|"):
+        if name in vocabs:
+            raise ValueError(f"duplicate vocab marker {name}")
+        while i < len(lines) and not lines[i].strip():
             i += 1
+        if i + 1 >= len(lines) or not lines[i].startswith("|"):
+            raise ValueError(f"{name}: marker not followed by a table")
+        if not SEPARATOR.match(lines[i + 1].strip()):
+            raise ValueError(f"{name}: second table line is not a separator")
+        i += 2
+        rows: list[list[str]] = []
         while i < len(lines) and lines[i].startswith("|"):
             cells = [c.strip() for c in lines[i].strip().strip("|").split("|")]
-            if cells[0].startswith("`"):
-                rows.append(cells)
+            if not TABLE_ROW.match(cells[0]):
+                raise ValueError(f"{name}: non-vocabulary row in table: {lines[i]!r}")
+            rows.append(cells)
             i += 1
-        assert rows, f"vocab table {name} has no rows"
+        if not rows:
+            raise ValueError(f"vocab table {name} has no rows")
         vocabs[name] = rows
     return vocabs
 
 
-def arc_legs(points: list[float], threshold: float = MAJOR_MOVE) -> tuple[str, ...]:
-    """Directions of major moves (>= threshold from the last peak/trough)."""
-    legs: list[str] = []
-    direction: str | None = None
-    lo = hi = extreme = points[0]
-    for p in points[1:]:
-        if direction is None:
-            lo, hi = min(lo, p), max(hi, p)
-            if p - lo >= threshold:
-                direction, extreme = "up", p
-                legs.append("up")
-            elif hi - p >= threshold:
-                direction, extreme = "down", p
-                legs.append("down")
-        elif direction == "up":
-            if p > extreme:
-                extreme = p
-            elif extreme - p >= threshold:
-                direction, extreme = "down", p
-                legs.append("down")
-        else:
-            if p < extreme:
-                extreme = p
-            elif p - extreme >= threshold:
-                direction, extreme = "up", p
-                legs.append("up")
-    return tuple(legs)
+def doc_text() -> str:
+    return DOC_PATH.read_text(encoding="utf-8")
 
 
-def semantic_errors(record: dict[str, Any]) -> list[str]:
-    """Checks from docs/NARRATIVE_SCHEMA.md section 11 that JSON Schema can't express."""
-    errors: list[str] = []
-    if record.get("outcome") != "annotated":
-        return errors
-    plot = record["layers"]["archetypal_plot"]
-    if plot["primary"]["label"] in plot["secondary"]:
-        errors.append("secondary repeats primary plot")
-    beats = record["beat_tags"]
-    extra = set(beats["spoiler_text"]["evidence"]) - set(beats["tags"])
-    if extra:
-        errors.append(f"evidence for tags not present: {sorted(extra)}")
-    skel = record["layers"]["structural_skeleton"]
-    implied = ARC_LEGS.get(arc_legs(skel["arc_points"]))
-    if implied != skel["emotional_arc"]["label"]:
-        errors.append(
-            f"arc label {skel['emotional_arc']['label']} disagrees with arc_points ({implied})"
-        )
-    return errors
+def schema_enums() -> dict[str, list[Any]]:
+    return {n: d["enum"] for n, d in load_schema()["$defs"].items() if "enum" in d}
 
 
 # ---------- schema and examples ----------
+
+
+def test_schema_ships_as_package_data() -> None:
+    package, path = SCHEMA_RESOURCE
+    assert resources.files(package).joinpath(path).is_file()
 
 
 def test_schema_is_valid_draft_2020_12() -> None:
     schema = load_schema()
     assert schema["$schema"] == "https://json-schema.org/draft/2020-12/schema"
     Draft202012Validator.check_schema(schema)
+    assert schema["properties"]["schema_version"]["const"].startswith("0.")
 
 
 def test_there_are_examples() -> None:
@@ -185,39 +160,16 @@ def test_there_are_examples() -> None:
 
 @pytest.mark.parametrize("path", EXAMPLE_PATHS, ids=lambda p: p.name)
 def test_example_validates(path: Path) -> None:
-    record = load_example(path)
-    errors = sorted(validator().iter_errors(record), key=lambda e: list(e.path))
-    assert not errors, "\n".join(f"{list(e.path)}: {e.message}" for e in errors)
+    record = load_json(path)
+    assert validate_record(record) == []
     assert record["record_kind"] == "illustrative_example", "examples must be marked illustrative"
-    assert not semantic_errors(record)
 
 
-@pytest.mark.parametrize(
-    ("points", "label"),
-    [
-        ([-0.5, -0.4, -0.3, -0.2, -0.1, 0.0, 0.1, 0.2, 0.3, 0.4, 0.5], "rags_to_riches"),
-        ([0.5, 0.4, 0.3, 0.2, 0.1, 0.0, -0.1, -0.2, -0.3, -0.4, -0.5], "riches_to_rags"),
-        ([0.2, 0.0, -0.3, -0.6, -0.5, -0.2, 0.1, 0.3, 0.5, 0.6, 0.7], "man_in_a_hole"),
-        ([-0.2, 0.1, 0.4, 0.6, 0.7, 0.5, 0.2, -0.1, -0.4, -0.6, -0.7], "icarus"),
-        ([-0.5, -0.1, 0.3, 0.4, 0.0, -0.4, -0.3, 0.0, 0.4, 0.7, 0.8], "cinderella"),
-        ([0.5, 0.1, -0.3, -0.4, 0.0, 0.4, 0.3, 0.0, -0.4, -0.7, -0.8], "oedipus"),
-        # small wobbles (< 0.3) are ignored
-        ([0.0, -0.2, -0.5, -0.4, -0.3, -0.4, -0.4, -0.5, -0.6, -0.5, 0.9], "man_in_a_hole"),
-    ],
-)
-def test_arc_rule(points: list[float], label: str) -> None:
-    assert ARC_LEGS[arc_legs(points)] == label
-
-
-# ---------- negative cases: the schema must reject these ----------
-
-
-def base_record() -> dict[str, Any]:
-    return load_example(EXAMPLES_DIR / "groundhog_day.json")
+# ---------- records built for negative tests ----------
 
 
 def llm_record() -> dict[str, Any]:
-    rec = base_record()
+    rec = example("groundhog_day")
     rec["record_kind"] = "llm_annotation"
     rec["provenance"] = {
         "annotated_at": "2026-09-26T00:00:00Z",
@@ -247,51 +199,239 @@ def abstained_record() -> dict[str, Any]:
     return rec
 
 
-def test_llm_and_abstained_records_validate() -> None:
-    v = validator()
-    for rec in (llm_record(), abstained_record()):
-        assert not list(v.iter_errors(rec))
+def gold_record() -> dict[str, Any]:
+    """A minimal gold label: only the scored labels."""
+    full = llm_record()
+    rec = {k: full[k] for k in ("schema_version", "title", "outcome")}
+    rec["record_kind"] = "gold_label"
+    rec["provenance"] = copy.deepcopy(full["provenance"])
+    del rec["provenance"]["usage"]
+    rec["provenance"]["annotator"] = {"labeler_id": "hari", "guide_version": "g1"}
+    layers = full["layers"]
+    rec["layers"] = {
+        "archetypal_plot": {
+            "primary": {"label": layers["archetypal_plot"]["primary"]["label"]},
+            "plots": {
+                k: {"present": v["present"]} for k, v in layers["archetypal_plot"]["plots"].items()
+            },
+        },
+        "mythic_blueprint": {
+            "blueprint": {"label": "heros_journey"},
+            "stages": {
+                k: {"present": v["present"]}
+                for k, v in layers["mythic_blueprint"]["stages"].items()
+            },
+        },
+        "structural_skeleton": {
+            "emotional_arc": {"label": "man_in_a_hole", "method": "labeler_assigned"},
+        },
+    }
+    rec["beat_tags"] = {
+        "tags": {k: {"present": v["present"]} for k, v in full["beat_tags"]["tags"].items()}
+    }
+    return rec
 
 
+BASES = {"llm": llm_record, "abstained": abstained_record, "gold": gold_record}
 DELETE = object()
+FROM_BASE = object()
 SKEL = "layers/structural_skeleton"
 
-# (case, base, slash-separated path, new value or DELETE). "base" is "llm" or "abstained".
-REJECT_CASES: list[tuple[str, str, str, Any]] = [
-    ("llm without model_version", "llm", "provenance/annotator/model_version", DELETE),
-    ("llm without sources", "llm", "provenance/sources", []),
-    ("llm with null tmdb_id", "llm", "title/tmdb_id", None),
-    ("10 arc points", "llm", f"{SKEL}/arc_points", [0.0] * 10),
-    ("arc point out of range", "llm", f"{SKEL}/arc_points", [1.5] + [0.0] * 10),
-    ("unknown arc label", "llm", f"{SKEL}/emotional_arc/label", "w_shape"),
-    ("unknown beat tag", "llm", "beat_tags/tags/chosen_one", 0.9),
-    ("confidence above 1", "llm", "beat_tags/tags/time_loop", 1.2),
+# (case, base, slash path, new value | DELETE | FROM_BASE, expected keyword, expected error path)
+REJECT_CASES: list[tuple[str, str, str, Any, str | None, str]] = [
     (
-        "three secondary plots",
+        "llm without model_version",
         "llm",
-        "layers/archetypal_plot/secondary",
-        {"comedy": 0.6, "the_quest": 0.6, "tragedy": 0.6},
+        "provenance/annotator/model_version",
+        DELETE,
+        "required",
+        "provenance/annotator",
     ),
-    ("text outside safe/spoiler", "llm", "layers/surface_story/note", "x"),
-    ("spoiler key in safe_text", "llm", "layers/surface_story/safe_text/resolution", "x"),
-    ("movie with series_status", "llm", "title/series_status", "ended"),
-    ("tv without series_status", "llm", "title/media_type", "tv_series"),
-    ("wrong schema_version", "llm", "schema_version", "9.9.9"),
-    ("annotated with abstain_reason", "llm", "abstain_reason", "summary_too_thin"),
-    ("abstained without reason", "abstained", "abstain_reason", DELETE),
-    ("abstained with beat tags", "abstained", "beat_tags", "<from base>"),
-    ("abstained with layers", "abstained", "layers", "<from base>"),
+    ("llm without usage", "llm", "provenance/usage", DELETE, "required", "provenance"),
+    ("llm without sources", "llm", "provenance/sources", [], "minItems", "provenance/sources"),
+    (
+        "llm below 150 words",
+        "llm",
+        "provenance/input_word_count",
+        149,
+        "minimum",
+        "provenance/input_word_count",
+    ),
+    ("llm with null tmdb_id", "llm", "title/tmdb_id", None, "type", "title/tmdb_id"),
+    (
+        "llm with labeler-assigned arc",
+        "llm",
+        f"{SKEL}/emotional_arc/method",
+        "labeler_assigned",
+        "const",
+        f"{SKEL}/emotional_arc/method",
+    ),
+    (
+        "derived arc without threshold",
+        "llm",
+        f"{SKEL}/emotional_arc/threshold_used",
+        DELETE,
+        "required",
+        f"{SKEL}/emotional_arc",
+    ),
+    (
+        "bad annotated_at format",
+        "llm",
+        "provenance/annotated_at",
+        "2026-09-26",
+        "format",
+        "provenance/annotated_at",
+    ),
+    (
+        "annotated_at without offset",
+        "llm",
+        "provenance/annotated_at",
+        "2026-09-26T00:00:00",
+        "format",
+        "provenance/annotated_at",
+    ),
+    (
+        "bad retrieved_at format",
+        "llm",
+        "provenance/sources/0/retrieved_at",
+        "yesterday",
+        "format",
+        "provenance/sources/0/retrieved_at",
+    ),
+    ("10 arc points", "llm", f"{SKEL}/arc_points", [0.0] * 10, "minItems", f"{SKEL}/arc_points"),
+    (
+        "arc point out of range",
+        "llm",
+        f"{SKEL}/arc_points",
+        [1.5] + [0.0] * 10,
+        "maximum",
+        f"{SKEL}/arc_points/0",
+    ),
+    (
+        "unknown arc label",
+        "llm",
+        f"{SKEL}/emotional_arc/label",
+        "w_shape",
+        "enum",
+        f"{SKEL}/emotional_arc/label",
+    ),
+    (
+        "unknown beat tag",
+        "llm",
+        "beat_tags/tags/chosen_one",
+        {"present": True, "confidence": 0.9},
+        "additionalProperties",
+        "beat_tags/tags",
+    ),
+    (
+        "missing beat tag judgment",
+        "llm",
+        "beat_tags/tags/time_loop",
+        DELETE,
+        "required",
+        "beat_tags/tags",
+    ),
+    (
+        "judgment confidence below 0.5",
+        "llm",
+        "beat_tags/tags/found_family/confidence",
+        0.4,
+        "minimum",
+        "beat_tags/tags/found_family/confidence",
+    ),
+    (
+        "judgment confidence above 1",
+        "llm",
+        "beat_tags/tags/time_loop/confidence",
+        1.2,
+        "maximum",
+        "beat_tags/tags/time_loop/confidence",
+    ),
+    (
+        "stage judgment without confidence",
+        "llm",
+        "layers/mythic_blueprint/stages/ordeal/confidence",
+        DELETE,
+        "required",
+        "layers/mythic_blueprint/stages/ordeal",
+    ),
+    (
+        "four tones",
+        "llm",
+        "layers/surface_story/tones",
+        ["tense", "warm", "eerie", "bleak"],
+        "maxItems",
+        "layers/surface_story/tones",
+    ),
+    (
+        "repeated tone",
+        "llm",
+        "layers/surface_story/tones",
+        ["warm", "warm"],
+        "uniqueItems",
+        "layers/surface_story/tones",
+    ),
+    (
+        "text outside safe/spoiler",
+        "llm",
+        "layers/surface_story/note",
+        "x",
+        "additionalProperties",
+        "layers/surface_story",
+    ),
+    (
+        "spoiler key in safe_text",
+        "llm",
+        "layers/surface_story/safe_text/resolution",
+        "x",
+        "additionalProperties",
+        "layers/surface_story/safe_text",
+    ),
+    (
+        "logline too long",
+        "llm",
+        "layers/surface_story/safe_text/logline",
+        "x" * 241,
+        "maxLength",
+        "layers/surface_story/safe_text/logline",
+    ),
+    ("movie with series_status", "llm", "title/series_status", "ended", "not", "title"),
+    ("tv without series_status", "llm", "title/media_type", "tv_series", "required", "title"),
+    ("wrong schema_version", "llm", "schema_version", "9.9.9", "const", "schema_version"),
+    ("annotated with abstain_reason", "llm", "abstain_reason", "summary_too_thin", "not", ""),
+    ("abstained without reason", "abstained", "abstain_reason", DELETE, "required", ""),
+    # jsonschema reports `false`-schema failures with keyword None at the parent's path
+    ("abstained with beat tags", "abstained", "beat_tags", FROM_BASE, None, ""),
+    ("abstained with layers", "abstained", "layers", FROM_BASE, None, ""),
+    ("gold without sources", "gold", "provenance/sources", [], "minItems", "provenance/sources"),
+    (
+        "gold without guide_version",
+        "gold",
+        "provenance/annotator/guide_version",
+        DELETE,
+        "required",
+        "provenance/annotator",
+    ),
+    (
+        "gold without stages",
+        "gold",
+        "layers/mythic_blueprint/stages",
+        DELETE,
+        "required",
+        "layers/mythic_blueprint",
+    ),
+    ("gold without tag judgments", "gold", "beat_tags/tags", DELETE, "required", "beat_tags"),
 ]
 
 
 def mutate(base: str, path: str, value: Any) -> dict[str, Any]:
-    rec = llm_record() if base == "llm" else abstained_record()
+    rec = BASES[base]()
     *parents, last = path.split("/")
-    node = rec
+    node: Any = rec
     for key in parents:
-        node = node[key]
-    if value == "<from base>":  # a complete, valid block copied from the base example
-        value = base_record()[last]
+        node = node[int(key)] if isinstance(node, list) else node[key]
+    if value is FROM_BASE:  # a complete, valid block from the full example
+        value = example("groundhog_day")[last]
     if value is DELETE:
         del node[last]
     else:
@@ -299,20 +439,72 @@ def mutate(base: str, path: str, value: Any) -> dict[str, Any]:
     return rec
 
 
+def test_base_records_are_valid() -> None:
+    for make in BASES.values():
+        assert validate_record(make()) == []
+
+
 @pytest.mark.parametrize(
-    ("case", "base", "path", "value"), REJECT_CASES, ids=[c[0] for c in REJECT_CASES]
+    ("case", "base", "path", "value", "keyword", "where"),
+    REJECT_CASES,
+    ids=[c[0] for c in REJECT_CASES],
 )
-def test_schema_rejects(case: str, base: str, path: str, value: Any) -> None:
-    rec = mutate(base, path, value)
-    assert list(validator().iter_errors(rec)), f"schema accepted: {case}"
+def test_schema_rejects(
+    case: str, base: str, path: str, value: Any, keyword: str | None, where: str
+) -> None:
+    errors = list(validator().iter_errors(mutate(base, path, value)))
+    assert errors, f"schema accepted: {case}"
+    found = {(e.validator, "/".join(map(str, e.absolute_path))) for e in errors}
+    assert (keyword, where) in found, f"expected {(keyword, where)}, got {found}"
 
 
 def test_semantic_checks_catch_errors() -> None:
-    rec = copy.deepcopy(base_record())
-    rec["layers"]["archetypal_plot"]["secondary"] = {"rebirth": 0.6}
-    rec["beat_tags"]["spoiler_text"]["evidence"]["found_family"] = "x"
-    rec["layers"]["structural_skeleton"]["emotional_arc"]["label"] = "icarus"
-    assert len(semantic_errors(rec)) == 3
+    def errs(fn: Any) -> list[str]:
+        rec = llm_record()
+        fn(rec)
+        assert list(validator().iter_errors(rec)) == [], "must be schema-valid"
+        return semantic_errors(rec)
+
+    plots = ("layers", "archetypal_plot", "plots")
+    skel = ("layers", "structural_skeleton")
+
+    def primary_absent(r: dict) -> None:
+        r[plots[0]][plots[1]][plots[2]]["rebirth"]["present"] = False
+
+    def three_secondary(r: dict) -> None:
+        for p in ("the_quest", "tragedy"):
+            r[plots[0]][plots[1]][plots[2]][p]["present"] = True
+
+    def evidence_absent(r: dict) -> None:
+        r["beat_tags"]["spoiler_text"]["evidence"].append({"tag": "found_family", "note": "x"})
+
+    def evidence_duplicate(r: dict) -> None:
+        ev = r["beat_tags"]["spoiler_text"]["evidence"]
+        ev.append(dict(ev[0]))
+
+    def wrong_arc(r: dict) -> None:
+        r[skel[0]][skel[1]]["emotional_arc"]["label"] = "icarus"
+
+    def fallback_conf(r: dict) -> None:
+        r[skel[0]][skel[1]]["arc_points"] = [0.1] * 11
+        r[skel[0]][skel[1]]["emotional_arc"].update(
+            label="riches_to_rags", net_change_fallback=True, confidence=0.8
+        )
+
+    def word_count(r: dict) -> None:
+        r["provenance"]["input_word_count"] = 500
+
+    for fn, needle in [
+        (primary_absent, "primary plot"),
+        (three_secondary, "secondary plots"),
+        (evidence_absent, "judged absent"),
+        (evidence_duplicate, "more than once"),
+        (wrong_arc, "does not match derivation"),
+        (fallback_conf, "below 0.5"),
+        (word_count, "input_word_count"),
+    ]:
+        found = errs(fn)
+        assert any(needle in e for e in found), (fn.__name__, found)
 
 
 # ---------- vocabulary: schema <-> doc, mechanically ----------
@@ -320,7 +512,6 @@ def test_semantic_checks_catch_errors() -> None:
 
 def test_all_enums_are_named_defs() -> None:
     """Every enum lives directly in $defs, so the doc can name it."""
-    schema = load_schema()
 
     def find(node: Any, path: str) -> Iterator[str]:
         if isinstance(node, dict):
@@ -332,12 +523,12 @@ def test_all_enums_are_named_defs() -> None:
             for i, v in enumerate(node):
                 yield from find(v, f"{path}/{i}")
 
-    assert list(find(schema, "")) == []
+    assert list(find(load_schema(), "")) == []
 
 
 def test_doc_vocabularies_match_schema_enums() -> None:
-    enums = schema_enums(load_schema())
-    doc = parse_doc_vocabularies()
+    enums = schema_enums()
+    doc = parse_vocab_tables(doc_text())
     assert set(doc) == set(enums), (
         f"only in doc: {sorted(set(doc) - set(enums))}; "
         f"only in schema: {sorted(set(enums) - set(doc))}"
@@ -345,40 +536,89 @@ def test_doc_vocabularies_match_schema_enums() -> None:
     for name, values in enums.items():
         assert len(values) == len(set(values)), f"duplicate enum values in {name}"
         doc_values = [row[0].strip("`") for row in doc[name]]
-        assert len(doc_values) == len(set(doc_values)), f"duplicate doc rows in {name}"
-        assert set(doc_values) == set(values), (
-            f"{name}: only in doc {sorted(set(doc_values) - set(values))}, "
-            f"only in schema {sorted(set(values) - set(doc_values))}"
-        )
+        assert doc_values == values, f"{name}: doc {doc_values} != schema {values}"
+
+
+def test_vocab_parser_rejects_non_vocabulary_rows() -> None:
+    good = (
+        "<!-- vocab:x -->\n"
+        "| Value | Name | Definition |\n"
+        "|---|---|---|\n"
+        "| `a` | A | defined here |\n"
+    )
+    assert parse_vocab_tables(good) == {"x": [["`a`", "A", "defined here"]]}
+    for bad_row in ("| a | A | no backticks |", "| `a` extra | A | junk |", "| | A | empty |"):
+        with pytest.raises(ValueError, match="non-vocabulary row"):
+            parse_vocab_tables(good + bad_row + "\n")
+    with pytest.raises(ValueError, match="separator"):
+        parse_vocab_tables("<!-- vocab:x -->\n| Value |\n| `a` |\n")
 
 
 def test_every_doc_term_has_a_definition() -> None:
-    for name, rows in parse_doc_vocabularies().items():
+    for name, rows in parse_vocab_tables(doc_text()).items():
         for row in rows:
             assert len(row) in (3, 4), f"{name}: malformed row {row}"
             assert len(row[-1]) >= 20, f"{name}: {row[0]} has no real definition"
 
 
-def test_spoiler_levels_cover_exactly_the_narrative_vocabularies() -> None:
-    """Every enum a viewer can see (under layers or beat_tags) has per-term spoiler levels."""
+def test_backticked_identifiers_in_doc_exist() -> None:
+    """Snake_case identifiers in backticks must be a schema term, field or def (catches renames)."""
+    record = load_schema()
+    known: set[str] = set(record["$defs"])
+    for values in schema_enums().values():
+        known.update(v for v in values if isinstance(v, str))
+
+    def collect(node: Any) -> None:
+        if isinstance(node, dict):
+            known.update(node.get("properties", {}))
+            for v in node.values():
+                collect(v)
+        elif isinstance(node, list):
+            for v in node:
+                collect(v)
+
+    collect(record)
+    collect(model_output_schema())
+    json_schema_words = {"minimum", "maximum", "if", "then", "const", "false", "true", "null"}
+    top = set(record["properties"]) | set(record["$defs"])
+
+    text = re.sub(r"```.*?```", "", doc_text(), flags=re.S)
+    unknown = []
+    for token in re.findall(r"`([^`\n]+)`", text):
+        if re.fullmatch(r"[a-z][a-z0-9_]*", token):
+            if token not in known | json_schema_words:
+                unknown.append(token)
+        elif re.fullmatch(r"[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+", token):
+            parts = token.split(".")
+            if parts[0] in top:
+                unknown.extend(p for p in parts if p not in known)
+    assert unknown == [], f"backticked identifiers not in schema: {sorted(set(unknown))}"
+
+
+def test_spoiler_levels_cover_exactly_the_viewer_visible_vocabularies() -> None:
     schema = load_schema()
     shown: set[str] = set()
-    for root in ("layers", "beat_tags_block"):
-        for _, raw in walk(schema, {"$ref": f"#/$defs/{root}"}, (root,)):
+    for root_name, def_name in viewer_roots():
+        for _, raw in walk(schema, {"$ref": f"#/$defs/{def_name}"}, (root_name,)):
             name = ref_name(raw)
             if name and "enum" in schema["$defs"][name]:
                 shown.add(name)
+        for _, raw in walk(schema, {"$ref": f"#/$defs/{def_name}"}, (root_name,)):
+            node = resolve(schema, raw)
+            if isinstance(node, dict) and "x-laminary-keys" in node:
+                shown.add(node["x-laminary-keys"])
+    shown.discard("arc_method")  # internal provenance of the arc label, never displayed
     levels = schema["x-laminary-spoiler-levels"]["vocabularies"]
     assert set(levels) == shown
     allowed = set(schema["$defs"]["spoiler_level"]["enum"])
     for name, mapping in levels.items():
-        assert set(mapping) == set(schema["$defs"][name]["enum"]), name
+        assert list(mapping) == schema["$defs"][name]["enum"], name
         assert set(mapping.values()) <= allowed, name
 
 
 def test_doc_spoiler_column_matches_schema() -> None:
     levels = load_schema()["x-laminary-spoiler-levels"]["vocabularies"]
-    for name, rows in parse_doc_vocabularies().items():
+    for name, rows in parse_vocab_tables(doc_text()).items():
         if name in levels:
             for row in rows:
                 assert len(row) == 4, f"{name}: row needs a spoiler column: {row}"
@@ -387,11 +627,43 @@ def test_doc_spoiler_column_matches_schema() -> None:
             assert all(len(row) == 3 for row in rows), f"{name}: unexpected spoiler column"
 
 
-def test_field_spoiler_levels_point_at_real_fields() -> None:
+def test_fixed_key_objects_list_every_term() -> None:
     schema = load_schema()
+    found = 0
+    for node in schema["$defs"].values():
+        stack = [node]
+        while stack:
+            n = stack.pop()
+            if isinstance(n, dict):
+                if "x-laminary-keys" in n:
+                    found += 1
+                    terms = schema["$defs"][n["x-laminary-keys"]]["enum"]
+                    assert list(n["properties"]) == terms
+                    assert n["required"] == terms
+                    assert n["additionalProperties"] is False
+                stack.extend(n.values())
+            elif isinstance(n, list):
+                stack.extend(n)
+    assert found == 6  # plots, stages, tags; full and gold variants
+
+
+def test_single_choice_fields_have_max_field_level() -> None:
+    """Hidden single-choice fields must hide whatever their value (QA S1)."""
+    schema = load_schema()
+    vocab_levels = schema["x-laminary-spoiler-levels"]["vocabularies"]
+    fields = schema["x-laminary-spoiler-levels"]["fields"]
+    single: dict[str, str] = {}
+    for path, raw in walk(schema, {"$ref": "#/$defs/layers"}, ("layers",)):
+        name = ref_name(raw)
+        if name in vocab_levels and path[-1] != "[]":
+            key = ".".join(path[:-1]) if path[-1] == "label" else ".".join(path)
+            single[key] = name
+    assert set(single) <= set(fields)
+    for key, name in single.items():
+        want = max(vocab_levels[name].values(), key=LEVEL_ORDER.__getitem__)
+        assert fields[key] == want, key
     paths = {".".join(p) for p, _ in walk(schema, {"$ref": "#/$defs/layers"}, ("layers",))}
-    for field in schema["x-laminary-spoiler-levels"]["fields"]:
-        assert field in paths, field
+    assert set(fields) <= paths
 
 
 # ---------- spoiler separation ----------
@@ -400,11 +672,17 @@ def test_field_spoiler_levels_point_at_real_fields() -> None:
 def test_all_free_text_is_inside_safe_or_spoiler_text() -> None:
     schema = load_schema()
     text_paths: list[tuple[str, ...]] = []
-    for root in ("layers", "beat_tags_block"):
-        for path, raw in walk(schema, {"$ref": f"#/$defs/{root}"}, (root,)):
+    for root_name, def_name in viewer_roots():
+        for path, raw in walk(schema, {"$ref": f"#/$defs/{def_name}"}, (root_name,)):
             node = resolve(schema, raw)
-            if isinstance(node, dict) and node.get("type") == "string" and path[-1] != "<key>":
+            if isinstance(node, dict) and is_string_type(node) and "enum" not in node:
                 text_paths.append(path)
     assert text_paths, "expected some free-text fields"
     bad = [p for p in text_paths if "safe_text" not in p and "spoiler_text" not in p]
     assert not bad, f"free text outside safe_text/spoiler_text: {bad}"
+
+
+def test_free_text_walk_sees_nullable_string_types() -> None:
+    fake = {"$defs": {}, "type": "object", "properties": {"x": {"type": ["string", "null"]}}}
+    nodes = [resolve(fake, raw) for _, raw in walk(fake, fake, ("root",))]
+    assert any(is_string_type(n) for n in nodes)

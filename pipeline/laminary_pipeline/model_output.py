@@ -30,8 +30,16 @@ ARC_KEYS = [f"t{i:02d}" for i in range(ARC_POINT_COUNT)]
 
 # Keywords kept in the model-facing schema. Everything else is dropped (and enforced client-side).
 SUPPORTED_KEYWORDS = {
-    "type", "properties", "required", "additionalProperties", "items", "enum", "const",
-    "anyOf", "description", "minItems",
+    "type",
+    "properties",
+    "required",
+    "additionalProperties",
+    "items",
+    "enum",
+    "const",
+    "anyOf",
+    "description",
+    "minItems",
 }
 
 
