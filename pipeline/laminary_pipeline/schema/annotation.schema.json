@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:laminary:schema:annotation:0.2.0",
   "title": "Laminary title annotation",
-  "description": "DRAFT 0.2.0, pending Hari's approval. Stored contract for one title's narrative annotation (movie, or whole TV series pending open question 10). Definitions: docs/NARRATIVE_SCHEMA.md. Display rule: text under any 'safe_text' key may always be shown; text under any 'spoiler_text' key is hidden unless the viewer opts in; labels carry the levels in 'x-laminary-spoiler-levels'. The model-facing output schema is derived from this file by laminary_pipeline.model_output.",
+  "description": "DRAFT 0.2.0, pending Hari's approval. Stored contract for one title's narrative annotation (movie, or whole TV series at series level). Definitions: docs/NARRATIVE_SCHEMA.md. Display rule: text under any 'safe_text' key may always be shown; text under any 'spoiler_text' key is hidden unless the viewer opts in; labels carry the levels in 'x-laminary-spoiler-levels'. The model-facing output schema is derived from this file by laminary_pipeline.model_output.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -150,6 +150,9 @@
               },
               "sources": {
                 "minItems": 1
+              },
+              "input_word_count": {
+                "minimum": 150
               }
             }
           },
@@ -196,9 +199,14 @@
               "annotator": {
                 "required": [
                   "labeler_id",
-                  "guide_version",
-                  "protocol"
+                  "guide_version"
                 ]
+              },
+              "sources": {
+                "minItems": 1
+              },
+              "input_word_count": {
+                "minimum": 150
               }
             }
           }
@@ -266,7 +274,9 @@
         "voyage_and_return": "none",
         "comedy": "none",
         "tragedy": "mild",
-        "rebirth": "mild"
+        "rebirth": "mild",
+        "rebellion_against_the_one": "none",
+        "mystery": "none"
       },
       "mythic_blueprint": {
         "heros_journey": "none",
@@ -371,12 +381,6 @@
         "TMDB-API-terms"
       ]
     },
-    "gold_protocol": {
-      "enum": [
-        "from_summary",
-        "from_viewing"
-      ]
-    },
     "outcome": {
       "enum": [
         "annotated",
@@ -443,7 +447,9 @@
         "voyage_and_return",
         "comedy",
         "tragedy",
-        "rebirth"
+        "rebirth",
+        "rebellion_against_the_one",
+        "mystery"
       ]
     },
     "mythic_blueprint": {
@@ -543,7 +549,7 @@
           "pattern": "^Q[1-9][0-9]*$"
         },
         "series_status": {
-          "description": "Series only. For 'ongoing', annotations describe the aired run as of the source revision.",
+          "description": "Series only. For 'ongoing', the annotation covers episodes aired as of the latest sources[].retrieved_at and is refreshed when any source content_sha256 changes.",
           "$ref": "#/$defs/series_status"
         }
       },
@@ -660,10 +666,6 @@
               "description": "Labeling guide version (gold labels).",
               "type": "string",
               "minLength": 1
-            },
-            "protocol": {
-              "description": "How the gold labeler worked (gold labels). See open question 9.",
-              "$ref": "#/$defs/gold_protocol"
             }
           }
         },
@@ -935,7 +937,9 @@
             "voyage_and_return",
             "comedy",
             "tragedy",
-            "rebirth"
+            "rebirth",
+            "rebellion_against_the_one",
+            "mystery"
           ],
           "properties": {
             "overcoming_the_monster": {
@@ -957,6 +961,12 @@
               "$ref": "#/$defs/judgment"
             },
             "rebirth": {
+              "$ref": "#/$defs/judgment"
+            },
+            "rebellion_against_the_one": {
+              "$ref": "#/$defs/judgment"
+            },
+            "mystery": {
               "$ref": "#/$defs/judgment"
             }
           }
@@ -1262,7 +1272,9 @@
                 "voyage_and_return",
                 "comedy",
                 "tragedy",
-                "rebirth"
+                "rebirth",
+                "rebellion_against_the_one",
+                "mystery"
               ],
               "properties": {
                 "overcoming_the_monster": {
@@ -1284,6 +1296,12 @@
                   "$ref": "#/$defs/gold_judgment"
                 },
                 "rebirth": {
+                  "$ref": "#/$defs/gold_judgment"
+                },
+                "rebellion_against_the_one": {
+                  "$ref": "#/$defs/gold_judgment"
+                },
+                "mystery": {
                   "$ref": "#/$defs/gold_judgment"
                 }
               }
