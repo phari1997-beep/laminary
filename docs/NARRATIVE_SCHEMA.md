@@ -1,6 +1,6 @@
 # Narrative taxonomy and annotation schema
 
-**Status: DRAFT v0.3.0.** Owner: data-pipeline. Includes Hari's decisions of 2026-09-26 (`docs/DECISIONS.md`); items still marked **[OPEN]** are listed in section 16. The schema becomes 1.0.0 once QA passes and Hari approves the final draft.
+**Status: v1.0.0.** Owner: data-pipeline. Includes Hari's decisions of 2026-09-26 and 2026-09-29 (`docs/DECISIONS.md`). The one remaining **[OPEN]** item (TMDB authorization) is in section 16 and does not block 1.0.0, because the schema already enforces Wikipedia-only input.
 
 - Stored record contract: `pipeline/laminary_pipeline/schema/annotation.schema.json` (JSON Schema draft 2020-12, shipped as package data)
 - Model-facing output schema: derived in code, `laminary_pipeline/model_output.py` (section 11)
@@ -15,7 +15,7 @@ This document is the single source of definitions for the annotation prompt, the
 
 ## 1. Ground rules
 
-1. **Wikipedia plot sections only.** The only annotation input is Wikipedia plot sections (CC BY-SA). Never scripts, subtitles, or book texts. **Never send TMDB overviews or any other TMDB text to Claude, and never embed them**: search results quoting TMDB's terms say that use with LLM/AI query-response systems needs TMDB's written authorization, and that training or validating ML/AI systems on TMDB content is prohibited. The schema enforces this: LLM and gold records may only cite `wikipedia_plot` sources with a CC BY-SA `license` and an `https://en.wikipedia.org/` `ref`. **Phase 1 requirement:** the prompt builder and the embedding input must pass their sources through `require_wikipedia_sources()` in `laminary_pipeline/annotation.py`. It fails closed: one non-Wikipedia, non-CC-BY-SA or non-en.wikipedia.org source rejects the whole title, and an empty list is rejected too. It is unit-tested. TMDB is used only for IDs and display metadata, subject to Hari's commercial agreement (PLAN §8). The summary text is not stored in the record; the record stores a reference, revision and hash of each source (section 10).
+1. **Wikipedia plot sections only.** The only annotation input is Wikipedia plot sections (CC BY-SA). Never scripts, subtitles, or book texts. **Never send TMDB overviews or any other TMDB text to Claude, and never embed them**: search results quoting TMDB's terms say that use with LLM/AI query-response systems needs TMDB's written authorization, and that training or validating ML/AI systems on TMDB content is prohibited. The schema enforces this: LLM and gold records may only cite `wikipedia_plot` sources with a CC BY-SA `license` and an `https://en.wikipedia.org/` `ref`. **Phase 1 requirement:** the prompt builder and the embedding input must pass their sources through `require_wikipedia_sources()` in `laminary_pipeline/annotation.py`. It fails closed: one non-Wikipedia, non-CC-BY-SA or non-en.wikipedia.org source rejects the whole title, and an empty list is rejected too. It is unit-tested, and a test ties its ref pattern and allowed kind to the schema's rule for LLM and gold records. **Phase 1 requirement for the prompt builder:** the SHA-256 of the exact text sent to the model must equal the gated source's `content_sha256`, and the 150-word minimum is checked on that text before the call, not after. TMDB is used only for IDs and display metadata, subject to Hari's commercial agreement (PLAN §8). The summary text is not stored in the record; the record stores a reference, revision and hash of each source (section 10).
 2. **Minimum summary: 150 words** (decided 2026-09-26). Titles with less summary text are skipped before any model call, and get no narrative data. The schema enforces this on LLM and gold records. Since TMDB text is excluded, this in practice requires a Wikipedia plot section of at least 150 words.
 3. **No guessing from a title.** Annotate only what the supplied summary supports. Do not fill gaps from outside knowledge of the title. If the summary can't support the four layers, the correct output is `outcome: "abstained"`, not a low-confidence guess.
 4. **Own words.** Every free-text field is written fresh. Never copy or closely paraphrase sentences from the source.
@@ -23,14 +23,14 @@ This document is the single source of definitions for the annotation prompt, the
 6. **Describe, don't grade.** Text explains the story's shape. No quality judgments.
 7. **Scope (decided 2026-09-26).** Movies, and TV at series level only: one record per whole series, never per episode or season. Ongoing series are annotated on the episodes aired so far and refreshed when the summary changes (section 10).
 
-TMDB's written authorization for LLM use is **[OPEN]**, owned by Hari (section 16, question 2). Until TMDB authorizes it in writing, the rule above stands.
+TMDB's written authorization for LLM use is **[OPEN]**, owned by Hari (section 16). Until TMDB authorizes it in writing, the rule above stands.
 
 ---
 
 ## 2. Record at a glance
 
 ```
-schema_version        "0.3.0"
+schema_version        "1.0.0"
 record_kind           llm_annotation | gold_label | illustrative_example
 title                 media_type, name, release_year, tmdb_id, wikidata_id, series_status (TV only)
 provenance            annotated_at, annotator{...}, sources[...], input_word_count, usage{...}, notes
@@ -66,9 +66,9 @@ Promise 3 in VISION.md: spoilers are hidden unless the viewer opts in.
 | Group | Fields | Shown by default up to |
 |---|---|---|
 | Story shape | `primary`, `plots`, `blueprint`, `stages`, `emotional_arc`, `arc_points`, `setting_period`, `protagonist_structure`, `chronology` | `mild` (decided 2026-09-26) |
-| Beat tags and tones | `tags`, `tones` | `none` (draft default; **[OPEN]** question 4) |
+| Beat tags and tones | `tags`, `tones` | `none` (decided 2026-09-29) |
 
-Question 4 is a one-line change: if Hari decides `mild` beat tags and tones are visible by default, the second row's value becomes `mild`. The same table would also cover a viewer setting that hides story shapes (hypothetical; none is planned): it would set the first row to `none`.
+So `mild` beat tags (`twist_ending`, `redemption_arc`, `ambiguous_ending`) and all `mild` tones stay hidden until the viewer opts in (decided 2026-09-29). Changing either group later is a one-line change to this table. The same table would also cover a viewer setting that hides story shapes (hypothetical; none is planned): it would set the first row to `none`.
 
 "Visible level" below means the level shown for the label's group.
 
@@ -270,8 +270,8 @@ The six core arcs (Reagan et al., 2016, after Vonnegut) are defined by the direc
 
 1. **Major move.** A rise or fall of at least 0.3 from the most recent peak or trough. Smaller wobbles are ignored. Differences are rounded to 6 decimals before comparing, so a move of exactly 0.3 counts.
 2. **One to three major moves** map directly to an arc (table below).
-3. **Four or more major moves** (common in long series): raise the threshold in steps of 0.1 (0.4, 0.5, ...) until at most three moves remain, then map. The threshold stops at 2.0, the full fortune range. The threshold used is stored in `emotional_arc.threshold_used`. The record sets `reduced_shape` to true when the reduction lands on a single move, or needs a threshold of 0.6 or more. Without this, a W or M shape can collapse into one confident leg: the W in the tests reduces to `rags_to_riches` at 0.8.
-4. **No major moves** (a flat or gentle story), **or still four or more at 2.0** (for example, swings between the extremes): fall back to the direction of the net change, last point minus first point. A net rise maps to `rags_to_riches`; a net fall, or exactly zero, maps to `riches_to_rags`. The record sets `net_change_fallback` to true. There is deliberately no "flat" arc term (section 16, question 3).
+3. **Four or more major moves** (common in long series): raise the threshold in steps of 0.1 (0.4, 0.5, ...) until at most three moves remain, then map. The threshold stops at 2.0, the full fortune range. The threshold used is stored in `emotional_arc.threshold_used`. The record sets `reduced_shape` to true exactly when the threshold used is 0.6 or more. Without this, a W or M shape collapses into one confident leg: the W in the tests reduces to `rags_to_riches` at 0.8. Noisy climbs that settle by 0.4 or 0.5 stay unflagged; the tests include one that is an unflagged `rags_to_riches` at 0.4.
+4. **No major moves** (a flat or gentle story), **or still four or more at 2.0** (for example, swings between the extremes): fall back to the direction of the net change, last point minus first point. A net rise maps to `rags_to_riches`; a net fall, or exactly zero, maps to `riches_to_rags`. The record sets `net_change_fallback` to true. This label is a hidden placeholder: it is never shown and never used in shape rows (decided 2026-09-29). There is no "flat" arc term in 1.0.0; a "Steady" shape will be revisited after the 500-title pilot. Arc points are stored, so adding one later needs no re-annotation.
 
 The move detection is symmetric: reversing the points in time, or flipping their sign, reverses or flips the moves. A sub-threshold opening move is dropped exactly like a sub-threshold closing one. This is property-tested.
 
@@ -295,7 +295,7 @@ Stored confidence for a derived arc is the annotator's `arc_confidence` (how wel
 | `derived` | Derived | Label computed from `arc_points` by the rule above. Required on LLM records; `threshold_used`, `net_change_fallback` and `reduced_shape` must match the rule. |
 | `labeler_assigned` | Labeler-assigned | A gold labeler chose the label directly (arc points optional). |
 
-**Gold guide for flat stories.** A gold labeler who judges that a story has no major move assigns the net-change label by the same rule (`rags_to_riches` for a net rise, `riches_to_rags` otherwise) and sets `net_change_fallback` to true, using method `labeler_assigned`. If question 3 adds a flat term, the labeler uses that term instead.
+**Gold guide for flat stories.** A gold labeler who judges that a story has no major move assigns the net-change label by the same rule (`rags_to_riches` for a net rise, `riches_to_rags` otherwise) and sets `net_change_fallback` to true, using method `labeler_assigned`. If a "Steady" shape is added after the pilot, the flagged gold titles are the ones to relabel; their arc label was only a placeholder.
 
 **Comparing gold and model arcs.** The primary arc metric compares the model's derived label with the gold label, whichever method the gold labeler used. Titles where either side is flagged (`net_change_fallback` or `reduced_shape`) are scored and reported separately, not mixed into the headline accuracy. When the gold record also has arc points, the evaluation additionally reports (a) agreement between labels derived from both point sets, and (b) mean absolute difference between the two point sets, as a shape distance.
 
@@ -451,13 +451,15 @@ Done at ingestion, not here: `tmdb_id` exists in TMDB and its title and year mat
 
 ## 13. Versioning
 
-`schema_version` is semantic versioning, fixed by `const` in the schema so a record can't claim a version it doesn't conform to. It stays 0.x until Hari approves the final draft.
+`schema_version` is semantic versioning, fixed by `const` in the schema so a record can't claim a version it doesn't conform to. The current version is 1.0.0.
 
 - **Major** (1.0.0 → 2.0.0): a field or term is removed, renamed or redefined. Old records must be migrated or re-annotated. Backend is told first; they own the migration.
 - **Minor** (1.0.0 → 1.1.0): a new optional field or a new vocabulary term. For fixed-key judgments a new term is a new required key, so old records validate against their own version only. They are treated as **not assessed** for the new term until re-run, never as "absent".
 - **Patch** (1.0.0 → 1.0.1): wording in this document only, with no change to what a label means.
 
 `prompt_version` changes whenever the annotation prompt text changes (including definition wording pulled from this document), and `model_version` records the exact model id. Evaluation results are always reported per (schema_version, prompt_version, model_version).
+
+**Changelog, 0.1.0 → 1.0.0:** the Phase 0 drafts reviewed by QA and approved by Hari. Presence maps became fixed-key judgments. `emotional_arc` is derived from the arc points, with `net_change_fallback` and `reduced_shape` flags. Booker has nine plots, and Vogler's stage names are exact. Gold records are light. Input is Wikipedia-only, with the 150-word gate. `usage` is required on LLM records. 1.0.0 itself changes only the version, and narrows `reduced_shape` to "threshold used is 0.6 or more".
 
 0.2.0 → 0.3.0 changes: `emotional_arc.reduced_shape` added; the threshold search stops at 2.0; `confidence` is required on LLM arcs; LLM and gold sources must have a CC BY-SA license and an en.wikipedia.org ref.
 
@@ -478,16 +480,17 @@ Run on the ~100-title gold set after each prompt iteration, reported per (schema
 | Surface fields | Accuracy of `setting_period`, `protagonist_structure`, `chronology`; overlap of `tones`. Informational only. |
 | Calibration | Accuracy per confidence band (section 4); the display threshold is tuned from this. |
 | Abstention | Abstention rate, and abstentions on titles gold labelers could label. |
+| Flat and reduced arcs | Rate of `net_change_fallback` titles and of `reduced_shape` titles, **split by movies and series**, over the gold set and the whole pilot batch. This informs the "Steady" shape decision after the pilot. |
 | **Spoiler leaks** | Gold labelers flag any `safe_text` that goes past the setup, graded `mild` or `major`. Target: 0 `major` leaks; report the `mild` rate. |
 
 If the leak metric misses its target, the fix is prompt work (tighter setup-only instructions, examples of leaks) or a separate cheap pass that rewrites `safe_text` from the setup portion of the Wikipedia plot. The second option costs an extra call per title and would be proposed with a cost estimate. TMDB overviews are not an option (section 1).
 
-**Phase 1 exit metric: [OPEN]** (question 1). PLAN §5.5 says "at least 80% top-level archetype agreement", measured against the gold set. Proposal:
+**Phase 1 exit metric (decided 2026-09-29).** Measured against the gold set:
 
 - **Field:** "archetype" means `archetypal_plot.primary.label`.
 - **Matching rule (strict):** the model's primary equals the gold primary. Target: at least 80% over gold titles.
 - **Emotional arc reported separately, not gating:** exact-match accuracy of the derived `emotional_arc` label against gold, with fallback and reduced-shape titles broken out.
-- **Also reported, not gating:** lenient plot agreement (the model's primary is judged present in the gold `plots`), and kappa.
+- **Also reported, not gating:** the flat and reduced arc rates above, lenient plot agreement (the model's primary is judged present in the gold `plots`), and kappa.
 - **Abstentions:** the model abstaining on a gold-labeled title counts as a miss.
 
 ---
@@ -520,7 +523,7 @@ Re-check against the new rules:
 
 - **No row uses a `major` term.**
 - **Rows 5 to 7 changed from `none` to `mild`.** Membership reveals the `primary` plot, and `primary` is a single-choice field whose level is the highest in its vocabulary (`mild`, section 3 rule 3).
-- **Row 8 under the question 4 draft default:** `redemption_arc` is a `mild` beat tag, hidden by default, so the default view of row 8 uses only primary `rebirth`. If question 4 makes `mild` tags visible, row 8 uses both halves.
+- **Row 8:** `redemption_arc` is a `mild` beat tag, hidden by default (decided 2026-09-29), so the default view of row 8 uses only primary `rebirth`. The tag half applies only for viewers who opt in.
 - **Row 10 changed from `none` to `mild`**, because counting stage coverage uses late stages such as `resurrection` (rule 5).
 - **Row 8:** `redemption_arc` on a villain reveals that the villain turns; Hari approved it at `mild`, so the row stands.
 - **Rows left out:** rows built on `major` tags and on `twist_ending` stay out, since the row name would spoil every title in it.
@@ -530,7 +533,7 @@ Re-check against the new rules:
 
 ## 16. Decisions and open questions
 
-Decided by Hari on 2026-09-26 (logged in `docs/DECISIONS.md`) and reflected above:
+Decided by Hari on 2026-09-26 and 2026-09-29 (logged in `docs/DECISIONS.md`) and reflected above:
 
 - **Spoiler visibility:** story shapes and the arc line are visible by default, and plot spoilers are hidden (section 3).
 - **Spoiler levels:** the per-term levels are approved as drafted (section 3).
@@ -545,10 +548,10 @@ Decided by Hari on 2026-09-26 (logged in `docs/DECISIONS.md`) and reflected abov
 - **Gold protocol:** gold labelers use the same summary as the model (section 10).
 - **Browse rows:** keep all 15 until the pilot (section 15).
 - **TMDB interim rule:** Wikipedia plot sections are the only annotation input, and TMDB is used for IDs and display metadata only, until TMDB authorizes LLM use in writing (section 1).
+- **Phase 1 exit metric (2026-09-29):** exact match of `archetypal_plot.primary.label` against gold on at least 80% of gold titles, abstentions counted as misses; `emotional_arc` accuracy reported separately, not gating (section 14).
+- **Mild beat tags and tones hidden by default (2026-09-29):** story shapes, the arc line and journey stages stay visible (section 3).
+- **Flat stories (2026-09-29):** a flagged net-change placeholder that is never shown or used in shape rows; a "Steady" shape is revisited after the pilot (section 8).
 
-Still **[OPEN] — Hari decides:**
+Still **[OPEN] — Hari owns:**
 
-1. **Phase 1 exit metric.** Confirm the proposal in section 14: exact match on `archetypal_plot.primary.label` against the gold set, at least 80%, with abstentions counted as misses, and `emotional_arc` accuracy reported separately. The alternative is lenient plot matching.
-2. **TMDB written authorization for LLM use (Hari).** Until TMDB authorizes it in writing, no TMDB text is sent to Claude or embedded. If TMDB restricts use more broadly, `tmdb_id` (currently required) may need to give way to another primary identifier. Wikidata (CC0) carries identifiers for many films and series (including TMDB and IMDb ids) and could supply cross-IDs, though its coverage of newer or niche titles needs checking. Moving off `tmdb_id` would be a schema change coordinated with backend. Display metadata (posters, runtimes) would then need another licensed source; that question sits with PLAN §5.1, not this schema.
-3. **Flat stories.** Stories with no major move get a flagged fallback label that consumers ignore (section 8), so they never appear in arc rows or why-lines, and gold labelers mark them the same way. Is that acceptable for v1, or should a "flat" or "steady" arc term be considered after the pilot? That would be a taxonomy change. Collapsed W/M shapes (`reduced_shape`) are handled the same way and need no decision.
-4. **Visibility of `mild` beat tags and tones.** Should `mild` beat tags (`twist_ending`, `redemption_arc`, `ambiguous_ending`) and `mild` tones (`bleak`, `bittersweet`, `triumphant`) be visible by default like story shapes, or hidden until opt-in? The draft default is **hidden**. Either answer is a one-line change to the table in section 3. It also decides whether row 8's `redemption_arc` half appears in default views.
+- **TMDB written authorization for LLM use.** Until TMDB authorizes it in writing, no TMDB text is sent to Claude or embedded; the schema and `require_wikipedia_sources()` enforce this, so it does not block 1.0.0. If TMDB restricts use more broadly, `tmdb_id` (currently required) may need to give way to another primary identifier. Wikidata (CC0) carries identifiers for many films and series (including TMDB and IMDb ids) and could supply cross-IDs, though its coverage of newer or niche titles needs checking. Moving off `tmdb_id` would be a schema change coordinated with backend. Display metadata (posters, runtimes) would then need another licensed source; that question sits with PLAN §5.1, not this schema.

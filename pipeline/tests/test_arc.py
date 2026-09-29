@@ -125,6 +125,22 @@ def test_reduction_needing_threshold_0_6_is_flagged_even_with_two_legs() -> None
     assert d.reduced_shape
 
 
+def test_noisy_climb_is_an_unflagged_rags_to_riches() -> None:
+    """QA N2: a single leg after a small reduction is a real shape, not a collapse."""
+    points = [-0.8, -0.3, -0.6, -0.1, -0.4, 0.1, -0.2, 0.3, 0.0, 0.5, 0.9]
+    assert len(major_moves(points, 0.3)) >= 4
+    d = derive_arc(points)
+    assert (d.label, d.threshold_used, d.legs) == ("rags_to_riches", 0.4, ("up",))
+    assert not d.reduced_shape and not d.unreliable
+
+
+def test_reduced_shape_is_exactly_threshold_at_least_0_6() -> None:
+    rng = random.Random(7)
+    for _ in range(3000):
+        d = derive_arc([round(rng.uniform(-1, 1), 1) for _ in range(11)])
+        assert d.reduced_shape == (d.threshold_used >= 0.6)
+
+
 def test_small_reductions_are_not_flagged() -> None:
     d = derive_arc([0.1, -0.2, -0.4, -0.3, 0.0, -0.5, -0.8, -0.6, -0.1, 0.5, 0.9])
     assert d.threshold_used == 0.5 and len(d.legs) == 2
