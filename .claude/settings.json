@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__Figma",
+      "Bash(ruff check)",
+      "Bash(ruff check *)",
+      "Bash(ruff format --check)",
+      "Bash(ruff format --check *)",
+      "Bash(pytest)",
+      "Bash(pytest pipeline)",
+      "Bash(actionlint *)",
+      "Bash(git check-ignore *)",
+      "mcp__Google_Drive__read_file_content"
+    ]
+  }
+}
