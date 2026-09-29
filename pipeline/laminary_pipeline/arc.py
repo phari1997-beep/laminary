@@ -9,8 +9,9 @@ annotation prompt, the gold-set guide and the pipeline all agree:
 2. One to three major moves map directly to one of the six arcs.
 3. Four or more moves: raise the threshold in 0.1 steps until at most three remain, up to a
    maximum of 2.0 (the full fortune range). The label is flagged ``reduced_shape`` when the
-   reduction lands on a single move, or needs a threshold of 0.6 or more: a W or M shape can
-   otherwise collapse into one confident leg.
+   reduction needs a threshold of 0.6 or more: a W or M shape otherwise collapses into one
+   confident leg (they reduce at 0.8), while noisy climbs that settle by 0.4 or 0.5 stay
+   unflagged.
 4. No major moves (a flat or gentle story), or still four or more at 2.0: fall back to the
    direction of the net change, end minus start (rise -> rags_to_riches, fall ->
    riches_to_rags). A net change of exactly zero counts as a fall.
@@ -102,12 +103,9 @@ def derive_arc(points: Sequence[float]) -> ArcDerivation:
     threshold = MAJOR_MOVE
     while True:
         legs = major_moves(points, threshold)
-        reduced = threshold > MAJOR_MOVE
+        reduced = round(threshold, _DECIMALS) >= REDUCED_SHAPE_THRESHOLD
         if 1 <= len(legs) <= 3:
-            flag = reduced and (
-                len(legs) == 1 or round(threshold, _DECIMALS) >= REDUCED_SHAPE_THRESHOLD
-            )
-            return ArcDerivation(LEGS_TO_ARC[legs], round(threshold, 1), legs, False, flag)
+            return ArcDerivation(LEGS_TO_ARC[legs], round(threshold, 1), legs, False, reduced)
         if not legs or round(threshold, _DECIMALS) >= MAX_THRESHOLD:
             net = round(points[-1] - points[0], _DECIMALS)
             label = "rags_to_riches" if net > 0 else "riches_to_rags"

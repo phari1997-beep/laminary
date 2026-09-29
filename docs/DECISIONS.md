@@ -22,3 +22,6 @@
 | 2026-09-26 | Keep all 15 proposed browse rows for now; prune after the 500-title pilot shows row sizes | Not enough data to cut yet |
 | 2026-09-26 | Per-term spoiler levels (none / mild / major) approved as drafted | Hari reviewed; consistent with showing story shapes by default |
 | 2026-09-26 | Label display threshold raised from 0.70 to 0.80 confidence (tunable after the 500-title pilot) | Prefer fewer, more reliable labels; pilot will show the coverage cost |
+| 2026-09-29 | Phase 1 exit metric: model's primary Booker plot exactly matches the gold label on ≥80% of gold titles (abstentions count as misses); emotional-arc accuracy reported separately, not gating | Hari's call; one clear, measurable gate |
+| 2026-09-29 | Mild beat tags (twist ending, redemption arc, ambiguous ending) and tones are hidden by default until the viewer opts in; story shapes, arc line and journey stages stay visible | Hari's call; "has a twist ending" reads as a spoiler |
+| 2026-09-29 | Flat stories (no major rise or fall) get a hidden placeholder arc label (net-change fallback, flagged, never shown or used in shape rows); revisit adding a "Steady" shape after the 500-title pilot | Hari's call; arc points are stored, so adding a shape later needs no re-annotation |

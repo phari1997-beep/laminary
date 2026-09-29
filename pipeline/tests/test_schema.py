@@ -27,6 +27,7 @@ from laminary_pipeline.annotation import (
     ALLOWED_INPUT_LICENSES,
     DISPLAY_CONFIDENCE_THRESHOLD,
     SCHEMA_RESOURCE,
+    WIKIPEDIA_REF,
     load_schema,
     require_wikipedia_sources,
     semantic_errors,
@@ -155,7 +156,8 @@ def test_schema_is_valid_draft_2020_12() -> None:
     schema = load_schema()
     assert schema["$schema"] == "https://json-schema.org/draft/2020-12/schema"
     Draft202012Validator.check_schema(schema)
-    assert schema["properties"]["schema_version"]["const"].startswith("0.")
+    assert schema["properties"]["schema_version"]["const"] == "1.0.0"
+    assert schema["$id"] == "urn:laminary:schema:annotation:1.0.0"
 
 
 def test_there_are_examples() -> None:
@@ -788,6 +790,25 @@ def wiki_source(**over: Any) -> dict[str, Any]:
 
 def test_input_license_constant_matches_schema() -> None:
     assert ALLOWED_INPUT_LICENSES == set(schema_enums()["input_license"])
+
+
+def _source_rule(record_kind: str) -> dict[str, Any]:
+    """The per-source constraints in the allOf branch for one record kind."""
+    for branch in load_schema()["allOf"]:
+        kind = branch.get("if", {}).get("properties", {}).get("record_kind", {}).get("const")
+        provenance = branch.get("then", {}).get("properties", {}).get("provenance")
+        if kind == record_kind and provenance and "sources" in provenance["properties"]:
+            return provenance["properties"]["sources"]["items"]["properties"]
+    raise AssertionError(f"no allOf branch for {record_kind}")
+
+
+@pytest.mark.parametrize("record_kind", ["llm_annotation", "gold_label"])
+def test_input_gate_matches_schema_source_rule(record_kind: str) -> None:
+    """QA N1: the Python gate and the schema must enforce the same Wikipedia-only rule."""
+    rule = _source_rule(record_kind)
+    assert rule["kind"] == {"const": "wikipedia_plot"}
+    assert rule["ref"]["pattern"] == WIKIPEDIA_REF.pattern
+    assert rule["license"] == {"$ref": "#/$defs/input_license"}
 
 
 def test_require_wikipedia_sources_accepts_wikipedia() -> None:
