@@ -26,3 +26,5 @@
 | 2026-09-29 | Mild beat tags (twist ending, redemption arc, ambiguous ending) and tones are hidden by default until the viewer opts in; story shapes, arc line and journey stages stay visible | Hari's call; "has a twist ending" reads as a spoiler |
 | 2026-09-29 | Flat stories (no major rise or fall) get a hidden placeholder arc label (net-change fallback, flagged, never shown or used in shape rows); revisit adding a "Steady" shape after the 500-title pilot | Hari's call; arc points are stored, so adding a shape later needs no re-annotation |
 | 2026-09-29 | Narrative schema v1.0.0 approved (docs/NARRATIVE_SCHEMA.md, laminary_pipeline/schema/annotation.schema.json) | Hari's sign-off after QA pass; TMDB written authorization remains open and does not block |
+| 2026-09-29 | Landing page: design in Figma first; after Hari approves the design, build the live page in Lovable using Lovable's built-in database for signups | Hari's call; working signup list with export, no extra accounts |
+| 2026-09-29 | Coordinator may spend Lovable credits on the landing page build and fix rounds; stop and tell Hari on any usage or plan limit | Hari's approval |
