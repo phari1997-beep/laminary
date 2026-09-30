@@ -1,0 +1,202 @@
+# Gold labeling guide
+
+**Version 1.0.0** (this number goes in the sheet's `guide_version` column). Owner: data-pipeline. Definitions come from `docs/NARRATIVE_SCHEMA.md` v1.0.0; if the two ever disagree, the schema wins and this guide gets fixed.
+
+## What this is for
+
+Laminary uses an AI model to read each film's or series' plot summary and label its story shape. To know whether the model is any good, we need an answer key: about 100 titles labeled carefully by people. That's you.
+
+Your labels are compared with the model's. The main score is simple: does the model pick the same **primary plot** as you? Phase 1 passes when it matches on at least 80% of titles (DECISIONS 2026-09-29). Everything else you fill in is measured too, but only that score decides.
+
+Labels are internal. Nobody sees them in the app, so spoilers are fine here.
+
+## The golden rules
+
+1. **Read only the linked summary.** Each row links to one Wikipedia page at one exact revision (`wikipedia_revision_link`) and names the section to read (`plot_section`). Read that section, in that revision, and nothing else. The model sees exactly that text, and we're measuring the model, not the summary (DECISIONS 2026-09-26).
+2. **Forget what you know.** If you've seen the film and the summary leaves something out, label what the summary says. Don't fill gaps from memory, reviews, or other pages.
+3. **Judge every box.** Every Y/N column needs a Y or an N. N is a real answer ("I looked, it isn't there"), not a blank.
+4. **If you can't label it, skip it** with a `skip_reason` (below) rather than guessing.
+5. **One row per title per person.** Don't copy someone else's row. If Hari asks two people to label the same title, each fills their own row.
+
+Expect about 15 to 25 minutes a title once you're used to it.
+
+## Filling in one row
+
+Grey columns are filled in for you; don't edit them. White columns are yours, left to right:
+
+| Step | Columns | What to enter |
+|---|---|---|
+| 1 | `labeler_id` | Your code from Hari (for example `L03`). Not your name. |
+| 2 | `skip_reason` | Leave blank, unless you can't label this title (see "Skipping a title"). |
+| 3 | `primary_plot` and the 9 `plot_` columns | The one plot that best describes the story's engine, then Y/N for each plot. |
+| 4 | `blueprint` and the 12 `stage_` columns | The journey pattern, then Y/N for each Hero's Journey stage. |
+| 5 | `arc_shape` (or the 11 `arc_t` columns) | The story's shape of fortune over time. |
+| 6 | the 10 `tag_` columns | Y/N for each story beat. |
+| 7 | `confidence` | How sure you are of the primary plot. |
+| 8 | `notes` | Optional. Anything odd about the summary or your call. |
+
+### Step 3: Plot (Booker's plots)
+
+Pick the **primary plot**: the one plot that best describes what drives events from start to finish. Then go through all nine plot columns and mark each **Y** if it's a major thread of this story, **N** if not.
+
+- The primary plot must be **Y**.
+- At most **two** other plots can be Y. Most stories have zero or one.
+
+| Plot | Mark it when... |
+|---|---|
+| Overcoming the Monster | The hero confronts a powerful threatening force (a creature, person, group or system) that endangers them or their community, and the story is driven by that threat and the fight against it. |
+| Rags to Riches | A lowly or overlooked person gains status, love or self-worth, loses it or hits a crisis, then earns a fuller, lasting fulfillment. The engine is their growth into who they could be. |
+| The Quest | The hero, usually with companions, sets out on purpose toward a distant goal (a place, object or person) and overcomes a series of obstacles to reach it. The destination drives the story. |
+| Voyage and Return | The hero is taken into, or falls into, an unfamiliar world, is fascinated and then threatened by it, and makes it back home changed. The round trip is the point. |
+| Comedy | Confusion, misunderstanding, disguise or social obstacles keep people apart; the story ends when the confusion clears and they're united or reconciled. **This is not the same as "funny".** |
+| Tragedy | A flaw, ambition or wrongdoing draws the hero down a path that ends in their destruction or death. Only when the downfall is the ending. |
+| Rebirth | The hero falls under a dark power or deadened state (a curse, bitterness, numbness) and is freed from it by another person or by a transforming realization. The release is the story. |
+| Rebellion Against the One | The hero defies an all-powerful authority or system that rules their whole world (a state, an institution, a controlling order), through to escape, overthrow, or the rebel's defeat. |
+| Mystery | Someone, often an outsider like a detective, reporter or curious bystander, investigates a puzzling event, usually a crime. The investigation and uncovering the truth drive the story. |
+
+Easy mix-ups:
+
+- **Funny isn't Comedy.** A hilarious film about beating a villain is Overcoming the Monster. Comedy means confusion keeps people apart until it's cleared up.
+- **Quest vs Voyage and Return.** Quest: the hero chooses a goal and the story ends on reaching it. Voyage and Return: the hero is thrown into another world and the story ends on getting home.
+- **Tragedy vs things just going badly.** Tragedy is a self-made downfall that ends the story. Good people suffering bad luck isn't Tragedy.
+- **Rebirth vs someone turning good.** Rebirth is the whole story's engine. A side character who redeems themselves is the "Redemption arc" tag, not Rebirth.
+- **Rebellion vs Monster.** The Monster invades or threatens the hero's world from outside. "The One" *is* the order of the hero's world. If both apply, pick as primary whichever the story spends more time on. A hero whom the story calls "the One" (as in The Matrix) says nothing about this plot.
+- **Mystery vs a twist.** A late surprise doesn't make a Mystery. Someone's investigation has to drive the plot.
+- **Mystery vs Quest.** A search for a missing person is a Quest if finding where they are drives a journey, and a Mystery if working out what happened to them is the point.
+- **Mystery vs Monster.** A detective hunting a killer: Mystery if the story is organized around working out what happened; Overcoming the Monster if it's organized around stopping a known threat.
+- **Rags to Riches the plot vs the arc.** The plot is about a lowly person's growth and usually has a mid-story crisis. The arc of the same name (step 5) is only a steady rise.
+
+### Step 4: Blueprint and journey stages
+
+Pick the **blueprint**, the journey pattern that best organizes the story:
+
+| Blueprint | Choose it when... |
+|---|---|
+| Hero's Journey | The hero leaves a familiar world, is tested in an unfamiliar one, survives a decisive ordeal largely through their own growth, and returns changed, bringing back something of value to others. |
+| Heroine's Journey | The strength comes through connection: the hero is cut off or brought low, gathers or rebuilds a network of allies, and resolves the story by restoring or forming a community rather than by a solo victory. **Not about the hero's gender.** |
+| Anti-hero descent | A morally compromised hero's journey runs downward: each step takes them deeper into wrongdoing or self-destruction, and there's no return that benefits others. |
+| No clear blueprint | None of the three organizes the story (slice-of-life, pure procedurals, many ensemble dramas). You still judge the stages below. |
+
+Mix-ups: an unlikable hero who ends up redeemed is **not** an Anti-hero descent (that's usually Hero's Journey or Rebirth, with the Redemption arc tag). A found-family story isn't automatically a Heroine's Journey; it also has to be resolved through the group.
+
+Then mark each of the 12 stages **Y** or **N**, whatever blueprint you chose. A stage is Y only if the summary shows an actual event that does its job.
+
+| Stage | Y when the summary shows... |
+|---|---|
+| Ordinary World | The hero's normal life before the adventure, showing what they lack or want. |
+| Call to Adventure | An event, message or challenge that disrupts normal life and invites or forces a new course. |
+| Refusal of the Call | The hero hesitating, resisting or saying no, at least at first. |
+| Meeting with the Mentor | A guide figure giving advice, training, a gift or the confidence needed. |
+| Crossing the First Threshold | The hero committing and entering the unfamiliar world or situation, with no easy way back. |
+| Tests, Allies, Enemies | Trials in the new world, and the hero learning who to trust. |
+| Approach to the Inmost Cave | Preparation for, and movement toward, the place or moment of greatest danger. |
+| Ordeal | The central crisis: facing death, defeat or their greatest fear. |
+| Reward | Having survived the ordeal, the hero gains something: an object, knowledge, a reconciliation or new strength. |
+| The Road Back | The hero setting out to return or finish, often chased or facing the ordeal's consequences. |
+| Resurrection | A final, climactic test where the hero is nearly destroyed and comes out transformed. |
+| Return with the Elixir | The hero coming home, or reaching a new balance, bringing something that benefits others. |
+
+**Ordeal vs Resurrection:** the Ordeal is the central crisis around the middle or later; Resurrection is the final climactic test. If the summary only shows **one** big crisis, near the end, mark Resurrection **Y** and Ordeal **N**.
+
+### Step 5: Emotional arc (story shape)
+
+Think of the main character's **fortune** over the story, from the first scene to the last, in the order the story tells it: their actual situation (safety, status, relationships, prospects), from the worst the story puts them in (-1) to the best (+1).
+
+- **Situation, not mood.** Someone trapped in a time loop who spends a stretch enjoying themselves is still trapped, so their fortune stays low. Only a real change in their situation moves it.
+- For an ensemble, use the central group's shared fortune. For a series, the whole run so far.
+
+A **big move** is a rise or fall of at least 0.3 on that -1 to +1 scale (about a sixth of the full range) from the last high or low point. Ignore small wobbles. Count the big moves and pick the shape:
+
+| Shape (`arc_shape`) | Big moves |
+|---|---|
+| Rags to Riches (steady rise) | One: a sustained rise. |
+| Riches to Rags (steady fall) | One: a sustained fall. |
+| Man in a Hole (fall then rise) | Two: things go wrong, then recover. |
+| Icarus (rise then fall) | Two: success builds, then collapses. |
+| Cinderella (rise, fall, rise) | Three: early gains are lost in a crisis, then regained. |
+| Oedipus (fall, rise, fall) | Three: an early blow, a recovery, then a final collapse. |
+
+**Man in a Hole vs Cinderella:** Cinderella has a clear rise *before* the fall. If the story opens stable and things go wrong early, it's Man in a Hole.
+
+**More than three big moves** (common in long series): step back and look at the biggest swings only, until three or fewer remain.
+
+**Flat stories (the fallback rule).** If the story has **no big move at all** (gentle slice-of-life, a steady situation), don't force a shape. Choose one of the two flat options (DECISIONS 2026-09-29):
+
+- **"Flat: ends better than it starts"** if the ending is at least a little better off than the opening;
+- **"Flat: ends the same or worse"** otherwise.
+
+These are stored as a flagged placeholder, never shown in the app or used for story-shape rows. If a "Steady" shape is added after the pilot, these are the titles we'll relabel.
+
+**Optional: the 11 points.** Instead of choosing `arc_shape`, you can fill all eleven `arc_t` columns with the fortune at 0%, 10%, 20% ... 100% of the story (numbers from -1 to 1, like `-0.4` or `0.25`). The importer then works out the shape with the same rule the model uses. Fill all eleven or none. If you fill both the points and `arc_shape`, your `arc_shape` wins, and the importer tells you if the points trace a different shape.
+
+### Step 6: Beat tags
+
+Mark each tag **Y** or **N**:
+
+| Tag | Y when... |
+|---|---|
+| Mentor dies | Someone who guides, trains or protects the hero dies during the story, and the loss matters to the hero's path. |
+| Twist ending | A late revelation substantially changes the meaning of what came before. Not just a surprise event. |
+| Unreliable narrator | The story is told through a narrator or point-of-view character whose account turns out to be false, distorted or incomplete in a way that matters. |
+| Found family | Unrelated characters form bonds of loyalty and care that work like a family, and that bond is central. |
+| Redemption arc | A character who has done serious wrong makes a meaningful turn toward atonement or goodness. Any major character, not just the hero. |
+| Pyrrhic victory | The hero wins the central conflict at a cost so high it undercuts or outweighs the win. |
+| Time loop | One or more characters relive the same stretch of time repeatedly, keeping their memories. |
+| Heist structure | The story is organized around planning and carrying out a theft or elaborate con by a team. |
+| Ensemble convergence | Several storylines that start separately come together, and where they meet is the payoff. |
+| Ambiguous ending | The ending deliberately leaves a central question open or open to competing readings. |
+
+Mix-ups: an unreliable narrator often produces a twist; mark both when both apply. A twist answers a question in an unexpected way; an ambiguous ending declines to answer. In a Pyrrhic victory the hero does win (a Tragedy can also apply). A time loop happens inside the story; telling a story out of order is not a time loop.
+
+### Step 7: Confidence
+
+How sure are you of your **primary plot**?
+
+| Choose | Meaning |
+|---|---|
+| High | The summary states it directly, or it's unmistakable. |
+| Medium | Strongly implied; a careful reader would agree. |
+| Low | Plausible; reasonable readers could disagree. |
+| Weak | Best available fit, and it's weak. |
+
+Be honest; "Low" is useful information. We use it to check whether the model's confidence means anything.
+
+## Skipping a title
+
+Choose a `skip_reason` and leave the label columns blank when:
+
+| skip_reason | When |
+|---|---|
+| Summary too thin | It passes the length check but only covers the premise, or too little of the story to judge the plot, arc and ending. |
+| Summary contradictory | The summary contradicts itself on major events. |
+| Not a narrative | There's no story to label (a concert film, stand-up, most documentaries, reality TV). |
+| Summary is about a different work | The summary seems to describe a different film or show (a remake, a namesake, the source novel). |
+
+Skipping is a correct answer, not a failure. We compare it with whether the model also declines.
+
+## Common mistakes the importer will flag
+
+The importer checks every row and names the column. The usual ones:
+
+- A blank Y/N box ("enter Y or N in every column").
+- The primary plot isn't marked Y in its own plot column.
+- More than two plots besides the primary marked Y.
+- A value typed that isn't in the dropdown (use the dropdowns).
+- Some but not all of the 11 arc points filled, or a point outside -1 to 1.
+- `labeler_id` left blank, or the same person labeling the same title twice.
+- Edited grey columns (the importer needs them exactly as they were).
+
+## For Hari: setting up the sheet
+
+1. The coordinator runs `python -m laminary_pipeline.gold select` and `... gold template` and uploads three CSVs from `pipeline/data/gold/` to your Drive.
+2. In Google Sheets, import `gold_labels_template.csv` (File > Import > Replace spreadsheet), then import `gold_labels_lists.csv` and `gold_labels_readme.csv` with "Insert new sheet(s)". Rename the tabs Labels, Lists and README.
+3. On the Labels tab: View > Freeze > 2 rows (header plus the `#` help row). Select the `plot_`, `stage_` and `tag_` columns and add Data > Data validation > "Dropdown (from a range)" = `Lists!A2:A3` (the `yes_no` column). Do the same for `primary_plot`, `blueprint`, `arc_shape`, `skip_reason` and `confidence`, each pointing at its column on the Lists tab. Set invalid data to "Reject input".
+4. Shade the prefilled columns grey (`qid` to `word_count`, and `series_status` to `guide_version`) and protect them (Data > Protect sheets and ranges > "Show a warning").
+5. Give each labeler a code (`L01`, `L02`, ...) and assign rows. For an agreement check, have about 15 titles labeled by two people: duplicate those rows and give each copy a different `labeler_id`.
+6. When done: File > Download > CSV (Labels tab) and hand it to the coordinator, who runs `python -m laminary_pipeline.gold import <file>.csv`. Any problems come back as a list by row number and title.
+
+## Versions
+
+- **1.0.0** (2026-09-30): first version, for schema v1.0.0.
+
+Changing a definition here changes what a label means. That needs a new guide version, and labels made under the old version stay tagged with it.

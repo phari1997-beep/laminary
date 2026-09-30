@@ -127,6 +127,9 @@ def _import(paths: DataPaths, args: argparse.Namespace, log: Callable[[str], Non
 
 
 def _pairs(paths: DataPaths, log: Callable[[str], None]) -> int:
+    if not paths.similarity_pairs.exists():
+        log(f"no pairs file at {paths.similarity_pairs}")
+        return 1
     pairs, errors = load_pairs(paths.similarity_pairs)
     for e in errors:
         log(f"error: {e}")

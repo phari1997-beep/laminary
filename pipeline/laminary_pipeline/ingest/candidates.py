@@ -20,7 +20,9 @@ Rationale (also in the Phase 1 report and data/README.md):
 - **Reserves**: ~30% extra per bucket, ranked, used by ``plots --backfill`` to replace titles
   that fail the 150-word rule without changing the mix.
 - Excluded: documentaries, concert films, stand-up, reality/competition/talk/sketch shows, and
-  anthology series (no series-level story to annotate).
+  anthology series (no series-level story to annotate); titles with no (or several) TMDB ids in
+  Wikidata, because LLM and gold records require one. Those are counted per bucket in the
+  summary, since regional titles are the most likely to lack one.
 
 All selection is deterministic: ties break on sitelinks, then QID.
 """
@@ -128,6 +130,11 @@ def excluded_reason(item: dict[str, Any]) -> str | None:
         return "no_enwiki_article"
     if not item.get("year"):
         return "no_year"
+    # LLM and gold records require an integer tmdb_id (schema 1.0.0), taken from Wikidata.
+    if item.get("tmdb_id_ambiguous"):
+        return "tmdb_id_ambiguous"
+    if not item.get("tmdb_id"):
+        return "no_tmdb_id"
     return None
 
 
@@ -341,6 +348,8 @@ def select(
     for it in items.values():
         reason = excluded_reason(it)
         if reason:
+            if reason.startswith(("no_tmdb", "tmdb")):  # coverage gap: report by bucket
+                reason = f"{reason}:{classify(it)}"
             excluded[reason] += 1
             continue
         it = dict(it)

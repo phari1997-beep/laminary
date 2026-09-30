@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from wikimedia_fake import FakeWikimedia
 
 from laminary_pipeline.annotation import load_schema, validate_record
 from laminary_pipeline.gold import columns as col
@@ -20,7 +21,6 @@ from laminary_pipeline.gold.template import lists_csv, readme_csv, template_csv,
 from laminary_pipeline.ingest.http import HttpClient
 from laminary_pipeline.ingest.paths import DEFAULT_DATA_DIR, read_jsonl, write_jsonl_atomic
 from laminary_pipeline.ingest.wikipedia import PlotFetcher
-from wikimedia_fake import FakeWikimedia
 
 STAMP = "2026-10-01T09:00:00Z"
 SHA = "a" * 64
@@ -174,7 +174,7 @@ def test_google_sheets_export_quirks() -> None:
         ({"plot_comedy": "Y", "plot_mystery": "Y"}, "at most 2 plots besides the primary"),
         ({"primary_plot": "Heist"}, "primary_plot 'Heist' is not one of"),
         ({"primary_plot": ""}, "primary_plot is blank"),
-        ({"blueprint": "Villain's journey"}, "blueprint 'Villain's journey' is not one of"),
+        ({"blueprint": "Villain journey"}, "blueprint 'Villain journey' is not one of"),
         ({"arc_shape": "Spiral"}, "arc_shape 'Spiral' is not one of"),
         ({"arc_shape": "", "arc_t00": "0.1"}, "fill all 11 or none"),
         ({"arc_shape": ""}, "choose an arc_shape, or fill all 11 arc points"),

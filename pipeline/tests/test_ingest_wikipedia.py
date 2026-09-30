@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 from jsonschema import Draft202012Validator
+from wikimedia_fake import FakeWikimedia
 
 from laminary_pipeline.annotation import (
     format_checker,
@@ -24,7 +25,6 @@ from laminary_pipeline.ingest.wikipedia import (
     permalink,
     plot_sections,
 )
-from wikimedia_fake import FakeWikimedia
 
 NOW = "2026-09-30T12:00:00Z"
 

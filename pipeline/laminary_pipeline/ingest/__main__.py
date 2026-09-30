@@ -33,7 +33,12 @@ from laminary_pipeline.ingest.paths import (
     write_json_atomic,
     write_jsonl_atomic,
 )
-from laminary_pipeline.ingest.plots import format_report, plots_report, run_plots
+from laminary_pipeline.ingest.plots import (
+    effective_pilot,
+    format_report,
+    plots_report,
+    run_plots,
+)
 from laminary_pipeline.ingest.wikidata import POOL_TTL, Wikidata
 from laminary_pipeline.ingest.wikipedia import PlotFetcher, now_utc
 
@@ -153,6 +158,11 @@ def _report(paths: DataPaths, log: Any) -> int:
         return 2
     report = plots_report(paths, rows)
     write_json_atomic(paths.reports / "plots_summary.json", report)
+    effective = [
+        {k: r[k] for k in ("qid", "title", "year", "media_type", "bucket", "role", "tmdb_id")}
+        for r in effective_pilot(paths, rows)
+    ]
+    write_jsonl_atomic(paths.effective_pilot, effective)
     log(format_report(report))
     return 0
 

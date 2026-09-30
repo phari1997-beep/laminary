@@ -44,6 +44,11 @@ class DataPaths:
         return self.root / "pilot_candidates.jsonl"
 
     @property
+    def effective_pilot(self) -> Path:
+        """Titles the annotation pilot should use: passing plots, reserves filling gaps."""
+        return self.root / "pilot_effective.jsonl"
+
+    @property
     def plots(self) -> Path:
         return self.root / "plots"
 

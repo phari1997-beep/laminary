@@ -7,6 +7,7 @@ from collections import Counter
 from typing import Any
 
 import pytest
+from wikimedia_fake import FakeWikimedia
 
 from laminary_pipeline.ingest import candidates as c
 from laminary_pipeline.ingest.http import HttpClient
@@ -18,7 +19,6 @@ from laminary_pipeline.ingest.wikidata import (
     parse_details,
     seed_sparql,
 )
-from wikimedia_fake import FakeWikimedia
 
 GENRES = ["drama film", "comedy film", "horror film", "science fiction film", "crime film",
           "romance film", "animated film", "western film"]
@@ -50,8 +50,8 @@ def big_pool() -> dict[str, dict[str, Any]]:
                               GENRES[(year + k) % len(GENRES)]))
     for year in range(1955, 2026):
         for k in range(4):
-            items.append(item("tv_series", "english", year, 15 + (year * 3 + k) % 80,
-                              GENRES[(year + k) % len(GENRES)].replace("film", "television series")))
+            genre = GENRES[(year + k) % len(GENRES)].replace("film", "television series")
+            items.append(item("tv_series", "english", year, 15 + (year * 3 + k) % 80, genre))
     regional = [("hindi", "Q668"), ("tamil", "Q668"), ("malayalam", "Q668"), ("telugu", "Q668"),
                 ("korean", "Q884"), ("japanese", "Q17"), ("Q150", "Q142")]  # Q150 French
     for lang, country in regional:
@@ -164,10 +164,16 @@ def test_exclusions() -> None:
     anthology = item("tv_series", "english", 2011, 90, "anthology television series")
     no_article = item("movie", "english", 2000, 90, "drama film")
     no_article["enwiki_title"] = None
-    for it in (doc, concert, anthology, no_article):
+    no_tmdb = item("movie", "tamil", 2000, 90, "drama film", country="Q668", tmdb=None)
+    ambiguous = item("movie", "english", 2000, 90, "drama film")
+    ambiguous.update(tmdb_id=None, tmdb_id_ambiguous=True)
+    everything = (doc, concert, anthology, no_article, no_tmdb, ambiguous)
+    for it in everything:
         assert c.excluded_reason(it)
-    sel = c.select({i["qid"]: i for i in (doc, concert, anthology, no_article)})
-    assert sel.rows == [] and sum(sel.excluded.values()) == 4
+    sel = c.select({i["qid"]: i for i in everything})
+    assert sel.rows == [] and sum(sel.excluded.values()) == 6
+    assert sel.excluded["no_tmdb_id:film:tamil"] == 1
+    assert sel.excluded["tmdb_id_ambiguous:film:english"] == 1
 
 
 @pytest.mark.parametrize(
@@ -209,7 +215,8 @@ def test_sparql_rendering() -> None:
     assert len(ids) == len(set(ids))
     q = next(q for q in queries if q.query_id == "film:english:1990s")
     text = q.sparql()
-    assert "wdt:P364 wd:Q1860" in text and "HAVING (MIN(?year_) >= 1990 && MIN(?year_) < 2000)" in text
+    assert "wdt:P364 wd:Q1860" in text
+    assert "HAVING (MIN(?year_) >= 1990 && MIN(?year_) < 2000)" in text
     assert "schema:isPartOf <https://en.wikipedia.org/>" in text and "LIMIT 105" in text
     tv = PoolQuery("x", "tv_series", "", 2000, 2010, 5, 10).sparql()
     assert "(wdt:P580|wdt:P577)" in tv and "wd:Q5398426" in tv

@@ -15,10 +15,10 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from wikimedia_fake import FakeWikimedia
 
 from laminary_pipeline.ingest.__main__ import main
 from laminary_pipeline.ingest.paths import DEFAULT_DATA_DIR, PIPELINE_DIR, read_jsonl
-from wikimedia_fake import FakeWikimedia
 
 NOW = "2026-09-30T12:00:00Z"
 REPO_ROOT = PIPELINE_DIR.parent
@@ -80,6 +80,8 @@ def test_end_to_end_candidates_plots_report(data_dir: Path) -> None:
     assert report["by_decade"]["1990s"]["ok"] == 1
     assert report["skip_reasons"] == {"qid_mismatch": 1, "too_short": 1}
     assert "pass the 150-word rule" in out and "By language" in out
+    effective = [r["qid"] for r in read_jsonl(data_dir / "pilot_effective.jsonl")]
+    assert sorted(effective) == ["Q9000001", "Q9000003"]
 
     # No TMDB host (or anything but the three Wikimedia hosts) was contacted.
     assert fake.hosts <= {"en.wikipedia.org", "query.wikidata.org", "www.wikidata.org"}

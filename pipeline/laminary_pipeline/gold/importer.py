@@ -328,9 +328,12 @@ def read_rows(text: str) -> list[tuple[int, dict[str, str]]]:
     for i, cells in enumerate(reader, start=2):
         if not cells or not any(c.strip() for c in cells):
             continue
-        if cells[0].strip().startswith(HELP_MARKER):
-            continue
-        rows.append((i, {h: (cells[j] if j < len(cells) else "") for j, h in enumerate(header)}))
+        row = {h: (cells[j] if j < len(cells) else "") for j, h in enumerate(header)}
+        if cells[0].strip().startswith(HELP_MARKER) or row.get("qid", "").strip().startswith(
+            HELP_MARKER
+        ):
+            continue  # the help row (found by its qid cell even if columns were moved)
+        rows.append((i, row))
     return rows
 
 
