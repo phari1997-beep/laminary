@@ -97,9 +97,8 @@ def test_plots_are_resumable_and_retry_fetch_errors(data_dir: Path) -> None:
     path = data_dir / "plots" / "Q9000002.json"
     path.write_text(json.dumps({"qid": "Q9000002", "status": "skipped",
                                 "skip_reason": "fetch_error"}))
-    retry = FakeWikimedia()
-    run(data_dir, "plots", fake=retry)
-    assert retry.requests  # fetched again (from cache or network)
+    code, out = run(data_dir, "plots", fake=FakeWikimedia())
+    assert "Q9000002 'Nizhal Veedu': too_short" in out  # re-fetched (served from the cache)
     assert json.loads(path.read_text())["skip_reason"] == "too_short"
 
 
