@@ -11,5 +11,5 @@ Current phase: **Phase 0 — Validate**
   - Phase 1 requirements carried forward [data-pipeline]: prompt builder uses the fail-closed Wikipedia gate, checks sha256(text sent) == content_sha256 and the 150-word minimum before each call; first step is one live structured-output call (needs Hari's spend approval).
   - Open [Hari]: TMDB written authorization for LLM use and commercial licence.
 - [ ] 15 user interviews; landing page signups (Hari) — interview questions and landing copy in Google Drive (Laminary folder)
-  - Landing page: designed in Figma (direction approved 2026-09-29), built in Lovable ("Story Shape Site", signups in Lovable Cloud DB) by frontend; QA passed 2026-09-29 (ready to publish). Not yet published — waiting on Hari's go.
+  - Landing page: designed in Figma (direction approved 2026-09-29), built in Lovable ("Story Shape Site", signups in Lovable Cloud DB) by frontend; QA passed 2026-09-29. Published 2026-09-29 at https://laminary.lovable.app.
   - Deferred until the first email is sent: double opt-in; optional signup throttle. Other polish items parked (see QA notes).
