@@ -1,0 +1,823 @@
+{
+ "_note": "Synthetic, fictional titles and text in real API response shapes (MediaWiki formatversion=2, WDQS SPARQL JSON). Not Wikipedia content.",
+ "sparql": {
+  "pool:film:english:1990s": {
+   "head": {
+    "vars": [
+     "item",
+     "sitelinks",
+     "year"
+    ]
+   },
+   "results": {
+    "bindings": [
+     {
+      "item": {
+       "type": "uri",
+       "value": "http://www.wikidata.org/entity/Q9000001"
+      },
+      "sitelinks": {
+       "type": "literal",
+       "value": "60",
+       "datatype": "http://www.w3.org/2001/XMLSchema#integer"
+      },
+      "year": {
+       "type": "literal",
+       "value": "1994",
+       "datatype": "http://www.w3.org/2001/XMLSchema#integer"
+      }
+     },
+     {
+      "item": {
+       "type": "uri",
+       "value": "http://www.wikidata.org/entity/Q9000006"
+      },
+      "sitelinks": {
+       "type": "literal",
+       "value": "40",
+       "datatype": "http://www.w3.org/2001/XMLSchema#integer"
+      },
+      "year": {
+       "type": "literal",
+       "value": "1999",
+       "datatype": "http://www.w3.org/2001/XMLSchema#integer"
+      }
+     }
+    ]
+   }
+  },
+  "pool:film:tamil": {
+   "head": {
+    "vars": [
+     "item",
+     "sitelinks",
+     "year"
+    ]
+   },
+   "results": {
+    "bindings": [
+     {
+      "item": {
+       "type": "uri",
+       "value": "http://www.wikidata.org/entity/Q9000002"
+      },
+      "sitelinks": {
+       "type": "literal",
+       "value": "12",
+       "datatype": "http://www.w3.org/2001/XMLSchema#integer"
+      },
+      "year": {
+       "type": "literal",
+       "value": "2003",
+       "datatype": "http://www.w3.org/2001/XMLSchema#integer"
+      }
+     }
+    ]
+   }
+  },
+  "pool:tv:english:2010s": {
+   "head": {
+    "vars": [
+     "item",
+     "sitelinks",
+     "year"
+    ]
+   },
+   "results": {
+    "bindings": [
+     {
+      "item": {
+       "type": "uri",
+       "value": "http://www.wikidata.org/entity/Q9000003"
+      },
+      "sitelinks": {
+       "type": "literal",
+       "value": "45",
+       "datatype": "http://www.w3.org/2001/XMLSchema#integer"
+      },
+      "year": {
+       "type": "literal",
+       "value": "2013",
+       "datatype": "http://www.w3.org/2001/XMLSchema#integer"
+      }
+     }
+    ]
+   }
+  },
+  "pool:tv:anime": {
+   "head": {
+    "vars": [
+     "item",
+     "sitelinks",
+     "year"
+    ]
+   },
+   "results": {
+    "bindings": [
+     {
+      "item": {
+       "type": "uri",
+       "value": "http://www.wikidata.org/entity/Q9000004"
+      },
+      "sitelinks": {
+       "type": "literal",
+       "value": "30",
+       "datatype": "http://www.w3.org/2001/XMLSchema#integer"
+      },
+      "year": {
+       "type": "literal",
+       "value": "2009",
+       "datatype": "http://www.w3.org/2001/XMLSchema#integer"
+      }
+     }
+    ]
+   }
+  },
+  "seed": {
+   "head": {
+    "vars": [
+     "item",
+     "sitelinks",
+     "seed_label"
+    ]
+   },
+   "results": {
+    "bindings": [
+     {
+      "item": {
+       "type": "uri",
+       "value": "http://www.wikidata.org/entity/Q9000001"
+      },
+      "sitelinks": {
+       "type": "literal",
+       "value": "60",
+       "datatype": "http://www.w3.org/2001/XMLSchema#integer"
+      },
+      "seed_label": {
+       "xml:lang": "en",
+       "type": "literal",
+       "value": "Lantern Keeper"
+      }
+     }
+    ]
+   }
+  },
+  "detail": {
+   "head": {
+    "vars": [
+     "item",
+     "label",
+     "enwiki_title",
+     "sitelinks",
+     "year",
+     "end_year",
+     "tmdb_movie",
+     "tmdb_tv",
+     "imdb",
+     "classes",
+     "languages",
+     "countries",
+     "genres"
+    ]
+   },
+   "results": {
+    "bindings": [
+     {
+      "item": {
+       "type": "uri",
+       "value": "http://www.wikidata.org/entity/Q9000001"
+      },
+      "label": {
+       "type": "literal",
+       "value": "The Lantern Keeper"
+      },
+      "enwiki_title": {
+       "type": "literal",
+       "value": "The Lantern Keeper"
+      },
+      "sitelinks": {
+       "type": "literal",
+       "value": "60",
+       "datatype": "http://www.w3.org/2001/XMLSchema#integer"
+      },
+      "year": {
+       "type": "literal",
+       "value": "1994",
+       "datatype": "http://www.w3.org/2001/XMLSchema#integer"
+      },
+      "tmdb_movie": {
+       "type": "literal",
+       "value": "90001"
+      },
+      "tmdb_tv": {
+       "type": "literal",
+       "value": ""
+      },
+      "imdb": {
+       "type": "literal",
+       "value": "tt9000001"
+      },
+      "classes": {
+       "type": "literal",
+       "value": "Q11424"
+      },
+      "languages": {
+       "type": "literal",
+       "value": "Q1860"
+      },
+      "countries": {
+       "type": "literal",
+       "value": "Q30"
+      },
+      "genres": {
+       "type": "literal",
+       "value": "drama film|mystery film"
+      }
+     },
+     {
+      "item": {
+       "type": "uri",
+       "value": "http://www.wikidata.org/entity/Q9000002"
+      },
+      "label": {
+       "type": "literal",
+       "value": "Nizhal Veedu"
+      },
+      "enwiki_title": {
+       "type": "literal",
+       "value": "Nizhal Veedu"
+      },
+      "sitelinks": {
+       "type": "literal",
+       "value": "12",
+       "datatype": "http://www.w3.org/2001/XMLSchema#integer"
+      },
+      "year": {
+       "type": "literal",
+       "value": "2003",
+       "datatype": "http://www.w3.org/2001/XMLSchema#integer"
+      },
+      "tmdb_movie": {
+       "type": "literal",
+       "value": "90002"
+      },
+      "tmdb_tv": {
+       "type": "literal",
+       "value": ""
+      },
+      "imdb": {
+       "type": "literal",
+       "value": "tt9000002"
+      },
+      "classes": {
+       "type": "literal",
+       "value": "Q11424"
+      },
+      "languages": {
+       "type": "literal",
+       "value": "Q5885"
+      },
+      "countries": {
+       "type": "literal",
+       "value": "Q668"
+      },
+      "genres": {
+       "type": "literal",
+       "value": "action film"
+      }
+     },
+     {
+      "item": {
+       "type": "uri",
+       "value": "http://www.wikidata.org/entity/Q9000003"
+      },
+      "label": {
+       "type": "literal",
+       "value": "Harbor Lights"
+      },
+      "enwiki_title": {
+       "type": "literal",
+       "value": "Harbor Lights (TV series)"
+      },
+      "sitelinks": {
+       "type": "literal",
+       "value": "45",
+       "datatype": "http://www.w3.org/2001/XMLSchema#integer"
+      },
+      "year": {
+       "type": "literal",
+       "value": "2013",
+       "datatype": "http://www.w3.org/2001/XMLSchema#integer"
+      },
+      "tmdb_movie": {
+       "type": "literal",
+       "value": ""
+      },
+      "tmdb_tv": {
+       "type": "literal",
+       "value": "90003"
+      },
+      "imdb": {
+       "type": "literal",
+       "value": "tt9000003"
+      },
+      "classes": {
+       "type": "literal",
+       "value": "Q5398426"
+      },
+      "languages": {
+       "type": "literal",
+       "value": "Q1860"
+      },
+      "countries": {
+       "type": "literal",
+       "value": "Q30"
+      },
+      "genres": {
+       "type": "literal",
+       "value": "drama television series"
+      },
+      "end_year": {
+       "type": "literal",
+       "value": "2018",
+       "datatype": "http://www.w3.org/2001/XMLSchema#integer"
+      }
+     },
+     {
+      "item": {
+       "type": "uri",
+       "value": "http://www.wikidata.org/entity/Q9000004"
+      },
+      "label": {
+       "type": "literal",
+       "value": "Starfall Academy"
+      },
+      "enwiki_title": {
+       "type": "literal",
+       "value": "Starfall Academy"
+      },
+      "sitelinks": {
+       "type": "literal",
+       "value": "30",
+       "datatype": "http://www.w3.org/2001/XMLSchema#integer"
+      },
+      "year": {
+       "type": "literal",
+       "value": "2009",
+       "datatype": "http://www.w3.org/2001/XMLSchema#integer"
+      },
+      "tmdb_movie": {
+       "type": "literal",
+       "value": ""
+      },
+      "tmdb_tv": {
+       "type": "literal",
+       "value": "90004"
+      },
+      "imdb": {
+       "type": "literal",
+       "value": ""
+      },
+      "classes": {
+       "type": "literal",
+       "value": "Q63952888"
+      },
+      "languages": {
+       "type": "literal",
+       "value": "Q5287"
+      },
+      "countries": {
+       "type": "literal",
+       "value": "Q17"
+      },
+      "genres": {
+       "type": "literal",
+       "value": "anime|science fiction anime"
+      }
+     },
+     {
+      "item": {
+       "type": "uri",
+       "value": "http://www.wikidata.org/entity/Q9000006"
+      },
+      "label": {
+       "type": "literal",
+       "value": "Voices of the Valley"
+      },
+      "enwiki_title": {
+       "type": "literal",
+       "value": "Voices of the Valley"
+      },
+      "sitelinks": {
+       "type": "literal",
+       "value": "40",
+       "datatype": "http://www.w3.org/2001/XMLSchema#integer"
+      },
+      "year": {
+       "type": "literal",
+       "value": "1999",
+       "datatype": "http://www.w3.org/2001/XMLSchema#integer"
+      },
+      "tmdb_movie": {
+       "type": "literal",
+       "value": ""
+      },
+      "tmdb_tv": {
+       "type": "literal",
+       "value": ""
+      },
+      "imdb": {
+       "type": "literal",
+       "value": ""
+      },
+      "classes": {
+       "type": "literal",
+       "value": "Q11424"
+      },
+      "languages": {
+       "type": "literal",
+       "value": "Q1860"
+      },
+      "countries": {
+       "type": "literal",
+       "value": "Q30"
+      },
+      "genres": {
+       "type": "literal",
+       "value": "documentary film"
+      }
+     }
+    ]
+   }
+  }
+ },
+ "wikipedia": {
+  "query:The Lantern Keeper": {
+   "batchcomplete": true,
+   "query": {
+    "pages": [
+     {
+      "pageid": 1001,
+      "ns": 0,
+      "title": "The Lantern Keeper",
+      "revisions": [
+       {
+        "revid": 1200000001,
+        "parentid": 1199999994,
+        "timestamp": "2025-03-01T10:00:00Z"
+       }
+      ],
+      "pageprops": {
+       "wikibase_item": "Q9000001"
+      }
+     }
+    ]
+   }
+  },
+  "sections:1200000001": {
+   "parse": {
+    "title": "The Lantern Keeper",
+    "pageid": 0,
+    "revid": 0,
+    "sections": [
+     {
+      "toclevel": 1,
+      "level": "2",
+      "line": "Plot",
+      "number": "1",
+      "index": "1",
+      "fromtitle": "The_Lantern_Keeper",
+      "byteoffset": 0,
+      "anchor": "Plot",
+      "linkAnchor": "Plot"
+     },
+     {
+      "toclevel": 1,
+      "level": "2",
+      "line": "Cast",
+      "number": "2",
+      "index": "2",
+      "fromtitle": "The_Lantern_Keeper",
+      "byteoffset": 100,
+      "anchor": "Cast",
+      "linkAnchor": "Cast"
+     },
+     {
+      "toclevel": 1,
+      "level": "2",
+      "line": "Production",
+      "number": "3",
+      "index": "3",
+      "fromtitle": "The_Lantern_Keeper",
+      "byteoffset": 200,
+      "anchor": "Production",
+      "linkAnchor": "Production"
+     },
+     {
+      "toclevel": 1,
+      "level": "2",
+      "line": "Plot",
+      "number": "4",
+      "index": "T-1",
+      "fromtitle": "Template:Lantern_navbox",
+      "byteoffset": 300,
+      "anchor": "Plot",
+      "linkAnchor": "Plot"
+     }
+    ]
+   }
+  },
+  "text:1200000001:1": {
+   "parse": {
+    "title": "The Lantern Keeper",
+    "pageid": 0,
+    "revid": 1200000001,
+    "text": "<div class=\"mw-content-ltr mw-parser-output\" lang=\"en\" dir=\"ltr\"><div class=\"mw-heading mw-heading2\"><h2 id=\"Plot\">Plot</h2></div><style data-mw-deduplicate=\"TemplateStyles:r1\">.mw-parser-output .hatnote{font-style:italic}</style><div role=\"note\" class=\"hatnote navigation-not-searchable\">Main article: <a href=\"/wiki/X\">Lantern Keeper (novel)</a></div><figure class=\"mw-default-size\" typeof=\"mw:File/Thumb\"><a href=\"/wiki/File:Lighthouse.jpg\"><img src=\"//upload.example/l.jpg\"></a><figcaption>The fictional lighthouse used as a set</figcaption></figure><p>On a windswept island off a fictional northern coast, Edda Morn, a retired ferry pilot, keeps an old lighthouse running long after the shipping lane has closed.<sup id=\"cite_ref-1\" class=\"reference\"><a href=\"#cite_note-1\">[1]</a></sup> Her only company is a radio that picks up distant fishing boats. One night the lamp fails, and a small boat carrying a runaway teenager named Pim runs aground on the rocks below.</p>\n<p>Edda reluctantly takes Pim in while the storm season closes the crossing. Pim claims to be fleeing an uncle, but letters hidden in the boat suggest a different story, and Edda begins to question the child&#39;s account.<sup class=\"noprint Inline-Template Template-Fact\">[<i><a href=\"/wiki/W:CN\">citation needed</a></i>]</sup> Together they repair the lamp, trade stories and argue about whether the light is still worth keeping.</p>\n<p>When a coast guard cutter arrives with news of a missing heir, Edda must decide whether to hand Pim over or help the child escape across the strait. She chooses to sail Pim to the mainland herself, losing the lighthouse keys in the crossing. In the final scene, years later, a grown Pim returns to the island and relights the lamp for a new keeper, while the old radio crackles with a familiar voice that seems to thank them both for coming home.</p></div>"
+   }
+  },
+  "query:Nizhal Veedu": {
+   "batchcomplete": true,
+   "query": {
+    "pages": [
+     {
+      "pageid": 1002,
+      "ns": 0,
+      "title": "Nizhal Veedu",
+      "revisions": [
+       {
+        "revid": 1100000002,
+        "parentid": 1099999995,
+        "timestamp": "2022-11-05T08:30:00Z"
+       }
+      ],
+      "pageprops": {
+       "wikibase_item": "Q9000002"
+      }
+     }
+    ]
+   }
+  },
+  "sections:1100000002": {
+   "parse": {
+    "title": "Nizhal Veedu",
+    "pageid": 0,
+    "revid": 0,
+    "sections": [
+     {
+      "toclevel": 1,
+      "level": "2",
+      "line": "Plot",
+      "number": "1",
+      "index": "1",
+      "fromtitle": "Nizhal_Veedu",
+      "byteoffset": 0,
+      "anchor": "Plot",
+      "linkAnchor": "Plot"
+     },
+     {
+      "toclevel": 1,
+      "level": "2",
+      "line": "Soundtrack",
+      "number": "2",
+      "index": "2",
+      "fromtitle": "Nizhal_Veedu",
+      "byteoffset": 100,
+      "anchor": "Soundtrack",
+      "linkAnchor": "Soundtrack"
+     }
+    ]
+   }
+  },
+  "text:1100000002:1": {
+   "parse": {
+    "title": "Nizhal Veedu",
+    "pageid": 0,
+    "revid": 1100000002,
+    "text": "<div class=\"mw-content-ltr mw-parser-output\" lang=\"en\" dir=\"ltr\"><div class=\"mw-heading mw-heading2\"><h2 id=\"Plot\">Plot</h2></div><p>A young mechanic in a fictional Chennai suburb discovers that the abandoned house next door hides a stolen fortune, and he is drawn into a feud between two rival families who both claim it.<sup class=\"reference\">[2]</sup></p></div>"
+   }
+  },
+  "query:Harbor Lights (TV series)": {
+   "batchcomplete": true,
+   "query": {
+    "pages": [
+     {
+      "pageid": 1003,
+      "ns": 0,
+      "title": "Harbor Lights (TV series)",
+      "revisions": [
+       {
+        "revid": 1000000003,
+        "parentid": 999999996,
+        "timestamp": "2021-06-30T12:00:00Z"
+       }
+      ],
+      "pageprops": {
+       "wikibase_item": "Q9000003"
+      }
+     }
+    ],
+    "redirects": [
+     {
+      "from": "Harbor Lights (TV series)",
+      "to": "Harbor Lights (TV series)"
+     }
+    ]
+   }
+  },
+  "sections:1000000003": {
+   "parse": {
+    "title": "Harbor Lights (TV series)",
+    "pageid": 0,
+    "revid": 0,
+    "sections": [
+     {
+      "toclevel": 1,
+      "level": "2",
+      "line": "<i>Premise</i>",
+      "number": "1",
+      "index": "1",
+      "fromtitle": "Harbor_Lights_(TV_series)",
+      "byteoffset": 0,
+      "anchor": "<i>Premise</i>",
+      "linkAnchor": "<i>Premise</i>"
+     },
+     {
+      "toclevel": 1,
+      "level": "2",
+      "line": "Cast and characters",
+      "number": "2",
+      "index": "2",
+      "fromtitle": "Harbor_Lights_(TV_series)",
+      "byteoffset": 100,
+      "anchor": "Cast_and_characters",
+      "linkAnchor": "Cast_and_characters"
+     },
+     {
+      "toclevel": 1,
+      "level": "2",
+      "line": "Series overview",
+      "number": "3",
+      "index": "3",
+      "fromtitle": "Harbor_Lights_(TV_series)",
+      "byteoffset": 200,
+      "anchor": "Series_overview",
+      "linkAnchor": "Series_overview"
+     },
+     {
+      "toclevel": 1,
+      "level": "2",
+      "line": "Season synopses",
+      "number": "4",
+      "index": "4",
+      "fromtitle": "Harbor_Lights_(TV_series)",
+      "byteoffset": 300,
+      "anchor": "Season_synopses",
+      "linkAnchor": "Season_synopses"
+     },
+     {
+      "toclevel": 2,
+      "level": "3",
+      "line": "Season 1 (2013)",
+      "number": "4.1",
+      "index": "5",
+      "fromtitle": "Harbor_Lights_(TV_series)",
+      "byteoffset": 400,
+      "anchor": "Season_1_(2013)",
+      "linkAnchor": "Season_1_(2013)"
+     },
+     {
+      "toclevel": 2,
+      "level": "3",
+      "line": "Season 2 (2014)",
+      "number": "4.2",
+      "index": "6",
+      "fromtitle": "Harbor_Lights_(TV_series)",
+      "byteoffset": 500,
+      "anchor": "Season_2_(2014)",
+      "linkAnchor": "Season_2_(2014)"
+     },
+     {
+      "toclevel": 1,
+      "level": "2",
+      "line": "Reception",
+      "number": "5",
+      "index": "7",
+      "fromtitle": "Harbor_Lights_(TV_series)",
+      "byteoffset": 600,
+      "anchor": "Reception",
+      "linkAnchor": "Reception"
+     }
+    ]
+   }
+  },
+  "text:1000000003:1": {
+   "parse": {
+    "title": "Harbor Lights (TV series)",
+    "pageid": 0,
+    "revid": 1000000003,
+    "text": "<div class=\"mw-content-ltr mw-parser-output\" lang=\"en\" dir=\"ltr\"><div class=\"mw-heading mw-heading2\"><h2 id=\"Premise\">Premise</h2></div><p>A disgraced harbor pilot returns to her fictional hometown to run the family tugboat company and finds the town divided over a new container port.</p></div>"
+   }
+  },
+  "text:1000000003:3": {
+   "parse": {
+    "title": "Harbor Lights (TV series)",
+    "pageid": 0,
+    "revid": 1000000003,
+    "text": "<div class=\"mw-content-ltr mw-parser-output\" lang=\"en\" dir=\"ltr\"><div class=\"mw-heading mw-heading2\"><h2 id=\"Series_overview\">Series overview</h2></div><div role=\"note\" class=\"hatnote navigation-not-searchable\">Main article: <a href=\"/wiki/L\">List of Harbor Lights episodes</a></div><table class=\"wikitable plainrowheaders\"><tbody><tr><th>Season</th><th>Episodes</th></tr><tr><td>1</td><td>10</td></tr><tr><td>2</td><td>10</td></tr></tbody></table></div>"
+   }
+  },
+  "text:1000000003:4": {
+   "parse": {
+    "title": "Harbor Lights (TV series)",
+    "pageid": 0,
+    "revid": 1000000003,
+    "text": "<div class=\"mw-content-ltr mw-parser-output\" lang=\"en\" dir=\"ltr\"><div class=\"mw-heading mw-heading2\"><h2 id=\"Season_synopses\">Season synopses</h2></div><div class=\"mw-heading mw-heading3\"><h3 id=\"Season_1_(2013)\">Season 1 (2013)</h3></div><p>Nora Quill comes back to Port Adley after losing her pilot&#39;s license and takes over the struggling tugboat firm her late father left to her and her younger brother Cal. The town council is about to approve a container port that would save the local economy but drown the old fishing quarter. Nora signs on as the port&#39;s chief pilot, which alienates Cal and the fishing families who raised her.<sup class=\"reference\">[3]</sup></p>\n<div class=\"mw-heading mw-heading3\"><h3 id=\"Season_2_(2014)\">Season 2 (2014)</h3></div><p>A collision in the new channel kills a deckhand, and an inquiry blames the tug crew. Nora suspects the port company falsified the depth surveys. She and Cal reconcile to gather evidence, helped by a retired surveyor and a local reporter, while the company tries to buy the tugboat firm out from under them.</p>\n<div class=\"mw-heading mw-heading3\"><h3 id=\"Seasons_3–5_(2015–2018)\">Seasons 3–5 (2015–2018)</h3></div><p>The later seasons follow the fallout of the inquiry across the whole town. The fishing quarter organizes, the port changes owners twice, and Nora is forced to choose between her license and her brother&#39;s freedom. The series ends with the firm sold, Cal released, and Nora piloting the last ship out of the old harbor before it closes for good, watched by the families who once turned their backs on her.</p></div>"
+   }
+  },
+  "query:Starfall Academy": {
+   "batchcomplete": true,
+   "query": {
+    "pages": [
+     {
+      "pageid": 1004,
+      "ns": 0,
+      "title": "Starfall Academy",
+      "revisions": [
+       {
+        "revid": 1210000004,
+        "parentid": 1209999997,
+        "timestamp": "2025-08-01T00:00:00Z"
+       }
+      ],
+      "pageprops": {
+       "wikibase_item": "Q9999999"
+      }
+     }
+    ]
+   }
+  },
+  "query:Paper Moons": {
+   "batchcomplete": true,
+   "query": {
+    "pages": [
+     {
+      "pageid": 1005,
+      "ns": 0,
+      "title": "Paper Moons",
+      "revisions": [
+       {
+        "revid": 1210000005,
+        "parentid": 1209999998,
+        "timestamp": "2024-01-01T00:00:00Z"
+       }
+      ],
+      "pageprops": {
+       "wikibase_item": "Q9000005",
+       "disambiguation": ""
+      }
+     }
+    ]
+   }
+  },
+  "query:Gone Page": {
+   "batchcomplete": true,
+   "query": {
+    "pages": [
+     {
+      "ns": 0,
+      "title": "Gone Page",
+      "missing": true
+     }
+    ]
+   }
+  }
+ },
+ "wikidata": {
+  "wbgetentities:Q9000005": {
+   "entities": {
+    "Q9000005": {
+     "type": "item",
+     "id": "Q9000005",
+     "sitelinks": {
+      "enwiki": {
+       "site": "enwiki",
+       "title": "Paper Moons",
+       "badges": []
+      }
+     }
+    }
+   },
+   "success": 1
+  },
+  "wbgetentities:Q9000007": {
+   "entities": {
+    "Q9000007": {
+     "type": "item",
+     "id": "Q9000007",
+     "sitelinks": {}
+    }
+   },
+   "success": 1
+  }
+ }
+}

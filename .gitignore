@@ -62,3 +62,10 @@ Thumbs.db
 
 # --- Claude Code local settings ---
 .claude/settings.local.json
+
+# --- Pipeline data (local-first, DECISIONS 2026-09-26; owner: data-pipeline) ---
+# Candidates, plot text, HTTP cache, reports and gold sheets stay local. Only the data
+# README and hand-written config (gold seeds, similarity pairs) are committed.
+/pipeline/data/*
+!/pipeline/data/README.md
+!/pipeline/data/config/

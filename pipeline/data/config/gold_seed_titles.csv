@@ -1,0 +1,161 @@
+title,year,media_type,region,guessed_plot,guessed_arc,note
+Jaws,1975,movie,english,overcoming_the_monster,man_in_a_hole,
+Alien,1979,movie,english,overcoming_the_monster,man_in_a_hole,
+Die Hard,1988,movie,english,overcoming_the_monster,man_in_a_hole,
+Jurassic Park,1993,movie,english,overcoming_the_monster,man_in_a_hole,
+Get Out,2017,movie,english,overcoming_the_monster,man_in_a_hole,
+The Terminator,1984,movie,english,overcoming_the_monster,man_in_a_hole,
+Taken,2008,movie,english,overcoming_the_monster,man_in_a_hole,similarity pair
+Edge of Tomorrow,2014,movie,english,overcoming_the_monster,cinderella,time loop
+Seven Samurai,1954,movie,japanese,overcoming_the_monster,oedipus,
+Train to Busan,2016,movie,korean,overcoming_the_monster,riches_to_rags,
+Sholay,1975,movie,hindi,overcoming_the_monster,man_in_a_hole,
+Vikram,2022,movie,tamil,overcoming_the_monster,man_in_a_hole,
+Baahubali: The Beginning,2015,movie,telugu,overcoming_the_monster,rags_to_riches,
+Stranger Things,2016,tv_series,english,overcoming_the_monster,man_in_a_hole,
+Kingdom,2019,tv_series,korean,overcoming_the_monster,riches_to_rags,
+The Silence of the Lambs,1991,movie,english,mystery,man_in_a_hole,
+Se7en,1995,movie,english,mystery,riches_to_rags,
+Chinatown,1974,movie,english,mystery,riches_to_rags,
+Knives Out,2019,movie,english,mystery,man_in_a_hole,
+Zodiac,2007,movie,english,mystery,riches_to_rags,
+Memento,2000,movie,english,mystery,riches_to_rags,reverse chronology
+Rashomon,1950,movie,japanese,mystery,riches_to_rags,
+Memories of Murder,2003,movie,korean,mystery,riches_to_rags,
+Manichitrathazhu,1993,movie,malayalam,mystery,man_in_a_hole,
+Andhadhun,2018,movie,hindi,mystery,riches_to_rags,
+Drishyam,2013,movie,malayalam,mystery,man_in_a_hole,similarity pair
+Papanasam,2015,movie,tamil,mystery,man_in_a_hole,similarity pair
+Twin Peaks,1990,tv_series,english,mystery,riches_to_rags,
+True Detective,2014,tv_series,english,mystery,man_in_a_hole,
+Sherlock,2010,tv_series,english,mystery,man_in_a_hole,
+Dark,2017,tv_series,world,mystery,oedipus,
+Paatal Lok,2020,tv_series,indian,mystery,riches_to_rags,
+The Lord of the Rings: The Fellowship of the Ring,2001,movie,english,the_quest,man_in_a_hole,
+Raiders of the Lost Ark,1981,movie,english,the_quest,man_in_a_hole,
+Finding Nemo,2003,movie,english,the_quest,man_in_a_hole,similarity pair
+Mad Max: Fury Road,2015,movie,english,the_quest,man_in_a_hole,
+Saving Private Ryan,1998,movie,english,the_quest,oedipus,
+Up,2009,movie,english,the_quest,cinderella,
+Little Miss Sunshine,2006,movie,english,the_quest,man_in_a_hole,
+"O Brother, Where Art Thou?",2000,movie,english,the_quest,man_in_a_hole,
+Anbe Sivam,2003,movie,tamil,the_quest,man_in_a_hole,similarity pair
+Fullmetal Alchemist: Brotherhood,2009,tv_series,japanese,the_quest,man_in_a_hole,anime
+Demon Slayer: Kimetsu no Yaiba,2019,tv_series,japanese,the_quest,man_in_a_hole,anime
+The Wizard of Oz,1939,movie,english,voyage_and_return,man_in_a_hole,
+Spirited Away,2001,movie,japanese,voyage_and_return,man_in_a_hole,anime film
+Back to the Future,1985,movie,english,voyage_and_return,man_in_a_hole,
+Cast Away,2000,movie,english,voyage_and_return,oedipus,
+The Martian,2015,movie,english,voyage_and_return,man_in_a_hole,landing page example
+Toy Story,1995,movie,english,voyage_and_return,man_in_a_hole,
+E.T. the Extra-Terrestrial,1982,movie,english,voyage_and_return,cinderella,
+Coraline,2009,movie,english,voyage_and_return,man_in_a_hole,
+Life of Pi,2012,movie,english,voyage_and_return,man_in_a_hole,
+Lost,2004,tv_series,english,voyage_and_return,oedipus,
+Crash Landing on You,2019,tv_series,korean,voyage_and_return,cinderella,
+Rocky,1976,movie,english,rags_to_riches,rags_to_riches,
+Slumdog Millionaire,2008,movie,english,rags_to_riches,cinderella,
+The Pursuit of Happyness,2006,movie,english,rags_to_riches,man_in_a_hole,
+Cinderella,1950,movie,english,rags_to_riches,cinderella,
+Aladdin,1992,movie,english,rags_to_riches,cinderella,
+Billy Elliot,2000,movie,english,rags_to_riches,rags_to_riches,
+Good Will Hunting,1997,movie,english,rags_to_riches,rags_to_riches,
+My Fair Lady,1964,movie,english,rags_to_riches,cinderella,
+Dangal,2016,movie,hindi,rags_to_riches,rags_to_riches,
+Lagaan,2001,movie,hindi,rags_to_riches,man_in_a_hole,
+3 Idiots,2009,movie,hindi,rags_to_riches,cinderella,
+Naruto,2002,tv_series,japanese,rags_to_riches,rags_to_riches,anime
+Some Like It Hot,1959,movie,english,comedy,man_in_a_hole,
+Tootsie,1982,movie,english,comedy,cinderella,
+Mrs. Doubtfire,1993,movie,english,comedy,man_in_a_hole,
+When Harry Met Sally...,1989,movie,english,comedy,cinderella,
+Notting Hill,1999,movie,english,comedy,cinderella,
+The Grand Budapest Hotel,2014,movie,english,comedy,icarus,
+Crazy Rich Asians,2018,movie,english,comedy,cinderella,
+Dilwale Dulhania Le Jayenge,1995,movie,hindi,comedy,cinderella,
+Premam,2015,movie,malayalam,comedy,cinderella,
+Amélie,2001,movie,world,comedy,rags_to_riches,
+Brooklyn Nine-Nine,2013,tv_series,english,comedy,rags_to_riches,similarity pair
+Spy × Family,2022,tv_series,japanese,comedy,rags_to_riches,anime
+Palm Springs,2020,movie,english,comedy,man_in_a_hole,time loop
+The Godfather,1972,movie,english,tragedy,icarus,
+Scarface,1983,movie,english,tragedy,icarus,
+Citizen Kane,1941,movie,english,tragedy,icarus,
+There Will Be Blood,2007,movie,english,tragedy,icarus,
+Requiem for a Dream,2000,movie,english,tragedy,riches_to_rags,
+Black Swan,2010,movie,english,tragedy,oedipus,
+Goodfellas,1990,movie,english,tragedy,icarus,
+Titanic,1997,movie,english,tragedy,icarus,
+Throne of Blood,1957,movie,japanese,tragedy,icarus,
+Nayakan,1987,movie,tamil,tragedy,icarus,
+Parasite,2019,movie,korean,tragedy,icarus,
+Oldboy,2003,movie,korean,tragedy,oedipus,
+Breaking Bad,2008,tv_series,english,tragedy,icarus,
+Better Call Saul,2015,tv_series,english,tragedy,oedipus,
+Succession,2018,tv_series,english,tragedy,oedipus,
+Chernobyl,2019,tv_series,english,tragedy,riches_to_rags,
+Your Lie in April,2014,tv_series,japanese,tragedy,oedipus,anime
+Groundhog Day,1993,movie,english,rebirth,man_in_a_hole,time loop
+Scrooged,1988,movie,english,rebirth,man_in_a_hole,
+It's a Wonderful Life,1946,movie,english,rebirth,oedipus,
+Beauty and the Beast,1991,movie,english,rebirth,cinderella,
+The Lion King,1994,movie,english,rebirth,cinderella,
+Gran Torino,2008,movie,english,rebirth,man_in_a_hole,
+As Good as It Gets,1997,movie,english,rebirth,cinderella,
+Kumbalangi Nights,2019,movie,malayalam,rebirth,man_in_a_hole,
+Ted Lasso,2020,tv_series,english,rebirth,cinderella,
+Shrinking,2023,tv_series,english,rebirth,man_in_a_hole,interview example
+Russian Doll,2019,tv_series,english,rebirth,man_in_a_hole,time loop
+The Good Place,2016,tv_series,english,rebirth,cinderella,
+Fleabag,2016,tv_series,english,rebirth,man_in_a_hole,
+Nineteen Eighty-Four,1984,movie,english,rebellion_against_the_one,oedipus,
+The Truman Show,1998,movie,english,rebellion_against_the_one,rags_to_riches,
+One Flew Over the Cuckoo's Nest,1975,movie,english,rebellion_against_the_one,oedipus,
+Brazil,1985,movie,english,rebellion_against_the_one,oedipus,
+V for Vendetta,2005,movie,english,rebellion_against_the_one,man_in_a_hole,
+The Hunger Games,2012,movie,english,rebellion_against_the_one,man_in_a_hole,
+The Matrix,1999,movie,english,overcoming_the_monster,man_in_a_hole,schema example
+Star Wars,1977,movie,english,overcoming_the_monster,cinderella,
+The Shawshank Redemption,1994,movie,english,rebellion_against_the_one,man_in_a_hole,
+Metropolis,1927,movie,world,rebellion_against_the_one,man_in_a_hole,
+Snowpiercer,2013,movie,korean,rebellion_against_the_one,oedipus,
+Jai Bhim,2021,movie,tamil,rebellion_against_the_one,man_in_a_hole,
+RRR,2022,movie,telugu,rebellion_against_the_one,man_in_a_hole,
+Severance,2022,tv_series,english,rebellion_against_the_one,man_in_a_hole,
+The Handmaid's Tale,2017,tv_series,english,rebellion_against_the_one,man_in_a_hole,
+Squid Game,2021,tv_series,korean,rebellion_against_the_one,oedipus,
+Attack on Titan,2013,tv_series,japanese,rebellion_against_the_one,oedipus,anime
+Ocean's Eleven,2001,movie,english,overcoming_the_monster,rags_to_riches,heist
+Inception,2010,movie,english,the_quest,man_in_a_hole,heist
+Money Heist,2017,tv_series,world,rebellion_against_the_one,man_in_a_hole,heist
+Fight Club,1999,movie,english,rebirth,oedipus,unreliable narrator
+The Sixth Sense,1999,movie,english,mystery,man_in_a_hole,twist ending
+Pulp Fiction,1994,movie,english,comedy,man_in_a_hole,nonlinear
+Magnolia,1999,movie,english,rebirth,man_in_a_hole,ensemble convergence
+Super Deluxe,2019,movie,tamil,comedy,man_in_a_hole,ensemble convergence
+Pan's Labyrinth,2006,movie,world,voyage_and_return,oedipus,
+Life Is Beautiful,1997,movie,world,tragedy,icarus,
+"Crouching Tiger, Hidden Dragon",2000,movie,world,the_quest,oedipus,
+The Sopranos,1999,tv_series,english,tragedy,riches_to_rags,similarity pair
+The Wire,2002,tv_series,english,tragedy,riches_to_rags,similarity pair
+Game of Thrones,2011,tv_series,english,overcoming_the_monster,oedipus,
+Mad Men,2007,tv_series,english,rebirth,oedipus,
+Narcos,2015,tv_series,english,overcoming_the_monster,icarus,
+Sacred Games,2018,tv_series,indian,mystery,riches_to_rags,
+The Family Man,2019,tv_series,indian,overcoming_the_monster,man_in_a_hole,
+Scam 1992,2020,tv_series,indian,tragedy,icarus,
+Tehran,2020,tv_series,world,overcoming_the_monster,riches_to_rags,interview example
+Death Note,2006,tv_series,japanese,mystery,icarus,anime
+Cowboy Bebop,1998,tv_series,japanese,the_quest,riches_to_rags,anime
+Neon Genesis Evangelion,1995,tv_series,japanese,overcoming_the_monster,riches_to_rags,anime
+Steins;Gate,2011,tv_series,japanese,the_quest,man_in_a_hole,anime time loop
+My Neighbor Totoro,1988,movie,japanese,voyage_and_return,flat,expected flat story
+Tokyo Story,1953,movie,japanese,tragedy,flat,expected flat story
+Lost in Translation,2003,movie,english,comedy,flat,expected flat story
+Boyhood,2014,movie,english,rags_to_riches,flat,expected flat story
+Paterson,2016,movie,english,comedy,flat,expected flat story
+Before Sunrise,1995,movie,english,comedy,flat,expected flat story
+Reply 1988,2015,tv_series,korean,comedy,flat,expected flat story
+Mushishi,2005,tv_series,japanese,the_quest,flat,anime expected flat story
+Friends,1994,tv_series,english,comedy,flat,expected flat story
+Seinfeld,1989,tv_series,english,comedy,flat,expected flat story

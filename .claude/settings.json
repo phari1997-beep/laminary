@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__Figma",
+      "Bash(ruff check)",
+      "Bash(ruff check *)",
+      "Bash(ruff format --check)",
+      "Bash(ruff format --check *)",
+      "Bash(pytest)",
+      "Bash(pytest pipeline)",
+      "Bash(actionlint *)",
+      "Bash(git check-ignore *)",
+      "mcp__Google_Drive__read_file_content",
+      "mcp__Lovable__read_file",
+      "mcp__Lovable__query_database",
+      "mcp__Lovable__get_project",
+      "mcp__Lovable__get_database_status",
+      "mcp__Lovable__list_messages",
+      "mcp__Lovable__list_files"
+    ]
+  }
+}
