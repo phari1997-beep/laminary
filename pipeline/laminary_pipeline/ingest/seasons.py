@@ -26,8 +26,10 @@ story there; the main article holds only a premise.
    and later seasons are left out; a season is never cut mid-way. Exception: if the first
    usable season (season 1, or the first later season when season 1 is missing, unverified or
    has no text) is alone over the cap, it is used in full and alone, up to SEASON_ONE_CEILING
-   words; a longer one skips the title (``season_too_long``). The 150-word rule then applies to
-   the joined total.
+   words; a longer one skips the title (``season_too_long``). Seasons whose joined text is still
+   under the fetcher's 150-word minimum (a stub season 1) don't count as usable: the first
+   season that can't join under the cap is then used alone instead, and the stubs are dropped
+   (DECISIONS 2026-10-01). The 150-word rule then applies to the joined total.
 
 Each page becomes its own source (``kind: wikipedia_plot``, CC BY-SA, ref, revision,
 ``content_sha256`` of that page's text, ``season``). The annotation request sends one summary
@@ -50,8 +52,9 @@ if TYPE_CHECKING:
 
 SEASON_WORD_CAP = 3000  # DECISIONS 2026-10-01
 # First-season exception (DECISIONS 2026-10-01): the first usable season (season 1, or the
-# first later one when season 1 is missing, unverified or has no text) is used whole and alone
-# even over the cap, up to this hard ceiling; above it the title is skipped (season_too_long).
+# first later one when season 1 is missing, unverified or has no text, or when the seasons
+# before it total under the 150-word minimum) is used whole and alone even over the cap, up to
+# this hard ceiling; above it the title is skipped (season_too_long).
 SEASON_ONE_CEILING = 6000
 MAX_SEASONS = 20  # season numbers guessed by title
 MAX_SEASON_SOURCES = 20  # also the schema's provenance.sources maxItems
@@ -160,6 +163,9 @@ class SeasonFinder:
         self.fetcher = fetcher
         self.cap = cap
         self.ceiling = ceiling
+        # seasons joined so far under this aren't "usable" for the exception (DECISIONS
+        # 2026-10-01): the same minimum the fetcher applies to the joined text
+        self.min_words = fetcher.min_words
 
     # ---------- discovery ----------
 
@@ -305,8 +311,15 @@ class SeasonFinder:
                 skipped.append({"title": page.title, "reason": "no plot, summary or synopsis "
                                 "section with prose"})
                 continue
-            if not out.texts and page.season is not None and st.words > self.cap:
-                # first-season exception: the first usable season whole and alone, or nothing
+            if total < self.min_words and page.season is not None and total + st.words > self.cap:
+                # first-season exception: the first usable season whole and alone, or nothing.
+                # Seasons joined before it total under the minimum (stubs, DECISIONS
+                # 2026-10-01), so they are dropped, not prepended.
+                for stub in out.texts:
+                    skipped.append({"title": stub.page.title, "reason": f"{stub.words} words, "
+                                    f"under the {self.min_words}-word minimum; a later season "
+                                    "is used alone (first usable season)"})
+                out.texts = []
                 if st.words > self.ceiling:
                     out.too_long = f"{page.title} ({st.words} words)"
                     out.left_out_over_cap = [p.title for p in pages[i:]]
