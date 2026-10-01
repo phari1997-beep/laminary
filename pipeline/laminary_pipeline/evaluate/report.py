@@ -2,9 +2,16 @@
 
 Headline (Phase 1 exit metric, decided 2026-09-29): exact match of
 ``archetypal_plot.primary.label`` against gold on at least 80% of gold titles. The denominator
-is every gold title with ``outcome: annotated``; a model abstention, or a title the model never
-annotated, counts as a miss. Gold titles the labeler abstained on have no primary and are
-reported separately.
+is every gold title with ``outcome: annotated`` that can be scored; a model abstention, or a
+title the model never annotated, counts as a miss. Gold titles the labeler abstained on have no
+primary and are reported separately.
+
+Titles whose model record was made from a different summary than the gold label (source
+content hashes differ) are excluded from every comparison and listed separately: neither a hit
+nor a miss is meaningful there. So that exclusions can't make a tiny sample pass, ``passes``
+also needs a minimum coverage: at least MIN_SCORED_TITLES scored titles and at least
+MIN_SCORED_FRACTION of the gold titles labeled ``annotated``. Both thresholds are PROPOSED and
+await Hari's decision.
 
 Also reported (not gating): kappa and lenient agreement on the primary plot; blueprint;
 emotional arc on unflagged titles with fallback and reduced-shape titles broken out; per-term
@@ -34,6 +41,9 @@ from laminary_pipeline.evaluate.pairs import PairReport
 from laminary_pipeline.evaluate.pairs import render_markdown as render_pairs
 
 EXIT_TARGET = 0.80
+# PROPOSED, pending Hari: the exit metric only counts when enough of the gold set is scored.
+MIN_SCORED_TITLES = 80
+MIN_SCORED_FRACTION = 0.90
 ABSTAINED = "(abstained)"
 MISSING = "(no model record)"
 
@@ -146,7 +156,11 @@ def _acc(correct: int, total: int) -> dict[str, Any]:
 # --- sections ------------------------------------------------------------------------------
 
 
-def _headline(gold: dict, model: dict) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+def _headline(
+    gold: dict, model: dict, *, gold_annotated_total: int, excluded: list[str]
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """``gold``/``model`` already exclude source-mismatched titles (listed in ``excluded``).
+    ``gold_annotated_total`` counts every gold title labeled annotated, mismatched or not."""
     rows, correct, abstained, missing = [], 0, 0, 0
     for key, g in sorted(gold.items()):
         if not _annotated(g):
@@ -171,11 +185,26 @@ def _headline(gold: dict, model: dict) -> tuple[dict[str, Any], list[dict[str, A
         )
     total = len(rows)
     acc = m.ratio(correct, total)
+    fraction = m.ratio(total, gold_annotated_total)
+    coverage_ok = total >= MIN_SCORED_TITLES and fraction is not None and (
+        fraction >= MIN_SCORED_FRACTION
+    )
     return {
         "metric": "archetypal_plot.primary.label exact match vs gold",
         "target": EXIT_TARGET,
         **_acc(correct, total),
-        "passes": acc is not None and acc >= EXIT_TARGET,
+        "meets_target": acc is not None and acc >= EXIT_TARGET,
+        "coverage": {
+            "scored": total,
+            "gold_annotated": gold_annotated_total,
+            "fraction": fraction,
+            "min_scored_titles": MIN_SCORED_TITLES,
+            "min_scored_fraction": MIN_SCORED_FRACTION,
+            "passes": coverage_ok,
+            "status": "PROPOSED thresholds, pending Hari",
+        },
+        "passes": acc is not None and acc >= EXIT_TARGET and coverage_ok,
+        "excluded_source_mismatch": excluded,
         "model_abstained_counted_as_miss": abstained,
         "no_model_record_counted_as_miss": missing,
     }, rows
@@ -421,11 +450,21 @@ def evaluate(
     leak_flags: list[dict[str, Any]] | None = None,
     pair_report: PairReport | None = None,
 ) -> dict[str, Any]:
-    gold = index_gold(gold_records)
+    all_gold = index_gold(gold_records)
     group, all_model = index_model(model_records)
-    model = {k: v for k, v in all_model.items() if k in gold}
-    mismatched = sorted(k for k in model if _source_hashes(model[k]) != _source_hashes(gold[k]))
-    headline, rows = _headline(gold, model)
+    on_gold = {k: v for k, v in all_model.items() if k in all_gold}
+    mismatched = sorted(
+        k for k in on_gold if _source_hashes(on_gold[k]) != _source_hashes(all_gold[k])
+    )
+    # Mismatched titles are scored nowhere: the model and the labeler read different text.
+    gold = {k: v for k, v in all_gold.items() if k not in mismatched}
+    model = {k: v for k, v in on_gold.items() if k not in mismatched}
+    headline, rows = _headline(
+        gold,
+        model,
+        gold_annotated_total=sum(_annotated(g) for g in all_gold.values()),
+        excluded=mismatched,
+    )
     pairs = _both_annotated(gold, model)
     presence, presence_calib = _presence(pairs)
     return {
@@ -436,10 +475,10 @@ def evaluate(
             "run_ids": sorted({r["provenance"]["annotator"]["run_id"] for r in model_records}),
         },
         "counts": {
-            "gold_titles": len(gold),
-            "gold_annotated": sum(_annotated(g) for g in gold.values()),
-            "gold_abstained": sum(not _annotated(g) for g in gold.values()),
-            "model_records_on_gold_titles": len(model),
+            "gold_titles": len(all_gold),
+            "gold_annotated": sum(_annotated(g) for g in all_gold.values()),
+            "gold_abstained": sum(not _annotated(g) for g in all_gold.values()),
+            "model_records_on_gold_titles": len(on_gold),
             "both_annotated": len(pairs),
             "source_hash_mismatches": mismatched,
         },
@@ -487,6 +526,11 @@ def render_markdown(report: dict[str, Any], pair_report: PairReport | None = Non
         f"**Primary Booker plot exact match: {h['correct']}/{h['total']} = "
         f"{_pct(h['accuracy'])}** (target {_pct(h['target'])}): "
         f"**{'PASS' if h['passes'] else 'NOT MET'}**.",
+        f"Coverage: {h['coverage']['scored']} of {h['coverage']['gold_annotated']} gold titles "
+        f"scored ({_pct(h['coverage']['fraction'])}); needs at least "
+        f"{h['coverage']['min_scored_titles']} and {_pct(h['coverage']['min_scored_fraction'])} "
+        f"({h['coverage']['status']}): "
+        f"{'met' if h['coverage']['passes'] else 'NOT MET'}.",
         f"Misses include {h['model_abstained_counted_as_miss']} model abstentions and "
         f"{h['no_model_record_counted_as_miss']} titles with no model record.",
         "",
@@ -496,7 +540,8 @@ def render_markdown(report: dict[str, Any], pair_report: PairReport | None = Non
     if c["source_hash_mismatches"]:
         lines.append(
             f"**Warning:** {len(c['source_hash_mismatches'])} titles were labeled from a "
-            f"different summary than the model saw: {', '.join(c['source_hash_mismatches'])}."
+            f"different summary than the model saw and are excluded from every score: "
+            f"{', '.join(c['source_hash_mismatches'])}."
         )
     pp = report["primary_plot"]
     lines += [
