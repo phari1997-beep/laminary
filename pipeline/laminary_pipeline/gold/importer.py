@@ -10,7 +10,10 @@ partly filled sheet can be imported as work progresses.
 Double labeling: ``label_slot`` is 1 (or blank) for the reference labeler and 2 for the second
 labeler of a double-labeled title. Records are written with every slot-1 record before any
 slot-2 record, because the evaluation takes the first record for a title as the reference
-(``evaluate.report.index_gold``). Import the whole sheet into one file.
+(``evaluate.report.index_gold``). A slot-2 row whose slot-1 row has no valid record is an
+error and is not imported, so a second labeler can never become the reference. Import the
+whole sheet into one file; the evaluation refuses a title whose two labels come from
+different files.
 """
 
 from __future__ import annotations
@@ -364,6 +367,7 @@ def import_csv_text(text: str, *, annotated_at: str | None = None) -> ImportResu
     seen: dict[tuple[str, str], int] = {}
     seen_slot: dict[tuple[str, str], int] = {}
     slot_of: dict[int, str] = {}
+    row_of: dict[int, int] = {}
     for rownum, row in read_rows(text.lstrip("\ufeff")):
         title = row.get("title", "").strip()
         if not _labeled(row):
@@ -394,9 +398,36 @@ def import_csv_text(text: str, *, annotated_at: str | None = None) -> ImportResu
             result.errors.append(RowProblem(rownum, title, errors))
         elif record is not None:
             slot_of[id(record)] = slot
+            row_of[id(record)] = rownum
             result.records.append(record)
+    _drop_orphan_second_labels(result, slot_of, row_of)
     result.records.sort(key=lambda r: slot_of[id(r)])  # stable: slot 1 first, then sheet order
     return result
+
+
+def _drop_orphan_second_labels(
+    result: ImportResult, slot_of: dict[int, str], row_of: dict[int, int]
+) -> None:
+    """QA should-fix 2: a slot-2 label whose slot-1 row has no valid record would otherwise be
+    the only record for its title, and the evaluation would score the model against it as the
+    reference. Such rows become errors; the title is imported once slot 1 is labeled."""
+    has_slot_one = {
+        r["title"]["wikidata_id"] for r in result.records if slot_of[id(r)] == "1"
+    }
+    kept = []
+    for rec in result.records:
+        qid = rec["title"]["wikidata_id"]
+        if slot_of[id(rec)] == "2" and qid not in has_slot_one:
+            labeler = rec["provenance"]["annotator"]["labeler_id"]
+            result.errors.append(RowProblem(
+                row_of[id(rec)], rec["title"]["name"],
+                [f"label_slot 2 of {qid} (labeler {labeler!r}) has no valid slot-1 label: the "
+                 "model is scored against slot 1, so label slot 1 first (or fix its row); "
+                 "this slot-2 row was not imported"],
+            ))
+            continue
+        kept.append(rec)
+    result.records = kept
 
 
 def import_csv(path: Path, *, annotated_at: str | None = None) -> ImportResult:

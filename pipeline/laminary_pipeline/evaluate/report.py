@@ -73,9 +73,12 @@ class EvaluationInputError(ValueError):
 # --- loading -------------------------------------------------------------------------------
 
 
-def load_records(paths: Iterable[Path]) -> list[dict[str, Any]]:
+def load_records(
+    paths: Iterable[Path], *, origins: list[str] | None = None
+) -> list[dict[str, Any]]:
     """Records from .json (object or list) and .jsonl files, or directories of them. Every
-    record must pass ``validate_record``; one invalid record stops the evaluation."""
+    record must pass ``validate_record``; one invalid record stops the evaluation. With
+    ``origins``, the file each record came from is appended to it, in record order."""
     files: list[Path] = []
     for path in paths:
         if path.is_dir():
@@ -95,6 +98,8 @@ def load_records(paths: Iterable[Path]) -> list[dict[str, Any]]:
             if problems:
                 raise EvaluationInputError(f"{f} record {i}: {'; '.join(problems[:5])}")
             records.append(rec)
+            if origins is not None:
+                origins.append(str(f))
     return records
 
 
@@ -107,17 +112,29 @@ class GoldIndex:
     second: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
-def index_gold(records: list[dict[str, Any]]) -> GoldIndex:
+def index_gold(
+    records: list[dict[str, Any]], origins: list[str] | None = None
+) -> GoldIndex:
     """At most two gold records per title, from different labelers; the first in load order is
-    the reference."""
+    the reference. Order is only meaningful within one file written by ``gold import`` (slot 1
+    before slot 2), so with ``origins`` (the file of each record) two records for one title
+    from different files are refused: their order would decide the reference."""
     out = GoldIndex()
-    for rec in records:
+    first_origin: dict[str, str] = {}
+    for i, rec in enumerate(records):
         if rec["record_kind"] != "gold_label":
             raise EvaluationInputError(f"not a gold_label record: {title_key(rec['title'])}")
         key = title_key(rec["title"])
+        origin = origins[i] if origins is not None else ""
         if key not in out.reference:
             out.reference[key] = rec
+            first_origin[key] = origin
             continue
+        if origin != first_origin[key]:
+            raise EvaluationInputError(
+                f"gold records for {key} come from two files ({first_origin[key]}, {origin}); "
+                "import the whole sheet into one file so slot 1 stays the reference"
+            )
         if key in out.second:
             raise EvaluationInputError(f"more than two gold records for {key}")
         first = out.reference[key]["provenance"]["annotator"]["labeler_id"]
@@ -598,8 +615,9 @@ def evaluate(
     cost_reports: list[dict[str, Any]] | None = None,
     leak_flags: list[dict[str, Any]] | None = None,
     pair_report: PairReport | None = None,
+    gold_origins: list[str] | None = None,
 ) -> dict[str, Any]:
-    gold_index = index_gold(gold_records)
+    gold_index = index_gold(gold_records, gold_origins)
     all_gold = gold_index.reference
     human = human_agreement(gold_index)
     group, all_model = index_model(model_records)

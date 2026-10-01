@@ -40,7 +40,8 @@ def _parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
-    gold = load_records(args.gold)
+    gold_origins: list[str] = []
+    gold = load_records(args.gold, origins=gold_origins)
     cost_reports = []
     if args.run:
         run_dirs = [args.annotations_dir / r for r in args.run]
@@ -65,7 +66,8 @@ def main(argv: list[str] | None = None) -> int:
         ]
     pair_report = check_pairs(load_pairs(args.pairs)) if args.pairs else None
     report = evaluate(
-        gold, model, cost_reports=cost_reports, leak_flags=flags, pair_report=pair_report
+        gold, model, cost_reports=cost_reports, leak_flags=flags, pair_report=pair_report,
+        gold_origins=gold_origins,
     )
     out.mkdir(parents=True, exist_ok=True)
     (out / "evaluation.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")

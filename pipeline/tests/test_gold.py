@@ -465,3 +465,58 @@ def test_gold_cli_select_template_import(tmp_path: Path) -> None:
                      log=log.append)
     assert code == 1 and not out.exists()
     assert gold_main(["--data-dir", str(data), "pairs"], log=log.append) == 1  # no config here
+
+
+# ---------- QA should-fix 2 (probe9): slot 2 can't become the reference ----------
+
+
+def test_slot_two_without_a_slot_one_label_is_not_imported() -> None:
+    """probe9: slot 1 left blank, slot 2 filled; the slot-2 labeler used to be the reference."""
+    slot1 = {**PREFILLED_MOVIE, "label_slot": "1"}  # unlabeled row: skipped
+    slot2 = {**PREFILLED_MOVIE, **MOVIE_LABELS, "labeler_id": "L02", "label_slot": "2"}
+    result = import_csv_text(sheet(slot1, slot2), annotated_at=STAMP)
+    assert result.records == [] and result.skipped_unlabeled == 1
+    text = str(result.errors[0])
+    assert text.startswith("Row 4 (The Lantern Keeper)")
+    assert "label_slot 2 of Q9000001 (labeler 'L02') has no valid slot-1 label" in text
+
+
+def test_slot_two_is_dropped_when_slot_one_has_errors() -> None:
+    slot1 = {**PREFILLED_MOVIE, **MOVIE_LABELS, "label_slot": "1", "primary_plot": ""}
+    slot2 = {**PREFILLED_MOVIE, **MOVIE_LABELS, "labeler_id": "L02", "label_slot": "2"}
+    result = import_csv_text(sheet(slot1, slot2), annotated_at=STAMP)
+    assert result.records == [] and len(result.errors) == 2
+
+
+def test_gold_cli_writes_nothing_for_an_orphan_slot_two(tmp_path: Path) -> None:
+    slot1 = {**PREFILLED_MOVIE, "label_slot": "1"}
+    slot2 = {**PREFILLED_MOVIE, **MOVIE_LABELS, "labeler_id": "L02", "label_slot": "2"}
+    path = tmp_path / "filled.csv"
+    path.write_text(sheet(slot1, slot2), encoding="utf-8")
+    out = tmp_path / "gold.jsonl"
+    log: list[str] = []
+    code = gold_main(["--data-dir", str(tmp_path / "data"), "import", str(path), "--out",
+                      str(out), "--labeled-at", STAMP], log=log.append)
+    assert code == 1 and not out.exists()
+
+
+def test_two_labels_from_different_files_are_refused(tmp_path: Path) -> None:
+    from laminary_pipeline.evaluate.report import EvaluationInputError, load_records
+
+    a = {**PREFILLED_MOVIE, **MOVIE_LABELS, "label_slot": "1"}
+    b = {**a, "labeler_id": "L02", "label_slot": "2"}
+    records = import_csv_text(sheet(a, b), annotated_at=STAMP).records
+    one = tmp_path / "all.jsonl"
+    one.write_text("\n".join(json.dumps(r) for r in records))
+    origins: list[str] = []
+    gold = index_gold(load_records([one], origins=origins), origins)
+    assert gold.reference["movie:90001"]["provenance"]["annotator"]["labeler_id"] == "L01"
+    # the same two labels split across files: order between files must not pick the reference
+    d = tmp_path / "split"
+    d.mkdir()
+    (d / "a_slot2.jsonl").write_text(json.dumps(records[1]))
+    (d / "b_slot1.jsonl").write_text(json.dumps(records[0]))
+    origins = []
+    loaded = load_records([d], origins=origins)
+    with pytest.raises(EvaluationInputError, match="come from two files"):
+        index_gold(loaded, origins)

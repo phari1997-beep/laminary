@@ -190,6 +190,7 @@ The importer checks every row and names the column. The usual ones:
 - A value typed that isn't in the dropdown (use the dropdowns).
 - Some but not all of the 11 arc points filled, or a point outside -1 to 1.
 - `labeler_id` left blank, or the same person labeling the same title twice (both slots of a two-person title must be different people).
+- A slot-2 row filled in while that title's slot-1 row is blank or has a problem. The slot-2 label waits until slot 1 imports, because the model is scored against slot 1.
 - Edited grey columns (the importer needs them exactly as they were).
 
 ## For Hari: setting up the sheet
