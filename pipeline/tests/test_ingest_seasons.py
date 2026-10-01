@@ -416,3 +416,18 @@ def test_report_counts_titles_via_season_articles(tmp_path: Path) -> None:
     report = plots_report(paths, cands)
     assert report["via_season_articles"] == {"total": 1, "by_bucket": {"tv:english": 1}}
     assert "Via season articles: 1" in format_report(report)
+
+
+def test_thin_series_from_an_older_fetcher_are_fetched_again(tmp_path: Path) -> None:
+    from laminary_pipeline.ingest.paths import DataPaths, write_json_atomic
+    from laminary_pipeline.ingest.plots import needs_fetch
+
+    paths = DataPaths.resolve(str(tmp_path))
+    old = {"qid": "Q1", "status": "skipped", "skip_reason": "too_short",
+           "candidate": {"media_type": "tv_series"}}
+    write_json_atomic(paths.plot_file("Q1"), old)
+    assert needs_fetch(paths, "Q1", False)
+    write_json_atomic(paths.plot_file("Q1"), {**old, "season_articles": {"used": []}})
+    assert not needs_fetch(paths, "Q1", False)  # already tried with the fallback
+    write_json_atomic(paths.plot_file("Q1"), {**old, "candidate": {"media_type": "movie"}})
+    assert not needs_fetch(paths, "Q1", False)

@@ -2,7 +2,8 @@
 
 One file per title: ``data/plots/<QID>.json`` with ``status`` "ok" (text + a schema-shaped
 ``source``) or "skipped" (with ``skip_reason``). A title with a file is not fetched again unless
-``--refresh`` is given; ``fetch_error`` files (transient network problems) are always retried.
+``--refresh`` is given; ``fetch_error`` files (transient network problems) are always retried,
+and so are series skipped as too thin before the season-article fallback existed.
 """
 
 from __future__ import annotations
@@ -14,7 +15,13 @@ from typing import Any
 
 from laminary_pipeline.ingest.candidates import BUCKETS, language_display
 from laminary_pipeline.ingest.paths import DataPaths, read_json, write_json_atomic
-from laminary_pipeline.ingest.wikipedia import SKIP_FETCH_ERROR, VIA_SEASON_ARTICLES, PlotFetcher
+from laminary_pipeline.ingest.wikipedia import (
+    SKIP_FETCH_ERROR,
+    SKIP_NO_SECTION,
+    SKIP_TOO_SHORT,
+    VIA_SEASON_ARTICLES,
+    PlotFetcher,
+)
 
 
 def existing_status(paths: DataPaths, qid: str) -> dict[str, Any] | None:
@@ -26,7 +33,19 @@ def needs_fetch(paths: DataPaths, qid: str, refresh: bool) -> bool:
     if refresh:
         return True
     current = existing_status(paths, qid)
-    return current is None or current.get("skip_reason") == SKIP_FETCH_ERROR
+    return current is None or current.get("skip_reason") == SKIP_FETCH_ERROR or (
+        _thin_series_before_seasons(current)
+    )
+
+
+def _thin_series_before_seasons(rec: dict[str, Any]) -> bool:
+    """A series skipped as thin by a fetcher older than the season-article fallback (1.1.0):
+    fetched again so the fallback can run."""
+    return (
+        rec.get("skip_reason") in (SKIP_TOO_SHORT, SKIP_NO_SECTION)
+        and (rec.get("candidate") or {}).get("media_type") == "tv_series"
+        and "season_articles" not in rec
+    )
 
 
 @dataclass
