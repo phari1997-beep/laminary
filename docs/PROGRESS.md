@@ -5,6 +5,7 @@ Current phase: **Phase 1 — Narrative data pilot** (started 2026-09-30)
 (Agents: check off tasks from PLAN.md here with date and owner.)
 
 ## Phase 0
+- [x] 2026-09-30 — Laptop bootstrap `scripts/bootstrap.sh` + Brewfile, docs/ENVIRONMENTS.md section 6 [sre] — QA passed (3 rounds). Hari ran it end to end on his Mac (Docker Desktop chosen; all tools PASS, daemon running). Fresh-machine tap-trust branch untested. See DECISIONS 2026-09-30.
 - [x] 2026-09-26 — Repo, environments, CI skeleton [sre] — QA: pass with nits after two fix rounds. See docs/ENVIRONMENTS.md.
   - Deferred to Phase 3 (sre, with the first deploy-prod workflow): allowlist trigger check; tripwire misses multi-line `gh workflow run \` and dispatch by display name — use pattern `deploy[-]prod[A-Za-z0-9_.-]*\.ya?ml`.
 - [x] 2026-09-29 — Taxonomy + JSON schema [data-pipeline] — v1.0.0 approved by Hari (QA: pass). See docs/NARRATIVE_SCHEMA.md.

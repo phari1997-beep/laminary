@@ -1,0 +1,16 @@
+# Laminary dev tools. Applied by scripts/bootstrap.sh (`brew bundle`); safe to re-run.
+# Docker, Android and EAS are NOT here: bootstrap.sh handles them (docs/ENVIRONMENTS.md).
+# No pnpm: app/ uses npm (CI runs `npm ci`; see .github/workflows/ci.yml).
+
+tap "supabase/tap"
+
+brew "node@22"            # Node 22 LTS, matches CI. Keg-only; bootstrap.sh links it
+brew "watchman"           # Metro file watching for Expo
+brew "uv"                 # Python 3.12 + venv for pipeline/ (pyproject pins >=3.12,<3.13)
+brew "gh"                 # GitHub CLI
+brew "jq"
+brew "direnv"             # optional: needs a hook in ~/.zshrc and a .envrc (none in repo)
+brew "libpq"              # psql only. Keg-only: add /opt/homebrew/opt/libpq/bin to PATH
+brew "supabase/tap/supabase"
+brew "gitleaks"           # local pre-commit secret scan (docs/ENVIRONMENTS.md section 2)
+brew "shellcheck"         # lint scripts/*.sh

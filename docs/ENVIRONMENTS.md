@@ -148,3 +148,23 @@ When an item is done, enter the values **directly in the vendor dashboard or Git
 - `docs/SLOS.md`: targets for rec latency and availability data age (before Phase 2 exit).
 - Migrations check in CI (when `supabase/migrations/` has its first file).
 - Backups: local data in Phases 0–1 isn't backed up by any service. The pilot's annotation output should be re-creatable from versioned inputs (PLAN 5.4), or exported (`supabase db dump`) after each pilot run. A tested restore procedure for prod comes with item 13.
+
+---
+
+## 6. Local laptop setup
+
+One script sets up a fresh Apple Silicon Mac: `scripts/bootstrap.sh` (packages in `scripts/Brewfile`). It is idempotent, so re-running it is safe.
+
+```sh
+scripts/bootstrap.sh --check     # verify only; installs and writes nothing
+scripts/bootstrap.sh             # install and configure, then verify
+scripts/bootstrap.sh --android --eas --orbstack   # opt-ins; see --help
+```
+
+What it does: checks Xcode and the licence (prints instructions, never automates the App Store), installs Homebrew and the Brewfile (Node 22, watchman, uv, gh, jq, direnv, libpq, Supabase CLI, gitleaks, shellcheck), trusts the taps named in the Brewfile (`brew trust --tap`; Homebrew 7 refuses untrusted taps), installs Docker Desktop, builds `pipeline/.venv` with uv on the Python version in `pipeline/pyproject.toml` (3.12) with the `dev` extra, runs the right install in `app/` once it has a `package.json` (npm, matching CI), and copies `.env.example` to `.env` only if `.env` is missing and gitignored. It writes no secrets and never edits your shell profile; it prints the `PATH` lines to add (libpq for `psql`, direnv hook). It ends with a PASS/MISSING table and the manual account and key steps (section 4).
+
+The first real run on a new laptop is **expected to exit non-zero**: the Docker daemon is not running until you open the Docker app once. Open it, accept its prompts, open a new terminal, then run `scripts/bootstrap.sh --check` (exit 0 when everything is present). `--check` itself always exits 0.
+
+The script also prints, but does not apply, the `eval "$(/opt/homebrew/bin/brew shellenv)"` line for `~/.zprofile` (so `brew` is on `PATH` in new terminals), the libpq `PATH` line for `psql`, and the direnv hook.
+
+Docker choice: Docker Desktop is the default because section 4 item 5 already records its licence terms for a small business. OrbStack (`--orbstack`) is lighter, but its free tier is for personal use only; a commercial project needs a paid licence, so that is **[OPEN]** for Hari. Colima (free, CLI-only; section 4 item 5) also works with the Supabase CLI but is not automated by the script. After install, open the Docker app once so the daemon starts.
