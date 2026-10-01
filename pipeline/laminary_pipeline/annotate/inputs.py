@@ -40,6 +40,7 @@ from jsonschema import Draft202012Validator
 
 from laminary_pipeline.annotation import format_checker, load_schema, require_wikipedia_sources
 from laminary_pipeline.ingest.text import word_count
+from laminary_pipeline.ingest.wikidata import effective_series_status
 
 MIN_SUMMARY_WORDS = 150  # DECISIONS.md 2026-09-26
 
@@ -108,7 +109,7 @@ def _from_ingest_shape(obj: dict[str, Any], origin: str) -> dict[str, Any]:
         "wikidata_id": obj.get("qid"),
     }
     if cand.get("media_type") == "tv_series":
-        title["series_status"] = cand.get("series_status")
+        title["series_status"] = effective_series_status(cand)
     return {"title": title, "sources": [{**(obj.get("source") or {}), "text": obj.get("text")}]}
 
 

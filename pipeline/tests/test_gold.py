@@ -184,7 +184,7 @@ def test_google_sheets_export_quirks() -> None:
         ({"confidence": "Very"}, "confidence 'Very' is not one of"),
         ({"labeler_id": ""}, "labeler_id is blank"),
         ({"tmdb_id": ""}, "no TMDB id in Wikidata"),
-        ({"type": "tv_series"}, "series_status must be 'ended' or 'ongoing'"),
+        ({"type": "tv_series"}, "series_status must be 'ended', 'ongoing' or 'unknown'"),
         ({"skip_reason": "Too long"}, "skip_reason 'Too long' is not one of"),
     ],
 )

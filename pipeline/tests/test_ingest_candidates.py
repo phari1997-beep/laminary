@@ -16,8 +16,10 @@ from laminary_pipeline.ingest.wikidata import (
     PoolQuery,
     Wikidata,
     detail_sparql,
+    effective_series_status,
     parse_details,
     seed_sparql,
+    series_status,
 )
 
 GENRES = ["drama film", "comedy film", "horror film", "science fiction film", "crime film",
@@ -236,7 +238,41 @@ def test_parse_details_ids_and_series_status() -> None:
     assert film["imdb_id"] == "tt9000001" and film["series_status"] is None
     assert tv["media_type"] == "tv_series" and tv["tmdb_id"] == 90003
     assert tv["series_status"] == "ended" and tv["end_year"] == 2018
-    assert items["Q9000004"]["series_status"] == "ongoing"
+    assert tv["series_status_basis"] == "P582"
+    # no end time in Wikidata is not evidence the series is ongoing (schema 1.1.0)
+    assert items["Q9000004"]["series_status"] == "unknown"
+    assert items["Q9000004"]["series_status_basis"] == "none"
+    assert film["series_status_basis"] is None
+
+
+def test_series_status_needs_positive_evidence() -> None:
+    data = FakeWikimedia().data["sparql"]["detail"]
+    tv = next(b for b in data["results"]["bindings"] if b["item"]["value"].endswith("Q9000004"))
+    no_end = {**tv, "no_end": {"type": "literal", "value": "1"}}
+    both = {**no_end, "end_year": {"type": "literal", "value": "2019"}}
+    for binding, want in ((no_end, ("ongoing", "P582_novalue")), (both, ("unknown", "conflict"))):
+        item = parse_details({"results": {"bindings": [binding]}})["Q9000004"]
+        assert (item["series_status"], item["series_status_basis"]) == want
+    assert series_status(False, 2019, True) == (None, None)
+    assert "wdno:P582" in detail_sparql(["Q1"])
+
+
+@pytest.mark.parametrize(
+    "candidate,want",
+    [
+        ({"media_type": "tv_series", "series_status": "ongoing"}, "unknown"),  # pre-1.1.0 file
+        ({"media_type": "tv_series", "series_status": "ongoing", "series_status_basis": None},
+         "unknown"),
+        ({"media_type": "tv_series", "series_status": "ended"}, "ended"),
+        ({"media_type": "tv_series", "series_status": "ongoing",
+          "series_status_basis": "P582_novalue"}, "ongoing"),
+        ({"media_type": "tv_series", "series_status": "unknown", "series_status_basis": "none"},
+         "unknown"),
+        ({"media_type": "movie", "series_status": None}, None),
+    ],
+)
+def test_effective_series_status_reads_old_ongoing_as_unknown(candidate, want) -> None:
+    assert effective_series_status(candidate) == want
 
 
 def test_ambiguous_tmdb_id_is_dropped() -> None:

@@ -212,8 +212,8 @@ def row_to_record(
     if words is None:
         errors.append(f"source_word_count {row['source_word_count']!r} is not a number")
     series_status = row.get("series_status", "").strip()
-    if media_type == "tv_series" and series_status not in ("ended", "ongoing"):
-        errors.append("series_status must be 'ended' or 'ongoing' for a TV series")
+    if media_type == "tv_series" and series_status not in ("ended", "ongoing", "unknown"):
+        errors.append("series_status must be 'ended', 'ongoing' or 'unknown' for a TV series")
 
     labeler = row.get("labeler_id", "").strip()
     if not labeler:

@@ -157,8 +157,8 @@ def test_schema_is_valid_draft_2020_12() -> None:
     schema = load_schema()
     assert schema["$schema"] == "https://json-schema.org/draft/2020-12/schema"
     Draft202012Validator.check_schema(schema)
-    assert schema["properties"]["schema_version"]["const"] == "1.0.0"
-    assert schema["$id"] == "urn:laminary:schema:annotation:1.0.0"
+    assert schema["properties"]["schema_version"]["const"] == "1.1.0"
+    assert schema["$id"] == "urn:laminary:schema:annotation:1.1.0"
 
 
 def test_there_are_examples() -> None:
@@ -886,3 +886,32 @@ def test_input_gate_accepts_titles_with_colons() -> None:
     src = wiki_source(ref="https://en.wikipedia.org/wiki/Alien:_Covenant")
     assert require_wikipedia_sources([src]) == [src]
     assert wikipedia_article_title(src["ref"]) == "Alien: Covenant"
+
+
+# ---------- schema 1.1.0 (DECISIONS 2026-09-30) ----------
+
+
+@pytest.mark.parametrize("make", [llm_record, gold_record])
+@pytest.mark.parametrize(
+    "ref",
+    [
+        "https://en.wikipedia.org/w/index.php?title=Example&oldid=1",
+        "https://en.wikipedia.org/wiki/Example#Plot",
+        "https://en.wikipedia.org/wiki/Example?action=raw",
+        "https://en.wikipedia.org/wiki/",
+        "https://en.wikipedia.org/",
+    ],
+)
+def test_schema_refuses_non_article_refs(make, ref: str) -> None:
+    rec = make()
+    assert validate_record(rec) == []
+    rec["provenance"]["sources"][0]["ref"] = ref
+    assert any("provenance/sources/0/ref" in e for e in validate_record(rec)), ref
+
+
+def test_series_status_unknown_is_valid_for_series_only() -> None:
+    rec = example("breaking_bad")
+    rec["title"]["series_status"] = "unknown"
+    assert validate_record(rec) == []
+    rec["title"]["series_status"] = "maybe"
+    assert validate_record(rec)

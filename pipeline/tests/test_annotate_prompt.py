@@ -452,3 +452,13 @@ def test_unknown_source_fields_rejected() -> None:
 def test_missing_tmdb_id_is_not_annotatable() -> None:
     with pytest.raises(NotAnnotatable):
         parse_plot(ingest_plot(tmdb_id=None), "t")
+
+
+def test_old_ingest_ongoing_is_read_as_unknown() -> None:
+    """Schema 1.1.0: plot files from before series_status_basis said "ongoing" for any series
+    without a Wikidata end date; that is not evidence, so the record says "unknown"."""
+    obj = ingest_plot()
+    obj["candidate"].update(media_type="tv_series", series_status="ongoing")
+    assert parse_plot(obj, "t").title["series_status"] == "unknown"
+    obj["candidate"]["series_status_basis"] = "P582_novalue"
+    assert parse_plot(obj, "t").title["series_status"] == "ongoing"

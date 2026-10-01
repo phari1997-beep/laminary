@@ -1,6 +1,6 @@
 # Gold labeling guide
 
-**Version 1.2.0** (this number goes in the sheet's `guide_version` column). Owner: data-pipeline. Definitions come from `docs/NARRATIVE_SCHEMA.md` v1.0.0; if the two ever disagree, the schema wins and this guide gets fixed.
+**Version 1.2.0** (this number goes in the sheet's `guide_version` column). Owner: data-pipeline. Definitions come from `docs/NARRATIVE_SCHEMA.md` v1.1.0; if the two ever disagree, the schema wins and this guide gets fixed.
 
 ## What this is for
 

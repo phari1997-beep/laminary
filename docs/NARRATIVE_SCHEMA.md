@@ -1,6 +1,6 @@
 # Narrative taxonomy and annotation schema
 
-**Status: v1.0.0.** Owner: data-pipeline. Includes Hari's decisions of 2026-09-26 and 2026-09-29 (`docs/DECISIONS.md`). The one remaining **[OPEN]** item (TMDB authorization) is in section 16 and does not block 1.0.0, because the schema already enforces Wikipedia-only input.
+**Status: v1.1.0.** Owner: data-pipeline. Includes Hari's decisions of 2026-09-26, 2026-09-29 and 2026-09-30 (`docs/DECISIONS.md`). The one remaining **[OPEN]** item (TMDB authorization) is in section 16 and does not block 1.0.0, because the schema already enforces Wikipedia-only input.
 
 - Stored record contract: `pipeline/laminary_pipeline/schema/annotation.schema.json` (JSON Schema draft 2020-12, shipped as package data)
 - Model-facing output schema: derived in code, `laminary_pipeline/model_output.py` (section 11)
@@ -15,7 +15,7 @@ This document is the single source of definitions for the annotation prompt, the
 
 ## 1. Ground rules
 
-1. **Wikipedia plot sections only.** The only annotation input is Wikipedia plot sections (CC BY-SA). Never scripts, subtitles, or book texts. **Never send TMDB overviews or any other TMDB text to Claude, and never embed them**: search results quoting TMDB's terms say that use with LLM/AI query-response systems needs TMDB's written authorization, and that training or validating ML/AI systems on TMDB content is prohibited. The schema enforces this: LLM and gold records may only cite `wikipedia_plot` sources with a CC BY-SA `license` and an `https://en.wikipedia.org/` `ref`. **Phase 1 requirement:** the prompt builder and the embedding input must pass their sources through `require_wikipedia_sources()` in `laminary_pipeline/annotation.py`. It fails closed: one non-Wikipedia, non-CC-BY-SA or non-en.wikipedia.org source rejects the whole title, and an empty list is rejected too. It is unit-tested, and a test ties its ref pattern and allowed kind to the schema's rule for LLM and gold records. **Phase 1 requirement for the prompt builder:** the SHA-256 of the exact text sent to the model must equal the gated source's `content_sha256`, and the 150-word minimum is checked on that text before the call, not after. TMDB is used only for IDs and display metadata, subject to Hari's commercial agreement (PLAN §8). The summary text is not stored in the record; the record stores a reference, revision and hash of each source (section 10). **One non-Wikipedia field (DECISIONS 2026-09-30, prompt `annotate-1.1.0` on):** the release year from Wikidata (CC0) goes in the request header, because the `historical_past` / `contemporary` definitions are relative to it. It is sent only as a validated integer from 1880 to the current year + 2 (any other value refuses the title), `verify_request()` checks the header exactly, and a title with no year gets no year line; the prompt then says to judge the period from the summary alone. The title's display name is still never sent.
+1. **Wikipedia plot sections only.** The only annotation input is Wikipedia plot sections (CC BY-SA). Never scripts, subtitles, or book texts. **Never send TMDB overviews or any other TMDB text to Claude, and never embed them**: search results quoting TMDB's terms say that use with LLM/AI query-response systems needs TMDB's written authorization, and that training or validating ML/AI systems on TMDB content is prohibited. The schema enforces this: LLM and gold records may only cite `wikipedia_plot` sources with a CC BY-SA `license` and an `https://en.wikipedia.org/wiki/` article `ref` (schema 1.1.0). **Phase 1 requirement:** the prompt builder and the embedding input must pass their sources through `require_wikipedia_sources()` in `laminary_pipeline/annotation.py`. It fails closed: one non-Wikipedia, non-CC-BY-SA or non-en.wikipedia.org source rejects the whole title, and an empty list is rejected too. It is unit-tested, and a test ties its ref pattern and allowed kind to the schema's rule for LLM and gold records. **Phase 1 requirement for the prompt builder:** the SHA-256 of the exact text sent to the model must equal the gated source's `content_sha256`, and the 150-word minimum is checked on that text before the call, not after. TMDB is used only for IDs and display metadata, subject to Hari's commercial agreement (PLAN §8). The summary text is not stored in the record; the record stores a reference, revision and hash of each source (section 10). **One non-Wikipedia field (DECISIONS 2026-09-30, prompt `annotate-1.1.0` on):** the release year from Wikidata (CC0) goes in the request header, because the `historical_past` / `contemporary` definitions are relative to it. It is sent only as a validated integer from 1880 to the current year + 2 (any other value refuses the title), `verify_request()` checks the header exactly, and a title with no year gets no year line; the prompt then says to judge the period from the summary alone. The title's display name is still never sent.
 2. **Minimum summary: 150 words** (decided 2026-09-26). Titles with less summary text are skipped before any model call, and get no narrative data. The schema enforces this on LLM and gold records. Since TMDB text is excluded, this in practice requires a Wikipedia plot section of at least 150 words.
 3. **No guessing from a title.** Annotate only what the supplied summary supports. Do not fill gaps from outside knowledge of the title. If the summary can't support the four layers, the correct output is `outcome: "abstained"`, not a low-confidence guess.
 4. **Own words.** Every free-text field is written fresh. Never copy or closely paraphrase sentences from the source.
@@ -262,7 +262,7 @@ The shape of the story over time and how it is told.
 - **Fortune** is the protagonist's actual situation as the story presents it: safety, status, relationships, prospects. Range -1 (the worst state the story puts them in) to +1 (the best); 0 is neither good nor bad. For `ensemble` stories use the central group's collective fortune.
 - **Situation, not mood.** Fortune tracks the protagonist's circumstances, not how they feel in the moment. Enjoying oneself while still trapped does not raise fortune; only a real change in the situation does (escape, a gain that lasts, a relationship that changes). Example: a character stuck in a time loop who spends a stretch indulging himself is still trapped, so fortune stays low.
 - Values need not start at 0. Use one or two decimal places.
-- For `ongoing` series, the points cover episodes aired as of the source revision.
+- For `ongoing` and `unknown` series, the points cover episodes aired as of the source revision.
 
 ### Deriving the emotional arc
 
@@ -366,6 +366,15 @@ Confusions:
 |---|---|---|
 | `ended` | Ended | No further seasons are expected. |
 | `ongoing` | Ongoing | More seasons may come. The annotation covers episodes aired as of the source revision. |
+| `unknown` | Unknown | Not known whether more seasons will come. Treated like `ongoing` for "as of" displays and refresh. |
+
+**What counts as evidence (schema 1.1.0, decided 2026-09-30).** Wikidata often has no end date for series that have ended, so a missing end time does not mean `ongoing`. Ingest sets the status from Wikidata (CC0) and records the basis in the candidate's series_status_basis field (pipeline data, not part of the record):
+
+- `ended`: the series has an end time (P582) with a year (basis P582).
+- `ongoing`: Wikidata explicitly states the end time has no value (basis P582_novalue), meaning an editor asserted the series has not ended.
+- `unknown`: neither (basis none), or both, which conflict (basis conflict). A recent season start date is not counted as evidence of `ongoing`, because it cannot tell a final season from a continuing one.
+
+Candidate and plot files written before 1.1.0 have no basis; their `ongoing` is read as `unknown` (their `ended` stands, since it came from P582). Re-running `ingest candidates` refreshes them.
 
 **Annotated as of, and refresh (decided 2026-09-26).** A record's "as of" date is the latest `retrieved_at` among its `sources`. Displays for `ongoing` series should say so ("covers episodes aired up to" that date). Ingestion re-fetches sources on its normal schedule; when any source's `content_sha256` changes, the title is re-annotated and the new record replaces the old one. Ended series and movies follow the same rule, which also catches substantial Wikipedia rewrites.
 
@@ -390,7 +399,7 @@ Each entry in `provenance.sources` records `kind`, `ref` (a Wikipedia URL; `tmdb
 | `CC-BY-SA-4.0` | CC BY-SA 4.0 | Allowed license for a source on an LLM or gold record (Wikipedia, current revisions). |
 | `CC-BY-SA-3.0` | CC BY-SA 3.0 | Allowed license for a source on an LLM or gold record (Wikipedia, older revisions). |
 
-The `input_license` subset is what LLM and gold records may cite, together with a `wikipedia_plot` kind and an `https://en.wikipedia.org/` ref. `TMDB-API-terms` stays in `source_license` for illustrative records and future use.
+The `input_license` subset is what LLM and gold records may cite, together with a `wikipedia_plot` kind and an `https://en.wikipedia.org/wiki/` article ref. `TMDB-API-terms` stays in `source_license` for illustrative records and future use.
 
 `provenance.usage` records token counts per title (and whether the Batch API was used) so cost per title is known after every run; it is required on LLM records. `provenance.notes` is internal only.
 
@@ -458,6 +467,8 @@ Done at ingestion, not here: `tmdb_id` exists in TMDB and its title and year mat
 - **Patch** (1.0.0 → 1.0.1): wording in this document only, with no change to what a label means.
 
 `prompt_version` changes whenever the annotation prompt text changes (including definition wording pulled from this document), and `model_version` records the exact model id. Evaluation results are always reported per (schema_version, prompt_version, model_version).
+
+**Changelog, 1.0.0 → 1.1.0 (2026-09-30, DECISIONS 2026-09-30):** `series_status` gains `unknown`; a missing Wikidata end date now means `unknown`, not `ongoing` (section 10 says what counts as evidence). The `ref` pattern for LLM and gold sources is tightened from any `https://en.wikipedia.org/` URL to an article URL, `^https://en\.wikipedia\.org/wiki/[^\s?#<>\[\]{}|"]+$`, the same pattern the input gate (`require_wikipedia_sources()`) enforces. Both are minor changes: no field is removed or renamed. Records at 1.0.0 validate against 1.0.0 only. None exist outside tests yet, and no database table uses these fields yet; backend mirrors both changes when it builds the tables.
 
 **Doc-only note, 2026-09-30:** the display threshold rose from 0.80 to 0.95 (DECISIONS 2026-09-30). The JSON schema and `schema_version` are unchanged; only `DISPLAY_CONFIDENCE_THRESHOLD`, the evaluation's calibration bands and this document changed.
 

@@ -41,6 +41,7 @@ NAMED_LANGS = tuple(LANG.values())
 
 PREFIXES = """PREFIX wd: <http://www.wikidata.org/entity/>
 PREFIX wdt: <http://www.wikidata.org/prop/direct/>
+PREFIX wdno: <http://www.wikidata.org/prop/novalue/>
 PREFIX wikibase: <http://wikiba.se/ontology#>
 PREFIX schema: <http://schema.org/>
 PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
@@ -101,6 +102,7 @@ SELECT ?item
   (SAMPLE(?sitelinks_) AS ?sitelinks)
   (MIN(?year_) AS ?year)
   (MAX(?endYear_) AS ?end_year)
+  (MAX(?noEnd_) AS ?no_end)
   (GROUP_CONCAT(DISTINCT ?tmdbMovie_; separator="|") AS ?tmdb_movie)
   (GROUP_CONCAT(DISTINCT ?tmdbTv_; separator="|") AS ?tmdb_tv)
   (GROUP_CONCAT(DISTINCT ?imdb_; separator="|") AS ?imdb)
@@ -117,6 +119,7 @@ WHERE {{
                        schema:name ?articleName_ . }}
   OPTIONAL {{ ?item (wdt:P577|wdt:P580) ?date_ . BIND(YEAR(?date_) AS ?year_) }}
   OPTIONAL {{ ?item wdt:P582 ?end_ . BIND(YEAR(?end_) AS ?endYear_) }}
+  OPTIONAL {{ ?item a wdno:P582 . BIND(1 AS ?noEnd_) }}
   OPTIONAL {{ ?item wdt:P4947 ?tmdbMovie_ . }}
   OPTIONAL {{ ?item wdt:P4983 ?tmdbTv_ . }}
   OPTIONAL {{ ?item wdt:P345 ?imdb_ . }}
@@ -209,6 +212,41 @@ def _single_int_id(values: list[str]) -> tuple[int | None, bool]:
     return None, len(ints) > 1
 
 
+# Series status (narrative schema 1.1.0, DECISIONS 2026-09-30). Wikidata often lacks an end
+# date (P582) for series that have ended, so a missing P582 means "unknown", not "ongoing".
+# Evidence that counts:
+#   ended:   an end time (P582) with a year.
+#   ongoing: an explicit "no value" end time (wdno:P582), i.e. an editor asserted it has none.
+#   unknown: neither, or both (conflicting statements).
+# A recent season start date is not evidence of "ongoing": it can't tell a final season apart.
+SERIES_STATUS_BASIS = ("P582", "P582_novalue", "none", "conflict")
+
+
+def series_status(is_tv: bool, end_year: int | None, no_end: bool) -> tuple[str | None, str | None]:
+    """(series_status, basis) for a candidate; (None, None) for films."""
+    if not is_tv:
+        return None, None
+    if end_year and no_end:
+        return "unknown", "conflict"
+    if end_year:
+        return "ended", "P582"
+    if no_end:
+        return "ongoing", "P582_novalue"
+    return "unknown", "none"
+
+
+def effective_series_status(candidate: dict[str, Any]) -> str | None:
+    """The status to put in a record. Candidates written before ingest recorded
+    ``series_status_basis`` called every series without P582 "ongoing"; those read as
+    "unknown" (their "ended" stands: it came from P582)."""
+    status = candidate.get("series_status")
+    if candidate.get("media_type") != "tv_series":
+        return status
+    if candidate.get("series_status_basis") is not None:
+        return status
+    return "ended" if status == "ended" else "unknown"
+
+
 def parse_details(data: dict[str, Any]) -> dict[str, dict[str, Any]]:
     out: dict[str, dict[str, Any]] = {}
     for b in data["results"]["bindings"]:
@@ -222,6 +260,7 @@ def parse_details(data: dict[str, Any]) -> dict[str, dict[str, Any]]:
         tmdb_id, ambiguous = _single_int_id(id_values)
         imdb = _split(_value(b, "imdb"))
         end_year = _int(_value(b, "end_year"))
+        status, basis = series_status(is_tv, end_year, _int(_value(b, "no_end")) == 1)
         out[qid] = {
             "qid": qid,
             "title": _value(b, "label") or _value(b, "enwiki_title"),
@@ -229,7 +268,8 @@ def parse_details(data: dict[str, Any]) -> dict[str, dict[str, Any]]:
             "year": _int(_value(b, "year")),
             "end_year": end_year,
             "media_type": media_type,
-            "series_status": (("ended" if end_year else "ongoing") if is_tv else None),
+            "series_status": status,
+            "series_status_basis": basis,
             "tmdb_id": tmdb_id,
             "tmdb_id_ambiguous": ambiguous,
             "imdb_id": imdb[0] if len(imdb) == 1 else None,

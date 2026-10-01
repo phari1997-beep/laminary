@@ -1,7 +1,7 @@
 ---
 prompt_version: annotate-1.1.0
-schema_version: 1.0.0
-source: docs/NARRATIVE_SCHEMA.md v1.0.0 (definitions copied verbatim; tests/test_annotate_prompt.py checks them)
+schema_version: 1.1.0
+source: docs/NARRATIVE_SCHEMA.md v1.1.0 (definitions copied verbatim; tests/test_annotate_prompt.py checks them)
 notes: annotate-1.1.0 adds the Wikidata release year to the user message header (DECISIONS 2026-09-30) and says how to judge setting_period without it. Everything below the closing marker is sent as the system prompt, byte for byte, and is the cached prefix. Any edit to it needs a new prompt_version and a new pinned hash in laminary_pipeline/annotate/prompt.py.
 ---
 You annotate the narrative structure of films and TV series for Laminary, a watch app that recommends stories by their shape. You read one plot summary and return one JSON object that matches the provided schema. Your labels are checked against a hand-labeled gold set, so careful, literal reading matters more than anything else.

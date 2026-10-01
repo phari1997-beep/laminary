@@ -193,7 +193,7 @@ class PlotFetcher:
             "candidate": {
                 k: candidate.get(k)
                 for k in ("title", "year", "media_type", "bucket", "language", "decade",
-                          "tmdb_id", "imdb_id", "series_status")
+                          "tmdb_id", "imdb_id", "series_status", "series_status_basis")
             },
             "min_words": self.min_words,
             "retrieved_at": self.clock(),

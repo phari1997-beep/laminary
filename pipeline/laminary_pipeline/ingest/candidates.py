@@ -397,6 +397,7 @@ def _row(
         "end_year": it["end_year"],
         "media_type": it["media_type"],
         "series_status": it["series_status"],
+        "series_status_basis": it.get("series_status_basis"),
         "tmdb_id": it["tmdb_id"],
         "tmdb_id_ambiguous": it["tmdb_id_ambiguous"],
         "imdb_id": it["imdb_id"],

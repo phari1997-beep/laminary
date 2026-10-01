@@ -29,13 +29,13 @@ DISPLAY_CONFIDENCE_THRESHOLD = 0.95
 # The only sources allowed as annotation or embedding input until TMDB authorizes LLM use in
 # writing (docs/NARRATIVE_SCHEMA.md section 1). Mirrors the schema's rule for LLM/gold records.
 ALLOWED_INPUT_LICENSES = frozenset({"CC-BY-SA-4.0", "CC-BY-SA-3.0"})
-# Mirrors the schema's ref pattern (prefix only; tests keep the two equal).
-WIKIPEDIA_REF = re.compile(r"^https://en\.wikipedia\.org/")
-# Stricter gate for anything sent to the model: an article URL with nothing after the
-# (percent-encoded) title, so no query, fragment, whitespace, quotes or markup characters.
-# The pattern alone can't see namespaces (they may be percent-encoded), so the input gate also
-# decodes the title with ``wikipedia_article_title`` below.
+# An en.wikipedia.org article URL with nothing after the (percent-encoded) title, so no query,
+# fragment, whitespace, quotes or markup characters. The schema's ref pattern for LLM and gold
+# sources is this same pattern (schema 1.1.0; tests keep the two equal). The pattern alone
+# can't see namespaces (they may be percent-encoded), so the input gate also decodes the title
+# with ``wikipedia_article_title`` below.
 WIKIPEDIA_ARTICLE_REF = re.compile(r'^https://en\.wikipedia\.org/wiki/[^\s?#<>\[\]{}|"]+$')
+WIKIPEDIA_REF = WIKIPEDIA_ARTICLE_REF  # the schema mirror
 ARTICLE_PREFIX = "https://en.wikipedia.org/wiki/"
 FORBIDDEN_TITLE_CHARS = frozenset('<>[]{}|#"')
 MAX_TITLE_CHARS = 255

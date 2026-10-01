@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:laminary:schema:annotation:1.0.0",
+  "$id": "urn:laminary:schema:annotation:1.1.0",
   "title": "Laminary title annotation",
-  "description": "Version 1.0.0. Stored contract for one title's narrative annotation (movie, or whole TV series at series level). Definitions: docs/NARRATIVE_SCHEMA.md. Display rule: text under any 'safe_text' key may always be shown; text under any 'spoiler_text' key is hidden unless the viewer opts in; labels carry the levels in 'x-laminary-spoiler-levels'. The model-facing output schema is derived from this file by laminary_pipeline.model_output.",
+  "description": "Version 1.1.0. Stored contract for one title's narrative annotation (movie, or whole TV series at series level). Definitions: docs/NARRATIVE_SCHEMA.md. Display rule: text under any 'safe_text' key may always be shown; text under any 'spoiler_text' key is hidden unless the viewer opts in; labels carry the levels in 'x-laminary-spoiler-levels'. The model-facing output schema is derived from this file by laminary_pipeline.model_output.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -15,7 +15,7 @@
   "properties": {
     "schema_version": {
       "description": "Schema version the record conforms to.",
-      "const": "1.0.0"
+      "const": "1.1.0"
     },
     "record_kind": {
       "$ref": "#/$defs/record_kind"
@@ -160,7 +160,7 @@
                       "$ref": "#/$defs/input_license"
                     },
                     "ref": {
-                      "pattern": "^https://en\\.wikipedia\\.org/"
+                      "pattern": "^https://en\\.wikipedia\\.org/wiki/[^\\s?#<>\\[\\]{}|\"]+$"
                     }
                   }
                 }
@@ -231,7 +231,7 @@
                       "$ref": "#/$defs/input_license"
                     },
                     "ref": {
-                      "pattern": "^https://en\\.wikipedia\\.org/"
+                      "pattern": "^https://en\\.wikipedia\\.org/wiki/[^\\s?#<>\\[\\]{}|\"]+$"
                     }
                   }
                 }
@@ -394,9 +394,11 @@
       ]
     },
     "series_status": {
+      "description": "ended: Wikidata has an end time (P582). ongoing: positive evidence the series continues (Wikidata end time explicitly 'no value'). unknown: neither, or conflicting; a missing P582 alone means unknown. See docs/NARRATIVE_SCHEMA.md section 10.",
       "enum": [
         "ended",
-        "ongoing"
+        "ongoing",
+        "unknown"
       ]
     },
     "source_kind": {
@@ -586,7 +588,7 @@
           "pattern": "^Q[1-9][0-9]*$"
         },
         "series_status": {
-          "description": "Series only. For 'ongoing', the annotation covers episodes aired as of the latest sources[].retrieved_at and is refreshed when any source content_sha256 changes.",
+          "description": "Series only. For 'ongoing' and 'unknown', the annotation covers episodes aired as of the latest sources[].retrieved_at and is refreshed when any source content_sha256 changes.",
           "$ref": "#/$defs/series_status"
         }
       },

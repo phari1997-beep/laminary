@@ -37,6 +37,7 @@ from laminary_pipeline.gold.columns import (
     dropdown_lists,
     help_row,
 )
+from laminary_pipeline.ingest.wikidata import effective_series_status
 
 TEMPLATE_NAME = "gold_labels_template.csv"
 LISTS_NAME = "gold_labels_lists.csv"
@@ -98,7 +99,7 @@ def template_rows(
             wikipedia_revision_link=plot["permalink"],
             plot_section=plot["section"]["heading"].capitalize(),
             word_count=str(plot["word_count"]),
-            series_status=cand.get("series_status") or "",
+            series_status=effective_series_status(cand) or "",
             tmdb_id=str(sel["tmdb_id"]),
             source_ref=src["ref"],
             source_revision=src["revision"],
