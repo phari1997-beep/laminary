@@ -23,13 +23,16 @@ story there; the main article holds only a premise.
    page yields text.
 4. **Cap:** seasons are added in order while the total stays within SEASON_WORD_CAP words and
    MAX_SEASON_SOURCES pages. The first season that would cross the cap stops the join, and it
-   and later seasons are left out; a season is never cut mid-way. Exception: if the first
-   usable season (season 1, or the first later season when season 1 is missing, unverified or
-   has no text) is alone over the cap, it is used in full and alone, up to SEASON_ONE_CEILING
-   words; a longer one skips the title (``season_too_long``). Seasons whose joined text is still
-   under the fetcher's 150-word minimum (a stub season 1) don't count as usable: the first
-   season that can't join under the cap is then used alone instead, and the stubs are dropped
-   (DECISIONS 2026-10-01). The 150-word rule then applies to the joined total.
+   and later seasons are left out; a season is never cut mid-way. Lead block (DECISIONS
+   2026-10-01, superseding the same day's first-season exception wording): a *stub* season
+   is one whose own text is under the fetcher's 150-word minimum, judged per season. Stub
+   seasons before the first full season are kept and joined, in order, with that season;
+   seasons that are missing, unverified or have no text don't count. That lead block may run
+   past the cap, up to SEASON_ONE_CEILING words; over the ceiling the title is skipped
+   (``season_too_long``, no list-page fallback). If the lead block is over the cap nothing
+   more is added; otherwise later seasons join under the cap as above. With no full season at
+   all, the stubs join under the cap as usual. The 150-word rule then applies to the joined
+   total.
 
 Each page becomes its own source (``kind: wikipedia_plot``, CC BY-SA, ref, revision,
 ``content_sha256`` of that page's text, ``season``). The annotation request sends one summary
@@ -51,10 +54,10 @@ if TYPE_CHECKING:
     from laminary_pipeline.ingest.wikipedia import PlotFetcher
 
 SEASON_WORD_CAP = 3000  # DECISIONS 2026-10-01
-# First-season exception (DECISIONS 2026-10-01): the first usable season (season 1, or the
-# first later one when season 1 is missing, unverified or has no text, or when the seasons
-# before it total under the 150-word minimum) is used whole and alone even over the cap, up to
-# this hard ceiling; above it the title is skipped (season_too_long).
+# Lead block (DECISIONS 2026-10-01): the first full season (150+ words; season 1, or the first
+# later one when earlier seasons are missing, unverified or have no text) with any stub seasons
+# before it is used whole even over the cap, up to this hard ceiling; above it the title is
+# skipped (season_too_long).
 SEASON_ONE_CEILING = 6000
 MAX_SEASONS = 20  # season numbers guessed by title
 MAX_SEASON_SOURCES = 20  # also the schema's provenance.sources maxItems
@@ -146,7 +149,7 @@ class SeasonResult:
     skipped: list[dict[str, str]]  # {"title", "reason"}
     left_out_over_cap: list[str]
     used_list_page: bool
-    too_long: str | None = None  # first usable season over the ceiling: "<title> (<n> words)"
+    too_long: str | None = None  # lead block over the ceiling: "<title> + <title> (<n> words)"
 
     @property
     def words(self) -> int:
@@ -163,8 +166,8 @@ class SeasonFinder:
         self.fetcher = fetcher
         self.cap = cap
         self.ceiling = ceiling
-        # seasons joined so far under this aren't "usable" for the exception (DECISIONS
-        # 2026-10-01): the same minimum the fetcher applies to the joined text
+        # a season with less text than this is a stub (DECISIONS 2026-10-01): the same
+        # minimum the fetcher applies to the joined text
         self.min_words = fetcher.min_words
 
     # ---------- discovery ----------
@@ -268,9 +271,9 @@ class SeasonFinder:
 
         result = self._join(seasons, skipped)
         if not result.texts and lists and result.too_long is None:
-            # keep what the season join left out (QA nit 3). With the first-usable-season
-            # exception a season join only ends empty when no season has text (left_out is
-            # then empty) or that season is too long (no fallback), so this is defensive.
+            # keep what the season join left out (QA nit 3). With the lead block a season join
+            # only ends empty when no season has text (left_out is then empty) or the lead
+            # block is too long (no fallback), so this is defensive.
             left_out = result.left_out_over_cap
             result = self._join(lists[:1], skipped)
             result.left_out_over_cap = left_out + result.left_out_over_cap
@@ -303,33 +306,54 @@ class SeasonFinder:
         return SeasonText(page, joined, word_count(joined), headings)
 
     def _join(self, pages: list[Page], skipped: list[dict[str, str]]) -> SeasonResult:
+        """Seasons in order; see the module docstring, step 4. Pages are fetched one at a time
+        and the join stops at the first one left out, so later pages are never fetched."""
         out = SeasonResult([], skipped, [], False)
         total = 0
+        in_lead = True  # until the first full season: stubs before it join the lead block
         for i, page in enumerate(pages):
             st = self._season_text(page)
             if st is None:
                 skipped.append({"title": page.title, "reason": "no plot, summary or synopsis "
                                 "section with prose"})
                 continue
-            if total < self.min_words and page.season is not None and total + st.words > self.cap:
-                # first-season exception: the first usable season whole and alone, or nothing.
-                # Seasons joined before it total under the minimum (stubs, DECISIONS
-                # 2026-10-01), so they are dropped, not prepended.
-                for stub in out.texts:
-                    skipped.append({"title": stub.page.title, "reason": f"{stub.words} words, "
-                                    f"under the {self.min_words}-word minimum; a later season "
-                                    "is used alone (first usable season)"})
-                out.texts = []
-                if st.words > self.ceiling:
-                    out.too_long = f"{page.title} ({st.words} words)"
-                    out.left_out_over_cap = [p.title for p in pages[i:]]
-                else:
-                    out.texts.append(st)
-                    out.left_out_over_cap = [p.title for p in pages[i + 1 :]]
+            if len(out.texts) >= MAX_SEASON_SOURCES:
+                out.left_out_over_cap = [p.title for p in pages[i:]]
                 break
-            if total + st.words > self.cap or len(out.texts) >= MAX_SEASON_SOURCES:
+            if in_lead and page.season is not None:
+                out.texts.append(st)
+                total += st.words
+                if st.words < self.min_words:
+                    continue  # a stub season: kept for the first full season after it
+                in_lead = False
+                if total > self.ceiling:  # the lead block over the ceiling: skip the title
+                    out.too_long = (f"{' + '.join(t.page.title for t in out.texts)} "
+                                    f"({total} words)")
+                    out.left_out_over_cap = [t.page.title for t in out.texts] + [
+                        p.title for p in pages[i + 1 :]
+                    ]
+                    out.texts = []
+                    break
+                if total > self.cap:  # the lead block over the cap: used alone, nothing added
+                    out.left_out_over_cap = [p.title for p in pages[i + 1 :]]
+                    break
+                continue  # the lead block within the cap: later seasons join under the cap
+            in_lead = False
+            if total + st.words > self.cap:
                 out.left_out_over_cap = [p.title for p in pages[i:]]
                 break
             out.texts.append(st)
             total += st.words
+        if in_lead and total > self.cap:
+            # stubs only, no full season: the cap applies as in normal joining (reachable
+            # only with a cap under MAX_SEASON_SOURCES stubs' worth of words)
+            kept, words = [], 0
+            for t in out.texts:
+                if words + t.words > self.cap:
+                    break
+                kept.append(t)
+                words += t.words
+            dropped = [t.page.title for t in out.texts[len(kept) :]]
+            out.texts = kept
+            out.left_out_over_cap = dropped + out.left_out_over_cap
         return out

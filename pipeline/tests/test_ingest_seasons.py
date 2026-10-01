@@ -72,7 +72,7 @@ def sections(title: str, headings: list[str]) -> dict[str, Any]:
     ]}}
 
 
-SEASON_WORDS = {1: 120, 2: 130, 4: 2900}
+SEASON_WORDS = {1: 160, 2: 170, 4: 2900}
 
 
 def season_fake(
@@ -81,9 +81,9 @@ def season_fake(
     """A thin main article and its seasons:
 
     - season 1 ("Tidewater season 1", also reached via the redirect "Tidewater (season 1)"):
-      Plot, 120 words.
+      Plot, 160 words.
     - season 2 ("Tidewater (season 2)", found only through a link in the main article):
-      an Episodes table, a table-only Season overview, then Synopsis with 130 words.
+      an Episodes table, a table-only Season overview, then Synopsis with 170 words.
     - season 3: Wikidata doesn't place it in the series, so it is unverifiable.
     - season 4: verified, 2,900 words: crosses the 3,000-word cap.
     - "List of Tidewater episodes": verified (P361), but unused while seasons have text.
@@ -173,7 +173,7 @@ def test_thin_series_uses_verified_season_articles_in_order() -> None:
     assert parts[0]["text"].startswith("s1w0 ") and parts[1]["text"].startswith("s2w0 ")
     assert "Ep 1" not in parts[1]["text"]  # episode table dropped
     assert parts[1]["sections"] == ["synopsis"]  # the table-only overview is not prose
-    assert rec["word_count"] == 250 == sum(p["source"]["word_count"] for p in parts)
+    assert rec["word_count"] == 330 == sum(p["source"]["word_count"] for p in parts)
     for p in parts:
         src = p["source"]
         assert src["content_sha256"] == sha256_text(p["text"])
@@ -188,9 +188,9 @@ def test_thin_series_uses_verified_season_articles_in_order() -> None:
 
 
 def test_cap_stops_at_a_season_boundary() -> None:
-    """With a 200-word cap, season 2 (130 words) would cross it after season 1 (160): it is
+    """With a 200-word cap, season 2 (170 words) would cross it after season 1 (160): it is
     left out whole, not cut."""
-    rec = fetch(season_fake(season_words={1: 160}), season_word_cap=200)
+    rec = fetch(season_fake(), season_word_cap=200)
     assert rec["status"] == "ok" and rec["word_count"] == 160
     assert rec["season_articles"]["used"] == ["Tidewater season 1"]
     assert rec["season_articles"]["left_out_over_cap"] == [
@@ -198,24 +198,43 @@ def test_cap_stops_at_a_season_boundary() -> None:
     ]
 
 
+def _no_season_four(fake: FakeWikimedia) -> FakeWikimedia:
+    """Season 4 is skipped (its ordinal disagrees), leaving seasons 1 and 2 only."""
+    check = fake.data["sparql"]["season_check:" + SERIES]["results"]["bindings"]
+    for b in check:
+        if b["item"]["value"].endswith("Q9100004"):
+            b["ordinal"] = {"value": "9"}
+    return fake
+
+
 def test_joined_text_under_the_minimum_is_too_short() -> None:
-    """Season 1 (120 words) is a stub, so season 2 (130), which can't join under a 200-word cap,
-    is used alone; its 130 words still fail the 150-word rule on the joined text."""
-    rec = fetch(season_fake(), season_word_cap=200)
+    """No full season (DECISIONS 2026-10-01, rule 5): stubs join as usual and the 150-word
+    rule applies to the joined text, 60 + 70 words here."""
+    rec = fetch(_no_season_four(season_fake(season_words={1: 60, 2: 70})))
     assert rec["status"] == "skipped" and rec["skip_reason"] == "too_short"
-    assert rec["season_articles"]["used"] == ["Tidewater (season 2)"]
-    assert rec["season_articles"]["left_out_over_cap"] == ["Tidewater season 4"]
-    assert "1 usable with 130 words" in rec["skip_detail"]
+    assert rec["season_articles"]["used"] == ["Tidewater season 1", "Tidewater (season 2)"]
+    assert "2 usable with 130 words" in rec["skip_detail"]
+
+
+def test_stubs_without_a_full_season_still_join_under_the_cap() -> None:
+    """Stubs only: the cap applies as in normal joining (120 + 130 crosses a 200-word cap)."""
+    rec = fetch(_no_season_four(season_fake(season_words={1: 120, 2: 130})),
+                season_word_cap=200)
+    assert rec["status"] == "skipped" and rec["skip_reason"] == "too_short"
+    assert rec["season_articles"]["used"] == ["Tidewater season 1"]
+    assert rec["season_articles"]["left_out_over_cap"] == ["Tidewater (season 2)"]
 
 
 def test_ordinal_that_disagrees_with_the_title_skips_the_page() -> None:
-    rec = fetch(season_fake(ordinals={"Q9100002": 5}))
+    rec = fetch(season_fake(ordinals={"Q9100002": 5}, season_words={1: 120}))
     reasons = {s["title"]: s["reason"] for s in rec["season_articles"]["skipped"]}
     assert "disagrees" in reasons["Tidewater (season 2)"]
-    # season 1 (120 words) is a stub and season 4 can't join it under the cap, so season 4 is
-    # used alone (DECISIONS 2026-10-01)
-    assert rec["status"] == "ok"
-    assert [p["page_title"] for p in rec["sources"]] == ["Tidewater season 4"]
+    # season 1 (120 words) is a stub, so it leads season 4, the first full season: 3,020
+    # words, over the cap but under the ceiling (DECISIONS 2026-10-01, lead block)
+    assert rec["status"] == "ok" and rec["word_count"] == 3020
+    assert [p["page_title"] for p in rec["sources"]] == [
+        "Tidewater season 1", "Tidewater season 4"
+    ]
 
 
 def test_list_page_is_used_only_without_season_text() -> None:
@@ -321,7 +340,8 @@ def test_one_bad_season_source_rejects_the_title(season_plot) -> None:
 
 
 def test_worst_case_counts_every_season_block(season_plot) -> None:
-    """Cost re-check: the bound covers all sources and markers, up to the 3,000-word cap."""
+    """Cost re-check: the bound covers all sources and markers, up to the 6,000-word
+    ceiling."""
     prompt = load_prompt(DEFAULT_PROMPT_VERSION)
     _, params = build_request(parse_plot(season_plot, "t"), model="claude-opus-5-5",
                               prompt=prompt, effort="medium", max_tokens=16000)
@@ -338,6 +358,16 @@ def test_worst_case_counts_every_season_block(season_plot) -> None:
     usd = worst_case_request_usd("claude-opus-5-5", static_tokens=0,
                                  variable_tokens=variable_big, max_tokens=16000, batch=True)
     assert usd > 0
+    # a two-source lead block at the 6,000-word ceiling (DECISIONS 2026-10-01) is priced from
+    # the built request too: every word of both blocks counts
+    lead = copy.deepcopy(params)
+    for i, n in zip(source_block_indices(2), (100, 5900), strict=True):
+        lead["messages"][0]["content"][i]["text"] = words(n, "x")
+    _, variable_lead = request_token_split(lead)
+    assert variable_lead > 6000 * 6 / 3.5 and variable_lead > variable_big
+    usd_lead = worst_case_request_usd("claude-opus-5-5", static_tokens=0,
+                                      variable_tokens=variable_lead, max_tokens=16000, batch=True)
+    assert usd_lead > usd
 
 
 # --- gold: labelers read exactly what the model reads ---------------------------------------
@@ -380,7 +410,7 @@ def test_gold_text_equals_the_joined_model_input(season_plot, tmp_path: Path) ->
     assert [s["content_sha256"] for s in gold["provenance"]["sources"]] == [
         p["source"]["content_sha256"] for p in season_plot["sources"]
     ]
-    assert gold["provenance"]["input_word_count"] == 250
+    assert gold["provenance"]["input_word_count"] == 330
 
 
 def test_mismatched_source_counts_in_the_sheet_are_errors(season_plot) -> None:
@@ -405,7 +435,7 @@ def test_evaluation_matches_multi_source_records_by_all_hashes(season_plot) -> N
     srcs = [{k: v for k, v in s.items() if k != "text"} for s in ingest_sources(season_plot)]
     rec = model_record(91000, "the_matrix")
     rec["provenance"]["sources"] = srcs
-    rec["provenance"]["input_word_count"] = 250
+    rec["provenance"]["input_word_count"] = 330
     assert validate_record(rec) == []
     gold = copy.deepcopy(rec)
     gold["record_kind"] = "gold_label"
@@ -515,10 +545,14 @@ def test_gate_refuses_more_sources_than_a_record_holds() -> None:
     assert len(gate(_plot_with([words(10, f"p{i}w") for i in range(20)])).plot.sources) == 20
 
 
-def test_gate_refuses_multi_source_input_over_the_cap() -> None:
-    with pytest.raises(GateError, match="over the 3000-word season-article cap"):
-        gate(_plot_with([words(1600, "a"), words(1600, "b")]))
-    gate(_plot_with([words(1500, "a"), words(1500, "b")]))  # exactly at the cap
+def test_gate_bounds_multi_source_input_by_the_ceiling() -> None:
+    """A lead block (stub seasons + the first full season) may be several sources up to the
+    6,000-word ceiling (DECISIONS 2026-10-01)."""
+    gate(_plot_with([words(100, "a"), words(5900, "b")]))  # exactly at the ceiling
+    with pytest.raises(GateError, match="2 source\\(s\\) and 6001 words, over the 6000-word"):
+        gate(_plot_with([words(100, "a"), words(5901, "b")]))
+    with pytest.raises(GateError, match="over the 6000-word ceiling"):  # even without seasons
+        gate(_plot_with([words(3000, "a"), words(3001, "b")], seasons=False))
 
 
 def test_gate_bounds_a_lone_season_by_the_ceiling() -> None:
@@ -561,7 +595,7 @@ def _season_one_unusable(fake: FakeWikimedia, how: str) -> None:
 
 @pytest.mark.parametrize("how", ["no text", "unverified", "missing"])
 def test_first_usable_season_over_the_cap_is_used_alone(how: str) -> None:
-    """DECISIONS 2026-10-01: the exception applies to the first usable season."""
+    """DECISIONS 2026-10-01: the lead block starts at the first available season."""
     fake = season_fake(season_words={2: 3500})
     _season_one_unusable(fake, how)
     rec = fetch(fake)
@@ -589,60 +623,104 @@ def test_usable_season_one_under_the_cap_behaves_as_before() -> None:
     assert rec["season_articles"]["left_out_over_cap"][0] == "Tidewater (season 2)"
 
 
-# --- a stub season 1 doesn't block the exception (DECISIONS 2026-10-01) --------------------
+# --- stub seasons lead the first full season (DECISIONS 2026-10-01) ------------------------
 
 
-def test_stub_season_one_is_dropped_and_season_two_used_alone() -> None:
+def _titles(rec: dict[str, Any]) -> list[str]:
+    return [p["page_title"] for p in rec["sources"]]
+
+
+S1, S2, S4 = "Tidewater season 1", "Tidewater (season 2)", "Tidewater season 4"
+
+
+def test_stub_season_one_leads_a_long_season_two() -> None:
     rec = fetch(season_fake(season_words={1: 100, 2: 3500}))
     assert rec["status"] == "ok" and not rec["season_articles"]["used_list_page"]
-    assert [p["page_title"] for p in rec["sources"]] == ["Tidewater (season 2)"]  # no stub
-    assert rec["word_count"] == 3500 == word_count(rec["sources"][0]["text"])
-    assert rec["season_articles"]["left_out_over_cap"] == ["Tidewater season 4"]
-    reasons = {s["title"]: s["reason"] for s in rec["season_articles"]["skipped"]}
-    assert reasons["Tidewater season 1"].startswith("100 words, under the 150-word minimum")
-    gate(parse_plot(rec, "t"))  # a lone season under the ceiling passes the input gate
+    assert _titles(rec) == [S1, S2]
+    assert rec["word_count"] == 3600 == sum(word_count(p["text"]) for p in rec["sources"])
+    assert rec["season_articles"]["left_out_over_cap"] == [S4]
+    gate(parse_plot(rec, "t"))  # a two-source lead block over the cap passes the gate
 
 
-def test_stub_season_one_and_season_two_over_the_ceiling_skips_the_title() -> None:
-    rec = fetch(season_fake(season_words={1: 100, 2: 6001}))
-    assert rec["status"] == "skipped" and rec["skip_reason"] == "season_too_long"
-    assert "Tidewater (season 2) (6001 words)" in rec["skip_detail"]
-    assert not rec["season_articles"]["used_list_page"]  # no fallback to the list page
-    ok = fetch(season_fake(season_words={1: 100, 2: 6000}))
-    assert ok["status"] == "ok" and ok["word_count"] == 6000
-    assert [p["page_title"] for p in ok["sources"]] == ["Tidewater (season 2)"]
-
-
-def test_stub_season_one_still_joins_when_both_fit_under_the_cap() -> None:
-    rec = fetch(season_fake(season_words={1: 100, 2: 1000, 4: 2000}))
+def test_two_stub_seasons_lead_the_first_full_season() -> None:
+    """Hari's example: s1=120 + s2=130 + s3=2,900 (season 4 in this fixture) -> all three."""
+    rec = fetch(season_fake(season_words={1: 120, 2: 130, 4: 2900}))
     assert rec["status"] == "ok"
-    assert [p["page_title"] for p in rec["sources"]] == [
-        "Tidewater season 1", "Tidewater (season 2)"
-    ]
+    assert _titles(rec) == [S1, S2, S4]
+    assert rec["word_count"] == 3150
+    assert rec["season_articles"]["left_out_over_cap"] == []
+    gate(parse_plot(rec, "t"))
+
+
+def test_lead_block_is_bounded_by_the_ceiling() -> None:
+    ok = fetch(season_fake(season_words={1: 100, 2: 5900}))
+    assert ok["status"] == "ok" and ok["word_count"] == 6000
+    assert _titles(ok) == [S1, S2]
+    gate(parse_plot(ok, "t"))
+    rec = fetch(season_fake(season_words={1: 100, 2: 5901}))
+    assert rec["status"] == "skipped" and rec["skip_reason"] == "season_too_long"
+    assert "Tidewater season 1 + Tidewater (season 2) (6001 words)" in rec["skip_detail"]
+    assert not rec["season_articles"]["used_list_page"]  # no fallback to the list page
+    assert rec["season_articles"]["used"] == []
+    assert rec["season_articles"]["left_out_over_cap"] == [S1, S2, S4]
+
+
+def test_short_lead_block_joins_later_seasons_under_the_cap() -> None:
+    """The ">1000" in Hari's wording is not a threshold: a short first full season is plain
+    joining under the cap."""
+    rec = fetch(season_fake(season_words={1: 100, 2: 1000, 4: 1500}))
+    assert rec["status"] == "ok" and _titles(rec) == [S1, S2, S4]
+    assert rec["word_count"] == 2600
+    rec = fetch(season_fake(season_words={1: 100, 2: 600}))
+    assert _titles(rec) == [S1, S2] and rec["season_articles"]["left_out_over_cap"] == [S4]
+
+
+def test_lead_block_over_the_cap_takes_nothing_more() -> None:
+    rec = fetch(season_fake(season_words={1: 100, 2: 3500, 4: 500}))
+    assert rec["status"] == "ok" and _titles(rec) == [S1, S2]
+    assert rec["word_count"] == 3600
+    assert rec["season_articles"]["left_out_over_cap"] == [S4]
+
+
+def test_lead_block_within_the_cap_keeps_joining_later_seasons() -> None:
+    """QA: a lead block under the cap is not a stopping point. 100 + 2,850 + 40 = 2,990 fits;
+    100 + 2,950 = 3,050 is over the cap, so season 4 (40 words) is left out."""
+    rec = fetch(season_fake(season_words={1: 100, 2: 2850, 4: 40}))
+    assert rec["status"] == "ok" and _titles(rec) == [S1, S2, S4]
+    assert rec["word_count"] == 2990 and rec["season_articles"]["left_out_over_cap"] == []
+    rec = fetch(season_fake(season_words={1: 100, 2: 2950, 4: 40}))
+    assert _titles(rec) == [S1, S2] and rec["word_count"] == 3050
+    assert rec["season_articles"]["left_out_over_cap"] == [S4]
+
+
+def test_lead_block_within_the_cap_stops_at_a_season_boundary() -> None:
+    rec = fetch(season_fake(season_words={1: 100, 2: 1000, 4: 2000}))
+    assert rec["status"] == "ok" and _titles(rec) == [S1, S2]
     assert rec["word_count"] == 1100
-    assert rec["season_articles"]["left_out_over_cap"] == ["Tidewater season 4"]
+    assert rec["season_articles"]["left_out_over_cap"] == [S4]
 
 
-@pytest.mark.parametrize(("s1", "used"), [
-    (149, ["Tidewater (season 2)"]),
-    (150, ["Tidewater season 1"]),
-])
+@pytest.mark.parametrize(("s1", "used"), [(149, [S1, S2]), (150, [S1])])
 def test_stub_boundary_is_the_150_word_minimum(s1: int, used: list[str]) -> None:
     from laminary_pipeline.ingest.wikipedia import MIN_WORDS
 
     assert MIN_WORDS == 150
     rec = fetch(season_fake(season_words={1: s1, 2: 3500}))
-    assert rec["status"] == "ok"
-    assert [p["page_title"] for p in rec["sources"]] == used
-    if s1 == 150:  # usable: season 2 can't join, so it is left out as before
-        assert rec["season_articles"]["left_out_over_cap"][0] == "Tidewater (season 2)"
+    assert rec["status"] == "ok" and _titles(rec) == used
+    if s1 == 150:  # a full season 1: season 2 can't join under the cap, so it is left out
+        assert rec["season_articles"]["left_out_over_cap"] == [S2, S4]
 
 
-def test_seasons_together_over_the_minimum_count_as_usable() -> None:
-    """120 + 130 words are each under 150 but together usable: season 4 is left out, as
-    before, rather than used alone."""
-    rec = fetch(season_fake())
-    assert [p["page_title"] for p in rec["sources"]] == [
-        "Tidewater season 1", "Tidewater (season 2)"
-    ]
-    assert rec["season_articles"]["left_out_over_cap"] == ["Tidewater season 4"]
+def test_stub_after_a_missing_season_one_leads_the_next_full_season() -> None:
+    fake = season_fake(season_words={2: 100, 4: 3500})
+    _season_one_unusable(fake, "missing")
+    rec = fetch(fake)
+    assert rec["status"] == "ok" and _titles(rec) == [S2, S4]
+    assert rec["word_count"] == 3600
+
+
+def test_a_stub_after_a_full_season_joins_normally() -> None:
+    """Stubs only lead; after the first full season, joining is the usual cap rule."""
+    rec = fetch(season_fake(season_words={1: 2900, 2: 100, 4: 50}))
+    assert _titles(rec) == [S1, S2] and rec["word_count"] == 3000
+    assert rec["season_articles"]["left_out_over_cap"] == [S4]

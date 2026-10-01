@@ -76,7 +76,7 @@ SKIP_QID_MISMATCH = "qid_mismatch"
 SKIP_NO_SECTION = "no_plot_section"
 SKIP_TOO_SHORT = "too_short"
 SKIP_FETCH_ERROR = "fetch_error"  # transient: retried on the next run
-SKIP_SEASON_TOO_LONG = "season_too_long"  # first usable season over SEASON_ONE_CEILING
+SKIP_SEASON_TOO_LONG = "season_too_long"  # season lead block over SEASON_ONE_CEILING
 VIA_SEASON_ARTICLES = "season_articles"
 
 
@@ -300,7 +300,8 @@ class PlotFetcher:
             return {
                 **skipped,
                 "skip_reason": SKIP_SEASON_TOO_LONG,
-                "skip_detail": f"first usable season alone is over {SEASON_ONE_CEILING} words: "
+                "skip_detail": f"first full season (with any stub seasons before it) is over "
+                f"{SEASON_ONE_CEILING} words: "
                 f"{found.too_long}"[:300],
                 "season_articles": report,
             }
