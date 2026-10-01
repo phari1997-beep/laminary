@@ -19,9 +19,10 @@ Current phase: **Phase 1 — Narrative data pilot** (started 2026-09-30)
 ## Phase 1
 - [x] 2026-10-01 — Ingestion (Wikidata candidates, Wikipedia plots) + gold-set tooling [data-pipeline] — QA: pass after three rounds; merged to main (345d2f5).
 - [x] 2026-10-01 — Annotation pipeline + evaluation script (mocked; no live calls) [data-pipeline] — QA: pass after three rounds; merged to main (345d2f5). Budget enforced per request/round against a worst case, run lock, Wikipedia-only request gate re-verified.
-  - Follow-ups (QA should-fix, not blocking): `run.lock` deleted by hand bypasses the lock (check inode after flock); exact-count pricing margin ~1.05; namespace/interwiki gate gaps in the ref label; doc note on thread re-entrancy; `--abandon-round`. Budget is per run, not global.
-  - Pending, blocked on permissions (Hari to allow edits): commit the 0.95 display threshold; two-part exit gate + double labeling; prompt annotate-1.1.0 with release year; schema 1.1.0 (series_status `unknown`, tighter ref); gold text files for Drive.
-  - [x] 2026-10-01 — `anthropic` declared as the `annotate` extra; CI installs it [sre] (cf59f64, pending QA).
+  - Follow-ups from QA round 3 (run.lock bypass, 1.05 margin, namespace/interwiki gate): fixed in 17c5eaa, QA passed 2026-10-01.
+  - [x] 2026-10-01 — Hari's decisions implemented [data-pipeline], QA passed, merged to main (cc7ff71): 0.95 display threshold; two-part exit gate + double labeling; prompt annotate-1.1.0 with Wikidata release year; schema 1.1.0 (series_status unknown, article-only refs); gold texts + manifest for Drive; season articles for thin series (3,000-word cap); genre filter (selector 1.1.0).
+  - In progress [data-pipeline]: first-season exception (6e994f6, 7d7ebba, 6,000-word ceiling) + QA should-fixes (gate caps source count; slot-2 label can't become the reference) + nits. Then QA, then re-run candidates/plots/backfill.
+  - [x] 2026-10-01 — `anthropic` declared as the `annotate` extra; CI installs it [sre] (cf59f64, QA passed, merged).
 - [x] 2026-10-01 — Live ingestion smoke run (free) [coordinator]: `candidates --limit 20` took 4m24s (WDQS); pool 1,735; 20 picked (15 films, 5 series, 13 buckets), 19 are gold seeds; all have TMDB and IMDb ids. Missing seeds: True Detective, Paatal Lok, Your Lie in April, Mushishi. `plots --limit 20`: 20/20 fetched, 20/20 pass the 150-word rule. Nit: two languages print as raw QIDs (Q188, Q7976) in the report.
 - [x] 2026-10-01 — Full ingestion run (free) [coordinator]: 654 candidates (500 pilot + reserves); 500 plots fetched, 445 pass the 150-word rule (89%). Films 344/350 (98%), series 101/150 (67%; tv:english 62/95, tv:korean 9/15). 49 too short, 6 with no plot section. `--backfill` not yet run. Non-narrative titles slipped the genre filter (e.g. MythBusters, Zoboomafoo).
 - [ ] Live smoke call: one structured-output request (needs Hari: API key + spend approval)
@@ -33,7 +34,7 @@ Current phase: **Phase 1 — Narrative data pilot** (started 2026-09-30)
 - **Unreviewed Phase 1 code is on branch `claude/laminary-repo-setup-zyy6go`, not on main yet.** It covers ingestion, gold tooling, annotation and evaluation, and a QA review was in progress in the cloud session. If that review didn't finish and merge, the local session should:
   1. `git fetch origin && git checkout claude/laminary-repo-setup-zyy6go`, and compare it with main (`git diff main --stat`). It holds main plus the Phase 1 code.
   2. Have `qa` review the Phase 1 code (ingest/, gold/, annotate/, evaluate/, prompts/, GOLD_LABELING_GUIDE.md, the .gitignore block). Then merge to main.
-- ~~Pending small change (sre): add `anthropic` to pyproject.toml~~ Done 2026-10-01 (cf59f64, pending QA): optional extra `annotate = ["anthropic>=1.9,<2"]`; CI installs `.[dev,annotate]` and fails if anthropic is missing.
+- ~~Pending small change (sre): add `anthropic` to pyproject.toml~~ Done 2026-10-01 (cf59f64, QA passed, merged): optional extra `annotate = ["anthropic>=1.9,<2"]`; CI installs `.[dev,annotate]` and fails if anthropic is missing.
 - **Local setup (Hari):**
   - Python 3.12, then `cd pipeline && pip install -e ".[dev,annotate]"` (or `scripts/bootstrap.sh`, which uses uv).
   - Put `ANTHROPIC_API_KEY=...` in `.env` at the repo root (gitignored; check with `git check-ignore .env`). Do NOT export it globally: Claude Code itself would pick it up and bill its own usage to that key. Load it only for pipeline commands: `set -a; source .env; set +a` in the same command. Never print it.
