@@ -101,6 +101,13 @@ def interpret(
         return Invalid(f"refusal: {response.stop_details}", retryable=False, raw_excerpt=excerpt)
     if response.model != ctx.model:
         return Invalid(f"answered by {response.model!r}, requested {ctx.model!r}", False, excerpt)
+    if response.stop_reason == "max_tokens":
+        # Retrying at the same cap would most likely hit it again and pay twice.
+        return Invalid(
+            "stop_reason 'max_tokens': output hit the max_tokens cap; not retried at the same cap",
+            False,
+            excerpt,
+        )
     if response.stop_reason != "end_turn":
         return Invalid(f"stop_reason {response.stop_reason!r}", True, excerpt)
     try:

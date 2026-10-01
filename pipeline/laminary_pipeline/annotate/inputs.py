@@ -231,3 +231,51 @@ def gate(plot: PlotInput) -> GatedInput:
     if total < MIN_SUMMARY_WORDS:
         raise GateError(f"{plot.key}: {total} words of summary, minimum is {MIN_SUMMARY_WORDS}")
     return GatedInput(plot)
+
+
+def read_titles_file(path: Path) -> list[str]:
+    """Title identifiers from a selection file, in file order, without duplicates.
+
+    Accepts ingest's ``pilot_effective.jsonl``, the gold ``gold_selection.jsonl`` (one JSON
+    object per line; its ``qid``, else ``title_key``/``key``, is used), or a plain text list
+    with one QID or title key (``movie:603``) per line (blank lines and ``#`` comments
+    ignored)."""
+    wanted: list[str] = []
+    for n, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("{"):
+            obj = json.loads(line)
+            value = obj.get("qid") or obj.get("title_key") or obj.get("key")
+            if not isinstance(value, str) or not value:
+                raise InputFormatError(f"{path}:{n}: no qid, title_key or key")
+        else:
+            value = line
+        if value not in wanted:
+            wanted.append(value)
+    if not wanted:
+        raise InputFormatError(f"{path}: no titles listed")
+    return wanted
+
+
+def select_plots(
+    plots: list[PlotInput], wanted: list[str]
+) -> tuple[list[PlotInput], list[str]]:
+    """The plots named in ``wanted`` (by title key or QID), in ``wanted`` order, and the
+    names with no usable plot input."""
+    by_name: dict[str, PlotInput] = {}
+    for plot in plots:
+        by_name[plot.key] = plot
+        qid = plot.title.get("wikidata_id")
+        if qid:
+            by_name[qid] = plot
+    selected: list[PlotInput] = []
+    missing: list[str] = []
+    for name in wanted:
+        plot = by_name.get(name)
+        if plot is None:
+            missing.append(name)
+        elif plot not in selected:
+            selected.append(plot)
+    return selected, missing

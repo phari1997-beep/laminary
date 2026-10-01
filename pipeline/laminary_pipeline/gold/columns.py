@@ -10,7 +10,7 @@ from __future__ import annotations
 from laminary_pipeline.annotation import load_schema
 
 # Version of docs/GOLD_LABELING_GUIDE.md. Stored as provenance.annotator.guide_version.
-GUIDE_VERSION = "1.0.0"
+GUIDE_VERSION = "1.1.0"
 
 
 def _enum(name: str) -> list[str]:
@@ -95,7 +95,8 @@ NO = frozenset({"n", "no", "false", "0", "absent"})
 # ---------- columns ----------
 
 PREFILLED_LEFT = [
-    "qid", "title", "year", "type", "wikipedia_revision_link", "plot_section", "word_count",
+    "qid", "title", "year", "type", "summary_text_file", "wikipedia_revision_link",
+    "plot_section", "word_count",
 ]
 PLOT_COLS = [f"plot_{k}" for k in BOOKER_PLOTS]
 STAGE_COLS = [f"stage_{k}" for k in STAGES]
@@ -118,7 +119,13 @@ def help_row() -> dict[str, str]:
     first cell starts with '#'."""
     h: dict[str, str] = {c: "(filled in; don't edit)" for c in PREFILLED_LEFT + PREFILLED_RIGHT}
     h["qid"] = "# HELP ROW: keep it; the importer skips rows starting with #"
-    h["wikipedia_revision_link"] = "Read THIS revision's plot section only"
+    h["summary_text_file"] = (
+        "READ THIS FILE ONLY: the exact summary text the model sees (sha256 = source_sha256)"
+    )
+    h["wikipedia_revision_link"] = (
+        "Attribution only (CC BY-SA source). Don't label from the web page: it has extra "
+        "tables, captions and notes the model never sees"
+    )
     h["labeler_id"] = "Your labeler code, e.g. L01"
     h["skip_reason"] = "Leave blank unless you can't label: " + " / ".join(SKIP_NAMES.values())
     h["primary_plot"] = "One of: " + " / ".join(PLOT_NAMES.values())

@@ -6,6 +6,17 @@ they are available (``annotate ... --count-tokens`` calls the endpoint). The str
 schema is compiled server-side; how it is billed is not documented in the skill, so its JSON
 is counted as uncached input, a deliberate over-estimate.
 
+Two numbers per plan:
+
+- ``usd_low``/``usd_high``: the expected range (typical output, one retry for some titles,
+  best-case caching). For planning only.
+- ``usd_worst_case``: a true upper bound, used by every spend guard and by the $50 approval
+  note. Per title: max_attempts x (static prefix at the cache-WRITE price + that title's
+  variable input + max_tokens of output at the output price), with the batch discount only for
+  batch runs. max_tokens caps all output including thinking, so whatever effort level is used,
+  output can't exceed it. Character-based input counts are multiplied by
+  INPUT_ESTIMATE_MARGIN because they are estimates.
+
 Prices are the unconfirmed table in ``config.py``; every report says so.
 """
 
@@ -21,6 +32,8 @@ from typing import Any
 from laminary_pipeline.annotate.client import Usage
 from laminary_pipeline.annotate.config import (
     BATCH_DISCOUNT,
+    DEFAULT_MAX_ATTEMPTS,
+    DEFAULT_MAX_TOKENS,
     MODELS,
     PRICE_SOURCE,
 )
@@ -35,6 +48,8 @@ SUMMARY_WORDS_RANGE = (400, 1200)
 CHARS_PER_WORD = 6.0  # including the following space
 # Share of titles assumed to need one retry, added to the high estimate only.
 RETRY_RATE_HIGH = 0.10
+# Safety factor on character-based input token estimates in the worst-case bound.
+INPUT_ESTIMATE_MARGIN = 1.25
 
 EXAMPLES_DIR = Path(__file__).resolve().parents[2] / "tests" / "examples"
 
@@ -77,6 +92,8 @@ class CostEstimate:
     input_tokens_per_title: tuple[int, int]
     output_tokens_per_title: tuple[int, int]
     token_method: str
+    usd_worst_case: float = 0.0
+    worst_case_method: str = ""
     price_source: str = PRICE_SOURCE
 
     def as_dict(self) -> dict[str, Any]:
@@ -93,6 +110,34 @@ def price_usage(model: str, usage: Usage, *, batch: bool) -> float:
         + usage.output_tokens * spec.output_per_mtok
     ) / 1e6
     return usd * (BATCH_DISCOUNT if batch else 1.0)
+
+
+def worst_case_request_usd(
+    model: str,
+    *,
+    static_tokens: int,
+    variable_tokens: int,
+    max_tokens: int,
+    batch: bool,
+    input_margin: float = INPUT_ESTIMATE_MARGIN,
+) -> float:
+    """Upper bound on what ONE request can cost: every static token written to the cache
+    (the most expensive input rate), all variable input uncached, and max_tokens of output."""
+    spec = MODELS[model]
+    usd = (
+        math.ceil(static_tokens * input_margin) * spec.cache_write_per_mtok
+        + math.ceil(variable_tokens * input_margin) * spec.input_per_mtok
+        + max_tokens * spec.output_per_mtok
+    ) / 1e6
+    return usd * (BATCH_DISCOUNT if batch else 1.0)
+
+
+def worst_case_method(max_attempts: int, max_tokens: int, input_margin: float) -> str:
+    return (
+        f"upper bound: {max_attempts} attempt(s) per title x (static prefix at the cache-write "
+        f"price + variable input, input estimates x {input_margin} + max_tokens {max_tokens} "
+        "at the output price)"
+    )
 
 
 def _run_cost(
@@ -132,10 +177,17 @@ def estimate(
     batch: bool,
     caching: bool,
     token_method: str = ESTIMATE_METHOD,
+    max_tokens: int = DEFAULT_MAX_TOKENS,
+    max_attempts: int = DEFAULT_MAX_ATTEMPTS,
+    per_title_variable: list[int] | None = None,
+    input_margin: float = INPUT_ESTIMATE_MARGIN,
 ) -> CostEstimate:
     """Low/high cost for ``titles`` requests. ``variable_tokens`` is the per-title uncached
     input range. Output: the estimated JSON size plus the model's assumed thinking range;
-    the high end also assumes RETRY_RATE_HIGH of titles are retried once."""
+    the high end also assumes RETRY_RATE_HIGH of titles are retried once.
+
+    ``usd_worst_case`` is the hard bound (module docstring), summed over
+    ``per_title_variable`` when given, else ``titles`` x the top of ``variable_tokens``."""
     think_lo, think_hi = MODELS[model].thinking_tokens_assumed
     out_lo = output_json_tokens() + think_lo
     out_hi = math.ceil(output_json_tokens() * 1.3) + think_hi
@@ -147,6 +199,20 @@ def estimate(
     )
     if titles > 1:
         high *= 1 + RETRY_RATE_HIGH
+    variables = (
+        per_title_variable if per_title_variable is not None else [variable_tokens[1]] * titles
+    )
+    worst = max_attempts * sum(
+        worst_case_request_usd(
+            model,
+            static_tokens=static_tokens,
+            variable_tokens=v,
+            max_tokens=max_tokens,
+            batch=batch,
+            input_margin=input_margin,
+        )
+        for v in variables
+    )
     return CostEstimate(
         model=model,
         titles=titles,
@@ -160,6 +226,8 @@ def estimate(
         ),
         output_tokens_per_title=(out_lo, out_hi),
         token_method=token_method,
+        usd_worst_case=round(worst, 4),
+        worst_case_method=worst_case_method(max_attempts, max_tokens, input_margin),
     )
 
 
@@ -183,6 +251,7 @@ def projection_table(static_tokens: int, models: list[str]) -> list[CostEstimate
                 variable_tokens=variable,
                 batch=False,
                 caching=True,
+                max_attempts=1,  # smoke: exactly one request
             )
         )
         for titles in (100, 500):
@@ -202,18 +271,22 @@ def projection_table(static_tokens: int, models: list[str]) -> list[CostEstimate
 
 def format_table(rows: list[CostEstimate]) -> str:
     lines = [
-        "| Model | Titles | Batch | Caching | Est. cost (USD) | Input tok/title "
-        "| Output tok/title |",
-        "|---|---:|---|---|---:|---:|---:|",
+        "| Model | Titles | Batch | Caching | Est. cost (USD) | Worst case (USD) "
+        "| Input tok/title | Output tok/title |",
+        "|---|---:|---|---|---:|---:|---:|---:|",
     ]
     for r in rows:
         lines.append(
             f"| {r.model} | {r.titles} | {'yes' if r.batch else 'no'} | "
             f"{'yes' if r.caching else 'no'} | ${r.usd_low:,.2f} to ${r.usd_high:,.2f} | "
+            f"${r.usd_worst_case:,.2f} | "
             f"{r.input_tokens_per_title[0]:,} to {r.input_tokens_per_title[1]:,} | "
             f"{r.output_tokens_per_title[0]:,} to {r.output_tokens_per_title[1]:,} |"
         )
     lines.append("")
     lines.append(f"Tokens: {rows[0].token_method if rows else ESTIMATE_METHOD}.")
+    for method in dict.fromkeys(r.worst_case_method for r in rows):
+        which = ", ".join(str(r.titles) for r in rows if r.worst_case_method == method)
+        lines.append(f"Worst case ({which} titles): {method}. Spend guards use it.")
     lines.append(f"Prices: {PRICE_SOURCE}.")
     return "\n".join(lines)

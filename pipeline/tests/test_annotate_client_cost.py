@@ -134,6 +134,7 @@ def test_make_api_passes_the_env_key_explicitly(monkeypatch) -> None:
     api = make_api()
     assert seen["api_key"] == "sk-test-not-real"
     assert seen["max_retries"] == client_mod.SDK_MAX_RETRIES
+    assert seen["base_url"] == "https://api.anthropic.com"  # ANTHROPIC_BASE_URL can't redirect
     assert "sk-test" not in repr(api)
 
 

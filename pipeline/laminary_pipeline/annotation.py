@@ -26,7 +26,11 @@ DISPLAY_CONFIDENCE_THRESHOLD = 0.80
 # The only sources allowed as annotation or embedding input until TMDB authorizes LLM use in
 # writing (docs/NARRATIVE_SCHEMA.md section 1). Mirrors the schema's rule for LLM/gold records.
 ALLOWED_INPUT_LICENSES = frozenset({"CC-BY-SA-4.0", "CC-BY-SA-3.0"})
+# Mirrors the schema's ref pattern (prefix only; tests keep the two equal).
 WIKIPEDIA_REF = re.compile(r"^https://en\.wikipedia\.org/")
+# Stricter gate for anything sent to the model: an article URL with nothing after the
+# (percent-encoded) title, so no query, fragment, whitespace, quotes or markup characters.
+WIKIPEDIA_ARTICLE_REF = re.compile(r'^https://en\.wikipedia\.org/wiki/[^\s?#<>\[\]{}|"]+$')
 
 
 @cache
@@ -135,8 +139,8 @@ def require_wikipedia_sources(sources: list[dict[str, Any]]) -> list[dict[str, A
             raise ValueError(f"source {i}: kind {kind!r} is not allowed as input")
         if license_ not in ALLOWED_INPUT_LICENSES:
             raise ValueError(f"source {i}: license {license_!r} is not allowed as input")
-        if not isinstance(ref, str) or not WIKIPEDIA_REF.match(ref):
-            raise ValueError(f"source {i}: ref {ref!r} is not an en.wikipedia.org URL")
+        if not isinstance(ref, str) or not WIKIPEDIA_ARTICLE_REF.match(ref):
+            raise ValueError(f"source {i}: ref {ref!r} is not a plain en.wikipedia.org article URL")
     return sources
 
 

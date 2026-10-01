@@ -1,6 +1,6 @@
 # Gold labeling guide
 
-**Version 1.0.0** (this number goes in the sheet's `guide_version` column). Owner: data-pipeline. Definitions come from `docs/NARRATIVE_SCHEMA.md` v1.0.0; if the two ever disagree, the schema wins and this guide gets fixed.
+**Version 1.1.0** (this number goes in the sheet's `guide_version` column). Owner: data-pipeline. Definitions come from `docs/NARRATIVE_SCHEMA.md` v1.0.0; if the two ever disagree, the schema wins and this guide gets fixed.
 
 ## What this is for
 
@@ -12,7 +12,7 @@ Labels are internal. Nobody sees them in the app, so spoilers are fine here.
 
 ## The golden rules
 
-1. **Read only the linked summary.** Each row links to one Wikipedia page at one exact revision (`wikipedia_revision_link`) and names the section to read (`plot_section`). Read that section, in that revision, and nothing else. The model sees exactly that text, and we're measuring the model, not the summary (DECISIONS 2026-09-26).
+1. **Read only the summary file.** Each row names a text file (`summary_text_file`, for example `texts/Q83495.txt`) that Hari shares with you. Read that file and nothing else. It holds exactly the text the model reads: the Wikipedia plot section with tables, image captions, "Main article" notes and footnote markers removed (and, for series, without the episode tables). Don't label from the Wikipedia page itself; it shows things the model never sees. The `wikipedia_revision_link` column is there only to credit the source (the text is CC BY-SA). We're measuring the model, not the summary (DECISIONS 2026-09-26).
 2. **Forget what you know.** If you've seen the film and the summary leaves something out, label what the summary says. Don't fill gaps from memory, reviews, or other pages.
 3. **Judge every box.** Every Y/N column needs a Y or an N. N is a real answer ("I looked, it isn't there"), not a blank.
 4. **If you can't label it, skip it** with a `skip_reason` (below) rather than guessing.

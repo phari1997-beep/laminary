@@ -143,7 +143,7 @@ class PlotFetcher:
     def enwiki_title_for(self, qid: str) -> str | None:
         params = {
             "action": "wbgetentities", "ids": qid, "props": "sitelinks", "sitefilter": "enwiki",
-            "format": "json", "formatversion": "2",
+            "format": "json", "formatversion": "2", "maxlag": "5",
         }
         data = self.client.get_json(WIKIDATA_API_URL, params, cache_ttl=LATEST_REVISION_TTL)
         entity = (data.get("entities") or {}).get(qid) or {}

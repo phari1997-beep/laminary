@@ -102,10 +102,11 @@ def _template(paths: DataPaths, log: Callable[[str], None]) -> int:
     plots = {s["qid"]: read_json(paths.plot_file(s["qid"])) for s in selection
              if paths.plot_file(s["qid"]).exists()}
     rows, skipped = template_rows(selection, plots)
-    written = write_template(paths.gold, rows)
+    written = write_template(paths.gold, rows, plots)
     for msg in skipped:
         log(f"left out {msg}")
-    log(f"{len(rows)} titles in the sheet; wrote " + ", ".join(str(w) for w in written))
+    log(f"{len(rows)} titles in the sheet; wrote " + ", ".join(str(w) for w in written[:3])
+        + f" and {len(written) - 3} summary text files under {paths.gold / 'texts'}")
     return 0
 
 

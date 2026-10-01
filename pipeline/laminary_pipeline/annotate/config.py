@@ -21,16 +21,30 @@ ANNOTATIONS_DIR = DATA_DIR / "annotations"
 API_KEY_ENV = "ANTHROPIC_API_KEY"
 
 DEFAULT_PROMPT_VERSION = "annotate-1.0.0"
+# Phase 1 annotates with this model only (DECISIONS.md). Other models in MODELS stay for
+# offline estimates; using one for a run needs an explicit override flag.
+PHASE1_MODEL = "claude-opus-5-5"
+API_BASE_URL = "https://api.anthropic.com"
 # Structured JSON output is ~2K tokens; thinking comes on top and is billed as output.
 DEFAULT_MAX_TOKENS = 16000
+# Upper bound for --max-tokens. Non-streaming messages.create refuses much larger values (the
+# SDK's expected-time check), and the worst-case budget bound scales with it.
+MAX_TOKENS_CAP = 16000
 # Opus 5.5 defaults to "medium" and Sonnet 5.5 to "high"; set it explicitly so runs are
 # reproducible. To be swept on the gold set during prompt iteration.
 DEFAULT_EFFORT = "medium"
 # Total attempts per title (first try + retries) before a failure record is written.
 DEFAULT_MAX_ATTEMPTS = 3
+MAX_ATTEMPTS_CAP = 3
+# Consecutive transient API errors (429, 5xx, timeouts, connection errors) after which a
+# synchronous run stops cleanly instead of burning attempts on an unavailable API.
+MAX_CONSECUTIVE_TRANSIENT_ERRORS = 5
+# Seconds to wait after a transient API error, doubled each time (capped).
+TRANSIENT_BACKOFF_SECONDS = 5.0
+TRANSIENT_BACKOFF_CAP_SECONDS = 120.0
 # PLAN 5.4 / agent rules: pilot on at most 500 titles before any larger run.
 PILOT_TITLE_CAP = 500
-# Hari approves any run over this (agent rules).
+# Hari approves any run whose WORST-CASE bound is over this (agent rules).
 APPROVAL_THRESHOLD_USD = 50.0
 BATCH_POLL_SECONDS = 60.0
 

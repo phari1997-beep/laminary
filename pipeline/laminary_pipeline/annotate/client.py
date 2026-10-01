@@ -5,8 +5,17 @@ never touch the network. ``SdkAnnotationAPI`` adapts the official ``anthropic`` 
 imported lazily: dry runs and tests need neither the package nor a key.
 
 The API key is read only from the ANTHROPIC_API_KEY environment variable and passed explicitly
-to the SDK, so no other credential source (profiles, auth tokens, files) is used. It is never
-logged, printed or written to run files.
+to the SDK, together with a pinned ``base_url``, so no other credential source (profiles, auth
+tokens, files) is used and ``ANTHROPIC_BASE_URL`` can't redirect the key. It is never logged,
+printed or written to run files.
+
+Retries: requests that can cost money (``messages.create``, ``messages.batches.create``) are sent
+with SDK retries OFF. Every retry is the pipeline's own, logged in attempts.jsonl and counted
+against the budget. Failures are normalized to the exceptions below so the runner never needs the
+SDK: ``RequestRejectedError`` (4xx about this request; not billed; don't retry it),
+``TransientAPIError`` (429, 5xx, timeouts, connection errors; ``possibly_billed`` when the
+request may have reached the model) and ``FatalAPIError`` (auth/permission problems, or a batch
+call that failed: stop the run).
 """
 
 from __future__ import annotations
@@ -16,10 +25,10 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
-from laminary_pipeline.annotate.config import API_KEY_ENV
+from laminary_pipeline.annotate.config import API_BASE_URL, API_KEY_ENV
 
-# SDK-level retries for transient HTTP failures (429, 5xx, connection errors). Validation
-# retries are the pipeline's own and are counted separately.
+# SDK-level retries, used ONLY for read-only calls (batch status and results), which cost
+# nothing. Billable calls run with max_retries=0 (see the module docstring).
 SDK_MAX_RETRIES = 3
 
 
@@ -89,9 +98,52 @@ class AnnotationAPI(Protocol):
     def count_tokens(self, params: dict[str, Any]) -> int: ...
 
 
-class RequestRejectedError(RuntimeError):
-    """The API refused the request itself (4xx other than rate limits), e.g. a schema that is
-    too complex to compile. Not retried by the pipeline."""
+class AnnotationAPIError(RuntimeError):
+    """Base class for normalized API failures."""
+
+
+class RequestRejectedError(AnnotationAPIError):
+    """The API refused the request itself (4xx other than rate limits and auth), e.g. a schema
+    that is too complex to compile. Not billed; not retried by the pipeline."""
+
+
+class TransientAPIError(AnnotationAPIError):
+    """429, 5xx, timeout or connection failure. ``possibly_billed`` is True when the request may
+    have reached the model (timeouts, dropped connections, 5xx), so the spend tracker reserves
+    that request's worst-case cost."""
+
+    def __init__(self, message: str, *, possibly_billed: bool) -> None:
+        super().__init__(message)
+        self.possibly_billed = possibly_billed
+
+
+class FatalAPIError(AnnotationAPIError):
+    """A failure that ends the run (bad key, no permission, batch call failed)."""
+
+
+FATAL_STATUSES = frozenset({401, 403, 404})
+
+
+def classify_sdk_error(e: Exception) -> AnnotationAPIError:
+    """Map an ``anthropic`` exception to the pipeline's normalized errors."""
+    import anthropic
+
+    if isinstance(e, anthropic.APITimeoutError):
+        return TransientAPIError(f"timeout: {e}", possibly_billed=True)
+    if isinstance(e, anthropic.APIConnectionError):
+        return TransientAPIError(f"connection error: {e}", possibly_billed=True)
+    if isinstance(e, anthropic.RateLimitError):
+        return TransientAPIError(f"HTTP 429: {e.message}", possibly_billed=False)
+    if isinstance(e, anthropic.APIStatusError):
+        code = e.status_code
+        if code >= 500 or code == 408:
+            return TransientAPIError(f"HTTP {code}: {e.message}", possibly_billed=True)
+        if code in FATAL_STATUSES:
+            return FatalAPIError(f"HTTP {code}: {e.message}")
+        if code == 409:
+            return TransientAPIError(f"HTTP {code}: {e.message}", possibly_billed=False)
+        return RequestRejectedError(f"HTTP {code}: {e.message}")
+    return FatalAPIError(f"{type(e).__name__}: {e}")
 
 
 def _usage(sdk_usage: Any) -> Usage:
@@ -127,27 +179,40 @@ class SdkAnnotationAPI:
     def __init__(self, client: Any) -> None:
         self._client = client
 
+    def _no_retry(self) -> Any:
+        """The client with SDK retries off, for billable calls."""
+        with_options = getattr(self._client, "with_options", None)
+        return with_options(max_retries=0) if with_options else self._client
+
     def create(self, params: dict[str, Any]) -> Response:
         import anthropic
 
         try:
-            message = self._client.messages.create(**params)
-        except anthropic.RateLimitError:
-            raise
-        except anthropic.APIStatusError as e:
-            if 400 <= e.status_code < 500:
-                raise RequestRejectedError(f"HTTP {e.status_code}: {e.message}") from e
-            raise
+            message = self._no_retry().messages.create(**params)
+        except anthropic.APIError as e:
+            raise classify_sdk_error(e) from e
         return response_from_sdk(message)
 
     def submit_batch(self, requests: list[tuple[str, dict[str, Any]]]) -> str:
-        batch = self._client.messages.batches.create(
-            requests=[{"custom_id": cid, "params": params} for cid, params in requests]
-        )
+        """No retry: a retried create after a lost response could create (and bill) a second
+        batch. Any failure is fatal; the runner stops and says to check the Console."""
+        import anthropic
+
+        try:
+            batch = self._no_retry().messages.batches.create(
+                requests=[{"custom_id": cid, "params": params} for cid, params in requests]
+            )
+        except anthropic.APIError as e:
+            raise FatalAPIError(f"batch submission failed: {classify_sdk_error(e)}") from e
         return batch.id
 
     def batch_status(self, batch_id: str) -> BatchStatus:
-        batch = self._client.messages.batches.retrieve(batch_id)
+        import anthropic
+
+        try:
+            batch = self._client.messages.batches.retrieve(batch_id)
+        except anthropic.APIError as e:
+            raise FatalAPIError(f"batch status failed: {classify_sdk_error(e)}") from e
         counts = batch.request_counts
         return BatchStatus(
             batch_id=batch.id,
@@ -159,7 +224,13 @@ class SdkAnnotationAPI:
         )
 
     def batch_results(self, batch_id: str) -> Iterator[BatchResult]:
-        for entry in self._client.messages.batches.results(batch_id):
+        import anthropic
+
+        try:
+            entries = list(self._client.messages.batches.results(batch_id))
+        except anthropic.APIError as e:
+            raise FatalAPIError(f"batch results failed: {classify_sdk_error(e)}") from e
+        for entry in entries:
             result = entry.result
             if result.type == "succeeded":
                 yield BatchResult(entry.custom_id, "succeeded", response_from_sdk(result.message))
@@ -196,4 +267,6 @@ def make_api() -> SdkAnnotationAPI:
         raise MissingApiKeyError(
             "the Anthropic SDK is not installed: pip install 'anthropic>=1.9,<2'"
         ) from e
-    return SdkAnnotationAPI(anthropic.Anthropic(api_key=key, max_retries=SDK_MAX_RETRIES))
+    return SdkAnnotationAPI(
+        anthropic.Anthropic(api_key=key, base_url=API_BASE_URL, max_retries=SDK_MAX_RETRIES)
+    )

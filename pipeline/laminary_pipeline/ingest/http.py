@@ -2,6 +2,7 @@
 
 - Host allowlist: only ``ALLOWED_HOSTS`` can be contacted. Anything else, TMDB included,
   raises ``HostNotAllowed`` before a request is built (docs/NARRATIVE_SCHEMA.md section 1).
+  Redirects are re-checked against the allowlist before they are followed.
 - Descriptive User-Agent with a contact address, per the Wikimedia User-Agent policy.
 - Per-host minimum interval between requests (serial requests only).
 - Retries with exponential backoff on 429, 5xx, network errors and MediaWiki ``maxlag``,
@@ -86,11 +87,23 @@ class Response:
 Transport = Callable[[Request, float], Response]
 
 
+class _AllowlistRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Follow a redirect only if its target passes ``check_host``."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # type: ignore[override]
+        check_host(newurl)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+_OPENER = urllib.request.build_opener(_AllowlistRedirectHandler())
+
+
 def urllib_transport(req: Request, timeout: float) -> Response:
-    """Real network transport. Uses the environment's proxy and CA settings."""
+    """Real network transport. Uses the environment's proxy and CA settings. Redirects are
+    followed only to allowlisted hosts."""
     r = urllib.request.Request(req.url, data=req.data, method=req.method, headers=dict(req.headers))
     try:
-        with urllib.request.urlopen(r, timeout=timeout) as resp:  # noqa: S310 (host allowlisted)
+        with _OPENER.open(r, timeout=timeout) as resp:  # noqa: S310 (host allowlisted)
             headers = {k.lower(): v for k, v in resp.headers.items()}
             return Response(resp.status, resp.read(), headers)
     except urllib.error.HTTPError as e:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import io
 import json
 from pathlib import Path
@@ -223,7 +224,7 @@ def test_columns_cover_exactly_the_gold_label_fields() -> None:
     assert set(col.ARC_NAMES) == set(schema["emotional_arc"]["enum"])
     assert set(col.TAG_NAMES) == set(schema["beat_tag"]["enum"])
     assert set(col.SKIP_NAMES) == set(schema["abstain_reason"]["enum"])
-    assert len(col.ALL_COLUMNS) == len(set(col.ALL_COLUMNS)) == 65
+    assert len(col.ALL_COLUMNS) == len(set(col.ALL_COLUMNS)) == 66
     for c in col.LABELER_COLS:
         if c.startswith(("plot_", "stage_", "tag_")):
             assert col.dropdown_for_column(c) == "yes_no"
@@ -259,6 +260,11 @@ def test_template_from_plot_files_round_trips(tmp_path: Path) -> None:
     assert "guessed" not in text and "rebirth" not in text.split("\n", 2)[2]  # guesses hidden
     assert rows[0]["wikipedia_revision_link"].endswith("oldid=1200000001")
     assert rows[1]["series_status"] == "ended"
+    assert rows[0]["summary_text_file"] == "texts/Q9000001.txt"
+    # a plot whose text doesn't match its hash is left out of the sheet
+    tampered = {**plots["Q9000001"], "text": plots["Q9000001"]["text"] + " extra"}
+    rows_t, skipped_t = template_rows(selection[:1], {"Q9000001": tampered})
+    assert rows_t == [] and "sha256" in skipped_t[0]
 
     parsed = list(csv.DictReader(io.StringIO(text)))[1:]  # drop help row
     parsed[0].update(MOVIE_LABELS)
@@ -377,6 +383,12 @@ def test_gold_cli_select_template_import(tmp_path: Path) -> None:
     template = (data / "gold" / "gold_labels_template.csv").read_text()
     assert (data / "gold" / "gold_labels_lists.csv").exists()
     assert (data / "gold" / "gold_labels_readme.csv").exists()
+    # M3: the labeler reads the exact text the model sees, byte for byte
+    plot = json.loads((data / "plots" / "Q9000001.json").read_text())
+    text_file = data / "gold" / "texts" / "Q9000001.txt"
+    assert text_file.read_bytes() == plot["text"].encode("utf-8")
+    assert hashlib.sha256(text_file.read_bytes()).hexdigest() == plot["source"]["content_sha256"]
+    assert "texts/Q9000001.txt" in template
 
     filled = list(csv.DictReader(io.StringIO(template)))[1:]
     filled[0].update(MOVIE_LABELS)

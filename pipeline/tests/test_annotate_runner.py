@@ -49,10 +49,12 @@ def env(tmp_path: Path):
     return plots, cfg
 
 
-def prepare(plots: Path, cfg: RunConfig, mode: str, limit: int | None = None):
+def prepare(
+    plots: Path, cfg: RunConfig, mode: str, limit: int | None = None, budget: float = 100.0
+):
     prompt = load_prompt(DEFAULT_PROMPT_VERSION)
     plan = plan_run(load_plots(plots).plots, cfg, prompt, limit=limit)
-    return plan, start_run(mode, cfg, prompt, plan)
+    return plan, start_run(mode, cfg, prompt, plan, budget_usd=budget)
 
 
 # --- synchronous ---------------------------------------------------------------------------
@@ -104,7 +106,6 @@ def test_invalid_output_is_retried_then_stored_with_summed_usage(env) -> None:
         (lambda: response(invalid_output()), "primary plot"),
         (lambda: response("{not json"), "not JSON"),
         (lambda: response({"outcome": "annotated"}), "output schema"),
-        (lambda: response(stop_reason="max_tokens"), "max_tokens"),
     ],
 )
 def test_schema_invalid_output_retries_then_records_failure(env, bad, reason) -> None:
@@ -127,6 +128,7 @@ def test_schema_invalid_output_retries_then_records_failure(env, bad, reason) ->
     "item, reason",
     [
         (response(stop_reason="refusal"), "refusal"),
+        (response(stop_reason="max_tokens"), "max_tokens"),
         (response(model="claude-opus-5"), "answered by"),
         (RequestRejectedError("HTTP 400: Schema is too complex"), "too complex"),
     ],
@@ -390,6 +392,7 @@ def test_smoke_dry_run(env) -> None:
             "Q2",
             "--model",
             "claude-sonnet-5-5",
+            "--allow-non-phase1-model",
             "--dry-run",
             "--plots-dir",
             str(plots),
@@ -417,14 +420,14 @@ def test_live_runs_need_a_budget_that_covers_the_estimate(env) -> None:
     with pytest.raises(SystemExit, match="exceeds"):
         cli([*base, "--budget-usd", "0.001"], api_factory=lambda: api)
     assert api.created == []
-    code, _ = cli([*base, "--budget-usd", "1"], api_factory=lambda: api)
+    code, _ = cli([*base, "--budget-usd", "5"], api_factory=lambda: api)
     assert code == 0 and len(api.created) == 1
 
 
 def test_batch_over_pilot_cap_refused(env) -> None:
     plots, _ = env
     with pytest.raises(SystemExit, match="allow-over-pilot"):
-        cli(["batch", "--limit", "501", "--model", MODEL, "--plots-dir", str(plots)])
+        cli(["batch", "--limit", "501", "--model", MODEL, "--dry-run", "--plots-dir", str(plots)])
 
 
 def test_gate_refusal_reported_by_cli(env, tmp_path) -> None:
@@ -452,7 +455,7 @@ def test_api_key_never_written_to_run_files(env, monkeypatch) -> None:
             "--out-dir",
             str(cfg.out_root),
             "--budget-usd",
-            "1",
+            "5",
         ],
         api_factory=lambda: FakeAPI([response()]),
     )

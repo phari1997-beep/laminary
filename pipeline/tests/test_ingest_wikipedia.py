@@ -108,6 +108,8 @@ def test_title_from_wikidata_and_disambiguation_page() -> None:
     fake = FakeWikimedia()
     rec = fetcher(fake).fetch(cand("Q9000005", None))
     assert "www.wikidata.org" in fake.hosts
+    wd = [r for r in fake.requests if r.host == "www.wikidata.org"]
+    assert wd and all("maxlag=5" in r.url for r in wd)  # polite to Wikidata's replicas too
     assert rec["skip_reason"] == "disambiguation_page"
 
 

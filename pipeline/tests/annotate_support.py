@@ -126,6 +126,7 @@ class FakeAPI:
         self.batches: dict[str, list[BatchResult]] = {}
         self.submitted: list[list[tuple[str, dict[str, Any]]]] = []
         self.polls: dict[str, int] = {}
+        self.counted: list[dict[str, Any]] = []
 
     def create(self, params: dict[str, Any]) -> Response:
         self.created.append(params)
@@ -135,6 +136,8 @@ class FakeAPI:
         return item
 
     def submit_batch(self, requests: list[tuple[str, dict[str, Any]]]) -> str:
+        if isinstance(self.batch_script, Exception):
+            raise self.batch_script
         self.submitted.append(requests)
         batch_id = f"msgbatch_{len(self.submitted)}"
         self.batches[batch_id] = self.batch_script(len(self.submitted), requests)
@@ -151,6 +154,7 @@ class FakeAPI:
         yield from self.batches[batch_id]
 
     def count_tokens(self, params: dict[str, Any]) -> int:
+        self.counted.append(params)
         return 9999
 
 

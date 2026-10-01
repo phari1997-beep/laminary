@@ -10,8 +10,15 @@ Run files, in ``pipeline/data/annotations/<run_id>/``:
 - ``skipped.jsonl``: titles the gate refused before any request (reason included).
 - ``attempts.jsonl``: one line per request attempt (usage, stop reason, outcome); the source of
   truth for cost and for resuming.
-- ``cost.json``: measured usage priced with the (unconfirmed) price table.
+- ``cost.json``: measured usage priced with the (unconfirmed) price table, plus the
+  worst-case reserve for failed requests that may have been billed.
 - ``smoke.json``: smoke call only: latency, stop reason, usage, cost, outcome.
+
+Budget: ``manifest.json`` holds ``budget_usd``. Before every request (synchronous) or every
+batch round, the runner refuses to send if measured spend so far (attempts.jsonl priced, plus
+reserves) plus the worst case of what it is about to send would exceed the budget. It then stops
+cleanly: manifest ``status`` starts with ``stopped:`` and lists the unfinished titles, and
+cost.json is written. Fatal API errors stop the run the same way.
 
 Idempotency: a title is skipped when any run under the annotations directory already holds a
 record with the same title, model, prompt version and set of source content hashes. Failures
@@ -21,6 +28,7 @@ are not treated as done, so they are retried by the next run.
 from __future__ import annotations
 
 import json
+import math
 import secrets
 import time
 from collections.abc import Callable, Iterable
@@ -31,8 +39,10 @@ from typing import Any
 
 from laminary_pipeline.annotate.client import (
     AnnotationAPI,
+    FatalAPIError,
     RequestRejectedError,
     Response,
+    TransientAPIError,
     Usage,
 )
 from laminary_pipeline.annotate.config import (
@@ -41,9 +51,16 @@ from laminary_pipeline.annotate.config import (
     DEFAULT_MAX_ATTEMPTS,
     DEFAULT_MAX_TOKENS,
     DEFAULT_PROMPT_VERSION,
+    MAX_CONSECUTIVE_TRANSIENT_ERRORS,
     PROMPTS_DIR,
+    TRANSIENT_BACKOFF_CAP_SECONDS,
+    TRANSIENT_BACKOFF_SECONDS,
 )
-from laminary_pipeline.annotate.cost import price_usage
+from laminary_pipeline.annotate.cost import (
+    price_usage,
+    request_token_split,
+    worst_case_request_usd,
+)
 from laminary_pipeline.annotate.inputs import GatedInput, GateError, PlotInput, title_key
 from laminary_pipeline.annotate.prompt import Prompt, build_request
 from laminary_pipeline.annotate.records import (
@@ -190,7 +207,13 @@ def plan_run(
     return plan
 
 
-def start_run(mode: str, cfg: RunConfig, prompt: Prompt, plan: Plan, **extra: Any) -> RunDir:
+def start_run(
+    mode: str, cfg: RunConfig, prompt: Prompt, plan: Plan, *, budget_usd: float, **extra: Any
+) -> RunDir:
+    """Create the run directory and manifest. ``budget_usd`` (the spend Hari approved) is saved
+    so every later step, resume included, enforces it."""
+    if not (isinstance(budget_usd, (int, float)) and math.isfinite(budget_usd) and budget_usd > 0):
+        raise ValueError(f"budget_usd must be a finite amount above 0, got {budget_usd!r}")
     run = RunDir(cfg.out_root, new_run_id(mode))
     run.create()
     run.write_json(
@@ -207,6 +230,7 @@ def start_run(mode: str, cfg: RunConfig, prompt: Prompt, plan: Plan, **extra: An
             "effort": cfg.effort,
             "max_tokens": cfg.max_tokens,
             "max_attempts": cfg.max_attempts,
+            "budget_usd": float(budget_usd),
             "titles": {p.key: list(p.gated.source_hashes) for p in plan.todo},
             "rounds": [],
             **extra,
@@ -222,6 +246,70 @@ def _set_manifest(run: RunDir, **changes: Any) -> dict[str, Any]:
     manifest.update(changes)
     run.write_json("manifest.json", manifest)
     return manifest
+
+
+# --- spend tracking ------------------------------------------------------------------------
+
+
+def request_worst_usd(prepared: Prepared, cfg: RunConfig, *, batch: bool) -> float:
+    """Upper bound on one request for this title (see cost.py)."""
+    static, variable = request_token_split(prepared.params)
+    return worst_case_request_usd(
+        cfg.model,
+        static_tokens=static,
+        variable_tokens=variable,
+        max_tokens=cfg.max_tokens,
+        batch=batch,
+    )
+
+
+@dataclass
+class SpendTracker:
+    """Measured spend of a run (every logged attempt, priced) plus worst-case reserves for
+    failed requests that may have been billed, checked against the run's budget."""
+
+    model: str
+    batch: bool
+    budget_usd: float
+    measured_usd: float = 0.0
+    reserved_usd: float = 0.0
+
+    @classmethod
+    def from_run(cls, run: RunDir, model: str, *, batch: bool) -> SpendTracker:
+        budget = run.read_json("manifest.json").get("budget_usd")
+        if budget is None:
+            raise ValueError(f"run {run.run_id} has no budget_usd in its manifest")
+        tracker = cls(model, batch, float(budget))
+        for entry in run.read_jsonl("attempts.jsonl"):
+            tracker.add(entry)
+        return tracker
+
+    def add(self, entry: dict[str, Any]) -> None:
+        self.measured_usd += price_usage(self.model, Usage(**entry["usage"]), batch=self.batch)
+        self.reserved_usd += float(entry.get("reserved_usd") or 0.0)
+
+    @property
+    def spent_usd(self) -> float:
+        return self.measured_usd + self.reserved_usd
+
+    def allows(self, next_worst_usd: float) -> bool:
+        return self.spent_usd + next_worst_usd <= self.budget_usd + 1e-9
+
+    def refusal(self, next_worst_usd: float, what: str) -> str:
+        return (
+            f"stopped: budget: spent ${self.spent_usd:.4f} (measured ${self.measured_usd:.4f} + "
+            f"reserved ${self.reserved_usd:.4f}) + worst case ${next_worst_usd:.4f} for {what} "
+            f"would exceed budget ${self.budget_usd:.4f}"
+        )
+
+
+def _stop(run: RunDir, cfg: RunConfig, status: str, unfinished: Iterable[str]) -> str:
+    """End the run cleanly: manifest status, unfinished titles, cost report."""
+    _set_manifest(
+        run, status=status, stopped_at=now_rfc3339(), unfinished=sorted(set(unfinished))
+    )
+    write_cost_report(run, cfg.model)
+    return status
 
 
 # --- attempt bookkeeping -------------------------------------------------------------------
@@ -243,6 +331,7 @@ def _log_attempt(
     round_no: int,
     response: Response | None,
     outcome: dict[str, Any] | Invalid,
+    tracker: SpendTracker,
     extra: dict[str, Any] | None = None,
 ) -> None:
     entry = {
@@ -261,6 +350,7 @@ def _log_attempt(
     }
     state.attempts.append({k: v for k, v in entry.items() if k != "raw_output_excerpt"})
     run.append("attempts.jsonl", entry)
+    tracker.add(entry)
 
 
 def _settle(
@@ -295,24 +385,45 @@ def _context(run: RunDir, cfg: RunConfig, *, batch: bool) -> RunContext:
 # --- synchronous: single title and smoke ---------------------------------------------------
 
 
+@dataclass(frozen=True)
+class SyncAttempt:
+    response: Response | None
+    outcome: dict[str, Any] | Invalid
+    latency: float
+    transient: bool = False
+
+
 def _attempt_sync(
-    api: AnnotationAPI, run: RunDir, state: TitleState, ctx: RunContext, cfg: RunConfig
-) -> tuple[Response | None, dict[str, Any] | Invalid, float]:
+    api: AnnotationAPI,
+    run: RunDir,
+    state: TitleState,
+    ctx: RunContext,
+    tracker: SpendTracker,
+    worst_usd: float,
+) -> SyncAttempt:
+    """One request. RequestRejectedError and TransientAPIError are logged as attempts (a
+    possibly-billed failure reserves ``worst_usd``); FatalAPIError propagates."""
     started = time.monotonic()
+    round_no = len(state.attempts) + 1
     try:
         response = api.create(state.prepared.params)
-    except RequestRejectedError as e:
-        outcome: dict[str, Any] | Invalid = Invalid(f"request rejected: {e}", retryable=False)
+    except (RequestRejectedError, TransientAPIError) as e:
         latency = time.monotonic() - started
+        transient = isinstance(e, TransientAPIError)
+        billed = transient and e.possibly_billed  # type: ignore[union-attr]
+        if transient:
+            outcome: dict[str, Any] | Invalid = Invalid(f"API error: {e}", retryable=True)
+        else:
+            outcome = Invalid(f"request rejected: {e}", retryable=False)
+        extra: dict[str, Any] = {"latency_s": round(latency, 3), "api_error": str(e)}
+        if billed:
+            extra["possibly_billed"] = True
+            extra["reserved_usd"] = round(worst_usd, 6)
         _log_attempt(
-            run,
-            state,
-            round_no=len(state.attempts) + 1,
-            response=None,
-            outcome=outcome,
-            extra={"latency_s": round(latency, 3)},
+            run, state, round_no=round_no, response=None, outcome=outcome, tracker=tracker,
+            extra=extra,
         )
-        return None, outcome, latency
+        return SyncAttempt(None, outcome, latency, transient)
     latency = time.monotonic() - started
     state.usage = state.usage + response.usage
     outcome = interpret(
@@ -320,47 +431,98 @@ def _attempt_sync(
         state.prepared.gated,
         ctx,
         usage_so_far=state.usage,
-        attempts=len(state.attempts) + 1,
+        attempts=round_no,
     )
     _log_attempt(
         run,
         state,
-        round_no=len(state.attempts) + 1,
+        round_no=round_no,
         response=response,
         outcome=outcome,
+        tracker=tracker,
         extra={"latency_s": round(latency, 3)},
     )
-    return response, outcome, latency
+    return SyncAttempt(response, outcome, latency)
 
 
-def run_sync(api: AnnotationAPI, run: RunDir, prepared: list[Prepared], cfg: RunConfig) -> None:
-    """Annotate titles one request at a time (full price). Retries invalid output."""
+def _backoff(n: int) -> float:
+    return min(TRANSIENT_BACKOFF_SECONDS * 2 ** (n - 1), TRANSIENT_BACKOFF_CAP_SECONDS)
+
+
+def run_sync(
+    api: AnnotationAPI,
+    run: RunDir,
+    prepared: list[Prepared],
+    cfg: RunConfig,
+    *,
+    sleep: Callable[[float], None] = time.sleep,
+) -> str:
+    """Annotate titles one request at a time (full price). Retries invalid output and
+    transient API errors, within max_attempts and the run's budget. Returns the final status
+    ("complete" or "stopped: ...")."""
     ctx = _context(run, cfg, batch=False)
-    for p in prepared:
+    tracker = SpendTracker.from_run(run, cfg.model, batch=False)
+    consecutive_transient = 0
+    for i, p in enumerate(prepared):
         state = TitleState(p)
+        worst = request_worst_usd(p, cfg, batch=False)
+        unfinished = [q.key for q in prepared[i:]]
         while not state.finished:
-            _, outcome, _ = _attempt_sync(api, run, state, ctx, cfg)
-            _settle(run, state, ctx, outcome, cfg.max_attempts)
+            if not tracker.allows(worst):
+                return _stop(run, cfg, tracker.refusal(worst, f"{p.key}"), unfinished)
+            try:
+                attempt = _attempt_sync(api, run, state, ctx, tracker, worst)
+            except FatalAPIError as e:
+                return _stop(run, cfg, f"stopped: fatal API error: {e}", unfinished)
+            _settle(run, state, ctx, attempt.outcome, cfg.max_attempts)
+            if attempt.transient:
+                consecutive_transient += 1
+                if consecutive_transient >= MAX_CONSECUTIVE_TRANSIENT_ERRORS:
+                    left = unfinished if not state.finished else unfinished[1:]
+                    return _stop(
+                        run,
+                        cfg,
+                        f"stopped: {consecutive_transient} consecutive transient API errors "
+                        f"(last: {attempt.outcome.reason})",  # type: ignore[union-attr]
+                        left,
+                    )
+                if not state.finished:
+                    sleep(_backoff(consecutive_transient))
+            else:
+                consecutive_transient = 0
     _set_manifest(run, status="complete", finished_at=now_rfc3339())
     write_cost_report(run, cfg.model)
+    return "complete"
 
 
 def run_smoke(api: AnnotationAPI, run: RunDir, prepared: Prepared, cfg: RunConfig) -> dict:
     """Exactly one request for one title; no retry. Records latency, usage, outcome."""
     ctx = _context(run, cfg, batch=False)
+    tracker = SpendTracker.from_run(run, cfg.model, batch=False)
     state = TitleState(prepared)
-    response, outcome, latency = _attempt_sync(api, run, state, ctx, cfg)
+    worst = request_worst_usd(prepared, cfg, batch=False)
+    if not tracker.allows(worst):
+        status = _stop(run, cfg, tracker.refusal(worst, prepared.key), [prepared.key])
+        return {"title_key": prepared.key, "status": status}
+    try:
+        attempt = _attempt_sync(api, run, state, ctx, tracker, worst)
+    except FatalAPIError as e:
+        status = _stop(run, cfg, f"stopped: fatal API error: {e}", [prepared.key])
+        return {"title_key": prepared.key, "status": status}
+    response, outcome = attempt.response, attempt.outcome
     _settle(run, state, ctx, outcome, max_attempts=1)
     usage = response.usage if response else Usage()
     report = {
         "title_key": prepared.key,
+        "status": "complete",
         "model": cfg.model,
         "served_model": response.model if response else None,
-        "latency_s": round(latency, 3),
+        "latency_s": round(attempt.latency, 3),
         "stop_reason": response.stop_reason if response else None,
         "request_id": response.request_id if response else None,
         "usage": usage.as_dict(),
         "cost_usd": round(price_usage(cfg.model, usage, batch=False), 5),
+        "reserved_usd": round(tracker.reserved_usd, 5),
         "schema_accepted": response is not None,
         "valid_record": not isinstance(outcome, Invalid),
         "reason": outcome.reason if isinstance(outcome, Invalid) else None,
@@ -404,7 +566,12 @@ def _collect_round(
     ctx: RunContext,
     cfg: RunConfig,
     log: Log,
+    tracker: SpendTracker,
+    logged: set[str],
 ) -> None:
+    """Process one ended batch. ``logged`` holds custom ids already in attempts.jsonl: a round
+    whose collection was interrupted is collected again on resume, and those results (and their
+    records) must not be written twice."""
     ids: dict[str, str] = round_info["custom_ids"]
     seen: set[str] = set()
     for res in api.batch_results(round_info["batch_id"]):
@@ -413,6 +580,8 @@ def _collect_round(
             log(f"ignoring unexpected batch result {res.custom_id!r}")
             continue
         seen.add(res.custom_id)
+        if res.custom_id in logged or states[key].finished:
+            continue  # already collected before an interruption
         state = states[key]
         response = res.response
         outcome: dict[str, Any] | Invalid
@@ -432,21 +601,41 @@ def _collect_round(
             )
         else:
             outcome = Invalid(f"batch result {res.kind}", retryable=True)
-        _log_attempt(run, state, round_no=round_info["round"], response=response, outcome=outcome)
+        _log_attempt(
+            run,
+            state,
+            round_no=round_info["round"],
+            response=response,
+            outcome=outcome,
+            tracker=tracker,
+            extra={"custom_id": res.custom_id},
+        )
+        logged.add(res.custom_id)
         _settle(run, state, ctx, outcome, cfg.max_attempts)
     for cid, key in ids.items():
-        if cid not in seen and not states[key].finished:
+        if cid not in seen and cid not in logged and not states[key].finished:
             outcome = Invalid("no result returned for this request", retryable=True)
             _log_attempt(
-                run, states[key], round_no=round_info["round"], response=None, outcome=outcome
+                run,
+                states[key],
+                round_no=round_info["round"],
+                response=None,
+                outcome=outcome,
+                tracker=tracker,
+                extra={"custom_id": cid},
             )
+            logged.add(cid)
             _settle(run, states[key], ctx, outcome, cfg.max_attempts)
 
 
-def _restore_states(run: RunDir, prepared: list[Prepared]) -> dict[str, TitleState]:
-    """Rebuild per-title state from the run's own files (for resume)."""
+def _restore_states(run: RunDir, prepared: list[Prepared]) -> tuple[dict[str, TitleState], set]:
+    """Rebuild per-title state from the run's own files (for resume), and the custom ids
+    already logged."""
     states = {p.key: TitleState(p) for p in prepared}
+    logged: set[str] = set()
     for entry in run.read_jsonl("attempts.jsonl"):
+        if entry.get("custom_id"):
+            logged.add(entry["custom_id"])
         state = states.get(entry["title_key"])
         if state is None:
             continue
@@ -460,7 +649,7 @@ def _restore_states(run: RunDir, prepared: list[Prepared]) -> dict[str, TitleSta
     finished |= {f["title_key"] for f in run.read_jsonl("failures.jsonl")}
     for key in finished & states.keys():
         states[key].finished = True
-    return states
+    return states, logged
 
 
 def run_batch(
@@ -473,13 +662,21 @@ def run_batch(
     sleep: Callable[[float], None] = time.sleep,
     log: Log = print,
     max_polls: int | None = None,
-) -> None:
+) -> str:
     """Submit, poll, collect; resubmit retryable failures as a new batch, up to max_attempts
-    rounds. Safe to call again on the same run after an interruption (resume)."""
+    rounds. Safe to call again on the same run after an interruption (resume). Before each
+    submission, measured spend + the round's worst case must fit the manifest's budget_usd.
+    Returns the final status ("complete" or "stopped: ...")."""
     ctx = _context(run, cfg, batch=True)
-    states = _restore_states(run, prepared)
+    tracker = SpendTracker.from_run(run, cfg.model, batch=True)
+    states, logged = _restore_states(run, prepared)
+    worst = {p.key: request_worst_usd(p, cfg, batch=True) for p in prepared}
     manifest = run.read_json("manifest.json")
     rounds: list[dict[str, Any]] = manifest["rounds"]
+
+    def unfinished() -> list[str]:
+        return [k for k, s in states.items() if not s.finished]
+
     while True:
         if rounds and not rounds[-1]["collected"]:
             current = rounds[-1]
@@ -489,15 +686,21 @@ def run_batch(
                     "stopped during submission). Check the batches in the Anthropic Console "
                     "before resuming, so nothing is paid for twice."
                 )
-            wait_for_batch(
-                api,
-                current["batch_id"],
-                poll_seconds=poll_seconds,
-                sleep=sleep,
-                log=log,
-                max_polls=max_polls,
-            )
-            _collect_round(api, run, current, states, ctx, cfg, log)
+            try:
+                wait_for_batch(
+                    api,
+                    current["batch_id"],
+                    poll_seconds=poll_seconds,
+                    sleep=sleep,
+                    log=log,
+                    max_polls=max_polls,
+                )
+                _collect_round(api, run, current, states, ctx, cfg, log, tracker, logged)
+            except FatalAPIError as e:
+                return _stop(
+                    run, cfg, f"stopped: {e} (batch {current['batch_id']}; resume later)",
+                    unfinished(),
+                )
             current["collected"] = True
             _set_manifest(run, rounds=rounds)
         pending = [s for s in states.values() if not s.finished]
@@ -508,16 +711,30 @@ def run_batch(
             for s in pending:
                 _settle(run, s, ctx, s.last_invalid or Invalid("out of attempts", False), 0)
             break
+        round_worst = sum(worst[s.prepared.key] for s in pending)
+        if not tracker.allows(round_worst):
+            status = tracker.refusal(round_worst, f"round {round_no} ({len(pending)} requests)")
+            return _stop(run, cfg, status, unfinished())
         ids = {custom_id(s.prepared.key, round_no): s.prepared.key for s in pending}
         requests = [(cid, states[key].prepared.params) for cid, key in ids.items()]
         rounds.append({"round": round_no, "batch_id": None, "custom_ids": ids, "collected": False})
         _set_manifest(run, rounds=rounds, status=f"round {round_no} submitting")
-        batch_id = api.submit_batch(requests)
+        try:
+            batch_id = api.submit_batch(requests)
+        except FatalAPIError as e:
+            return _stop(
+                run,
+                cfg,
+                f"stopped: {e}. Round {round_no} may or may not exist: check the Anthropic "
+                "Console before resuming",
+                unfinished(),
+            )
         rounds[-1]["batch_id"] = batch_id
         _set_manifest(run, rounds=rounds, status=f"round {round_no} submitted")
         log(f"round {round_no}: submitted {len(requests)} requests as batch {batch_id}")
     _set_manifest(run, status="complete", finished_at=now_rfc3339())
     write_cost_report(run, cfg.model)
+    return "complete"
 
 
 # --- cost report ---------------------------------------------------------------------------
@@ -528,9 +745,11 @@ def write_cost_report(run: RunDir, model: str) -> dict[str, Any]:
     manifest = run.read_json("manifest.json")
     batch = manifest["mode"] == "batch"
     per_title: dict[str, Usage] = {}
+    reserved = 0.0
     for entry in run.read_jsonl("attempts.jsonl"):
         key = entry["title_key"]
         per_title[key] = per_title.get(key, Usage()) + Usage(**entry["usage"])
+        reserved += float(entry.get("reserved_usd") or 0.0)
     total = sum(per_title.values(), Usage())
     annotated = len(run.read_jsonl("annotations.jsonl"))
     total_usd = price_usage(model, total, batch=batch)
@@ -543,7 +762,11 @@ def write_cost_report(run: RunDir, model: str) -> dict[str, Any]:
         "failures": len(run.read_jsonl("failures.jsonl")),
         "requests": len(run.read_jsonl("attempts.jsonl")),
         "usage_total": total.as_dict(),
+        "status": manifest.get("status"),
+        "budget_usd": manifest.get("budget_usd"),
         "usd_total": round(total_usd, 5),
+        "usd_reserved_possibly_billed": round(reserved, 5),
+        "usd_total_with_reserve": round(total_usd + reserved, 5),
         "usd_per_title_attempted": round(total_usd / len(per_title), 5) if per_title else None,
         "usd_per_record_stored": round(total_usd / annotated, 5) if annotated else None,
         "per_title_usd": {

@@ -9,14 +9,27 @@ Request layout, ordered for prompt caching (render order: tools, system, message
   closing marker block.
 - ``output_config.format``: ``model_output_schema()`` as a JSON-schema structured output.
 
-Only Wikipedia-derived identifiers go into the header: the article title from each source's
-en.wikipedia.org ref, and the media type. The title name and year in the record may come from
-TMDB, so they are never sent (docs/NARRATIVE_SCHEMA.md section 1).
+Only Wikipedia-derived identifiers go into the request besides the summary: the article title
+from each source's en.wikipedia.org ref (validated, see ``wikipedia_article_title``) and the
+media type. The title's display name and year are never sent; they come from Wikidata
+candidates and are kept out so the model reads only the summary (docs/NARRATIVE_SCHEMA.md
+section 1).
+
+``verify_request`` re-checks the built request block by block: the system prompt is the pinned
+body, every non-source block equals its expected constant or a marker rebuilt from the
+validated ref, and every source block passes the hash and word-count checks.
+
+What the hash check proves: ``content_sha256`` and ``word_count`` come from the same local plot
+file as the text, so a match shows the text is internally consistent and unchanged since
+ingest wrote the file. It does not prove the text is what Wikipedia served for that revision;
+that rests on ingest (and its HTTP cache) and on the local data directory not being tampered
+with.
 """
 
 from __future__ import annotations
 
 import hashlib
+import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -31,6 +44,7 @@ from laminary_pipeline.annotate.inputs import (
     check_text,
     gate,
 )
+from laminary_pipeline.annotation import WIKIPEDIA_ARTICLE_REF
 from laminary_pipeline.model_output import model_output_schema
 
 # prompt_version -> (file name, sha256 of the body sent). Editing a prompt without adding a new
@@ -88,10 +102,32 @@ def load_prompt(version: str, prompts_dir: Path = PROMPTS_DIR) -> Prompt:
     return prompt
 
 
+ARTICLE_PREFIX = "https://en.wikipedia.org/wiki/"
+FORBIDDEN_TITLE_CHARS = frozenset('<>[]{}|#"')
+MAX_TITLE_CHARS = 255
+
+
 def wikipedia_article_title(ref: str) -> str:
-    """'https://en.wikipedia.org/wiki/The_Matrix' -> 'The Matrix'."""
+    """'https://en.wikipedia.org/wiki/The_Matrix' -> 'The Matrix'. Raises GateError unless
+    the ref is a plain article URL and the decoded title is safe to put inside the marker:
+    no ``<>[]{}|#"``, no control or line-separator characters, at most 255 characters (the
+    MediaWiki title limit)."""
+    if not isinstance(ref, str) or not WIKIPEDIA_ARTICLE_REF.match(ref):
+        raise GateError(f"ref {ref!r} is not a plain en.wikipedia.org article URL")
     path = urlparse(ref).path
-    return unquote(path.rsplit("/", 1)[-1]).replace("_", " ")
+    if not path.startswith("/wiki/"):
+        raise GateError(f"ref {ref!r} is not an article URL")
+    try:
+        title = unquote(path[len("/wiki/") :], errors="strict").replace("_", " ")
+    except UnicodeDecodeError as e:
+        raise GateError(f"ref {ref!r}: article title is not valid UTF-8") from e
+    bad = sorted(
+        {c for c in title if c in FORBIDDEN_TITLE_CHARS or unicodedata.category(c)[0] in "CZ"}
+        - {" "}
+    )
+    if bad or not title.strip() or len(title) > MAX_TITLE_CHARS:
+        raise GateError(f"ref {ref!r}: unsafe or invalid article title {title!r}")
+    return title
 
 
 def _open_marker(i: int, meta: dict[str, Any]) -> str:
@@ -108,15 +144,18 @@ INSTRUCTION = (
 )
 
 
-def _user_content(gated: GatedInput) -> list[dict[str, Any]]:
+def _header(gated: GatedInput) -> str:
     plot = gated.plot
     n = len(plot.sources)
-    header = (
+    return (
         f"Work type: {MEDIA_LABELS[plot.title['media_type']]}\n"
         f"The plot summary follows in {n} part{'s' if n > 1 else ''}."
     )
-    blocks: list[dict[str, Any]] = [{"type": "text", "text": header}]
-    for i, src in enumerate(plot.sources):
+
+
+def _user_content(gated: GatedInput) -> list[dict[str, Any]]:
+    blocks: list[dict[str, Any]] = [{"type": "text", "text": _header(gated)}]
+    for i, src in enumerate(gated.plot.sources):
         blocks.append({"type": "text", "text": _open_marker(i, src.meta)})
         blocks.append({"type": "text", "text": src.text})
         blocks.append({"type": "text", "text": CLOSE_MARKER})
@@ -157,12 +196,36 @@ def build_request(
         "messages": [{"role": "user", "content": _user_content(gated)}],
         "output_config": output_config,
     }
-    verify_request(params, gated)
+    verify_request(params, gated, prompt)
     return gated, params
 
 
-def verify_request(params: dict[str, Any], gated: GatedInput) -> None:
-    """Re-check the exact text in the built request against the gated sources (fail closed)."""
+def _expected_non_source_blocks(gated: GatedInput) -> dict[int, str]:
+    """Position -> exact text of every block that isn't summary text."""
+    sources = gated.plot.sources
+    expected = {0: _header(gated)}
+    for i, src in enumerate(sources):
+        expected[1 + 3 * i] = _open_marker(i, src.meta)
+        expected[3 + 3 * i] = CLOSE_MARKER
+    expected[1 + 3 * len(sources)] = INSTRUCTION
+    return expected
+
+
+def verify_request(
+    params: dict[str, Any], gated: GatedInput, prompt: Prompt | None = None
+) -> None:
+    """Re-check the built request against the gated sources (fail closed): one user message;
+    every block is a plain text block; every non-source block is exactly the expected constant
+    or a marker rebuilt from the validated ref; every source block passes the hash and
+    word-count checks; with ``prompt``, the system prompt is the pinned body."""
+    if prompt is not None:
+        system = params.get("system")
+        if (
+            not isinstance(system, list)
+            or len(system) != 1
+            or system[0].get("text") != prompt.body
+        ):
+            raise GateError("request system prompt is not the pinned prompt body")
     messages = params["messages"]
     if len(messages) != 1 or messages[0]["role"] != "user":
         raise GateError("request must hold exactly one user message")
@@ -171,6 +234,12 @@ def verify_request(params: dict[str, Any], gated: GatedInput) -> None:
     indices = source_block_indices(len(sources))
     if len(content) != 2 + 3 * len(sources):
         raise GateError("request content does not match the gated sources")
+    for idx, block in enumerate(content):
+        if set(block) != {"type", "text"} or block["type"] != "text":
+            raise GateError(f"request block {idx} is not a plain text block")
+    for idx, text in _expected_non_source_blocks(gated).items():
+        if content[idx]["text"] != text:
+            raise GateError(f"request block {idx} is not the expected marker or instruction")
     total = 0
     for i, (idx, src) in enumerate(zip(indices, sources, strict=True)):
         text = content[idx]["text"]
