@@ -535,13 +535,43 @@ def test_malformed_wikidata_items_are_skipped_not_interpolated() -> None:
         season_check_sparql(SERIES, ["Q1 } UNION {"])
 
 
-def test_list_fallback_keeps_what_the_season_join_left_out() -> None:
-    """Season 1 has no plot text and season 2 is over the cap (no exception for season 2), so
-    the season join is empty and the list page is used; the report still names the seasons
-    left out over the cap."""
+def _season_one_unusable(fake: FakeWikimedia, how: str) -> None:
+    w = fake.data["wikipedia"]
+    if how == "no text":
+        w["sections:91010"] = sections("Tidewater season 1", ["Production"])
+    elif how == "unverified":
+        check = fake.data["sparql"]["season_check:" + SERIES]["results"]["bindings"]
+        check[:] = [b for b in check if not b["item"]["value"].endswith("Q9100001")]
+    else:  # missing
+        for key in ("query:Tidewater season 1", "query:Tidewater (season 1)"):
+            del w[key]
+
+
+@pytest.mark.parametrize("how", ["no text", "unverified", "missing"])
+def test_first_usable_season_over_the_cap_is_used_alone(how: str) -> None:
+    """DECISIONS 2026-10-01: the exception applies to the first usable season."""
     fake = season_fake(season_words={2: 3500})
-    fake.data["wikipedia"]["sections:91010"] = sections("Tidewater season 1", ["Production"])
+    _season_one_unusable(fake, how)
     rec = fetch(fake)
-    report = rec["season_articles"]
-    assert rec["status"] == "ok" and report["used_list_page"]
-    assert report["left_out_over_cap"] == ["Tidewater (season 2)", "Tidewater season 4"]
+    assert rec["status"] == "ok" and not rec["season_articles"]["used_list_page"]
+    assert [p["page_title"] for p in rec["sources"]] == ["Tidewater (season 2)"]
+    assert rec["word_count"] == 3500 == word_count(rec["sources"][0]["text"])
+    assert rec["season_articles"]["left_out_over_cap"] == ["Tidewater season 4"]
+
+
+@pytest.mark.parametrize("how", ["no text", "unverified", "missing"])
+def test_first_usable_season_over_the_ceiling_skips_the_title(how: str) -> None:
+    fake = season_fake(season_words={2: 6001})
+    _season_one_unusable(fake, how)
+    rec = fetch(fake)
+    assert rec["status"] == "skipped" and rec["skip_reason"] == "season_too_long"
+    assert "Tidewater (season 2) (6001 words)" in rec["skip_detail"]
+    assert not rec["season_articles"]["used_list_page"]
+
+
+def test_usable_season_one_under_the_cap_behaves_as_before() -> None:
+    """Season 1 has text and is under the cap, so season 2 over the cap is left out, not used
+    alone."""
+    rec = fetch(season_fake(season_words={1: 200, 2: 3500}))
+    assert [p["page_title"] for p in rec["sources"]] == ["Tidewater season 1"]
+    assert rec["season_articles"]["left_out_over_cap"][0] == "Tidewater (season 2)"

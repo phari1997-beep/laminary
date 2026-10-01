@@ -23,9 +23,10 @@ story there; the main article holds only a premise.
    page yields text.
 4. **Cap:** seasons are added in order while the total stays within SEASON_WORD_CAP words and
    MAX_SEASON_SOURCES pages. The first season that would cross the cap stops the join, and it
-   and later seasons are left out; a season is never cut mid-way. Exception: if season 1 alone
-   is over the cap, season 1 is used in full and alone, up to SEASON_ONE_CEILING words; a
-   longer season 1 skips the title (``season_too_long``). The 150-word rule then applies to
+   and later seasons are left out; a season is never cut mid-way. Exception: if the first
+   usable season (season 1, or the first later season when season 1 is missing, unverified or
+   has no text) is alone over the cap, it is used in full and alone, up to SEASON_ONE_CEILING
+   words; a longer one skips the title (``season_too_long``). The 150-word rule then applies to
    the joined total.
 
 Each page becomes its own source (``kind: wikipedia_plot``, CC BY-SA, ref, revision,
@@ -48,8 +49,9 @@ if TYPE_CHECKING:
     from laminary_pipeline.ingest.wikipedia import PlotFetcher
 
 SEASON_WORD_CAP = 3000  # DECISIONS 2026-10-01
-# First-season exception (DECISIONS 2026-10-01): season 1 is used whole, alone, even over the
-# cap, up to this hard ceiling; above it the title is skipped (season_too_long).
+# First-season exception (DECISIONS 2026-10-01): the first usable season (season 1, or the
+# first later one when season 1 is missing, unverified or has no text) is used whole and alone
+# even over the cap, up to this hard ceiling; above it the title is skipped (season_too_long).
 SEASON_ONE_CEILING = 6000
 MAX_SEASONS = 20  # season numbers guessed by title
 MAX_SEASON_SOURCES = 20  # also the schema's provenance.sources maxItems
@@ -141,7 +143,7 @@ class SeasonResult:
     skipped: list[dict[str, str]]  # {"title", "reason"}
     left_out_over_cap: list[str]
     used_list_page: bool
-    too_long: str | None = None  # season 1 over SEASON_ONE_CEILING: "<title> (<n> words)"
+    too_long: str | None = None  # first usable season over the ceiling: "<title> (<n> words)"
 
     @property
     def words(self) -> int:
@@ -260,8 +262,9 @@ class SeasonFinder:
 
         result = self._join(seasons, skipped)
         if not result.texts and lists and result.too_long is None:
-            # keep what the season join left out (QA nit 3); with the season-1 exception a
-            # season join only ends empty when every season lacks text or season 1 is too long
+            # keep what the season join left out (QA nit 3). With the first-usable-season
+            # exception a season join only ends empty when no season has text (left_out is
+            # then empty) or that season is too long (no fallback), so this is defensive.
             left_out = result.left_out_over_cap
             result = self._join(lists[:1], skipped)
             result.left_out_over_cap = left_out + result.left_out_over_cap
@@ -302,8 +305,8 @@ class SeasonFinder:
                 skipped.append({"title": page.title, "reason": "no plot, summary or synopsis "
                                 "section with prose"})
                 continue
-            if not out.texts and page.season == 1 and st.words > self.cap:
-                # first-season exception: season 1 whole and alone, or nothing
+            if not out.texts and page.season is not None and st.words > self.cap:
+                # first-season exception: the first usable season whole and alone, or nothing
                 if st.words > self.ceiling:
                     out.too_long = f"{page.title} ({st.words} words)"
                     out.left_out_over_cap = [p.title for p in pages[i:]]
