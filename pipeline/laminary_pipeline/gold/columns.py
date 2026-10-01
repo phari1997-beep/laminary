@@ -10,7 +10,7 @@ from __future__ import annotations
 from laminary_pipeline.annotation import load_schema
 
 # Version of docs/GOLD_LABELING_GUIDE.md. Stored as provenance.annotator.guide_version.
-GUIDE_VERSION = "1.2.0"
+GUIDE_VERSION = "1.3.0"
 
 
 def _enum(name: str) -> list[str]:
