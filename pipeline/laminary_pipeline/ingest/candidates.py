@@ -19,10 +19,13 @@ Rationale (also in the Phase 1 report and data/README.md):
   be drawn from the pilot.
 - **Reserves**: ~30% extra per bucket, ranked, used by ``plots --backfill`` to replace titles
   that fail the 150-word rule without changing the mix.
-- Excluded: documentaries, concert films, stand-up, reality/competition/talk/sketch shows, and
-  anthology series (no series-level story to annotate); titles with no (or several) TMDB ids in
-  Wikidata, because LLM and gold records require one. Those are counted per bucket in the
-  summary, since regional titles are the most likely to lack one.
+- Excluded: documentaries, concert films, stand-up, reality/competition/talk/sketch shows,
+  game, quiz, factual, educational and preschool edutainment shows, wrestling, and anthology
+  series (no series-level story to annotate), by genre label plus a short hand-checked QID list
+  (``NON_NARRATIVE_QIDS``) for edutainment Wikidata labels only as "children's television";
+  titles with no (or several) TMDB ids in Wikidata, because LLM and gold records require one.
+  Those are counted per bucket in the summary, since regional titles are the most likely to
+  lack one.
 
 All selection is deterministic: ties break on sitelinks, then QID.
 """
@@ -48,7 +51,7 @@ from laminary_pipeline.ingest.wikidata import (
     Wikidata,
 )
 
-SELECTOR_VERSION = "1.0.0"
+SELECTOR_VERSION = "1.1.0"  # 1.1.0: non-narrative series filter (DECISIONS 2026-10-01)
 RESERVE_RATIO = 0.3
 FAME_SHARE = 0.5  # share of each cell taken purely by sitelinks before genre round-robin
 
@@ -110,7 +113,20 @@ GENRE_GROUPS: tuple[tuple[str, tuple[str, ...]], ...] = (
 EXCLUDE_GENRE_WORDS = (
     "documentary", "concert", "stand-up", "reality", "game show", "talk show", "variety show",
     "sketch comedy", "anthology", "news", "docudrama series", "nature",
+    # 1.1.0 (DECISIONS 2026-10-01): game, reality, educational and documentary-style shows.
+    # Matched as substrings of the English genre labels, so each is specific enough not to hit
+    # story genres ("travel" alone would match "time-travel fiction").
+    "factual", "educational", "edutainment", "preschool", "children's music", "talent show",
+    "quiz", "professional wrestling", "sports entertainment", "cooking show",
+    "travel documentary", "lifestyle", "makeover", "dating show", "hidden camera",
+    "infotainment", "instructional", "docuseries", "competition television",
 )
+# Non-narrative titles whose Wikidata genres don't say so (children's edutainment). Checked
+# by hand; extend when a pilot review finds another.
+NON_NARRATIVE_QIDS = {
+    "Q3109770": "Zoboomafoo: children's wildlife edutainment",
+    "Q41403": "Teletubbies: preschool edutainment without a series-level story",
+}
 
 
 def coarse_genre(genres: Iterable[str]) -> str:
@@ -122,6 +138,8 @@ def coarse_genre(genres: Iterable[str]) -> str:
 
 
 def excluded_reason(item: dict[str, Any]) -> str | None:
+    if item.get("qid") in NON_NARRATIVE_QIDS:
+        return "non_narrative:listed"
     labels = " | ".join(g.lower() for g in item.get("genres", []))
     for word in EXCLUDE_GENRE_WORDS:
         if word in labels:

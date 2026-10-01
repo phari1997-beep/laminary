@@ -179,6 +179,41 @@ def test_exclusions() -> None:
 
 
 @pytest.mark.parametrize(
+    "genre,reason",
+    [
+        ("factual television program", "genre:factual"),  # MythBusters
+        ("singing talent show", "genre:talent show"),  # American Idol
+        ("educational television", "genre:educational"),  # Barney & Friends
+        ("professional wrestling", "genre:professional wrestling"),  # WWE SmackDown
+        ("preschool television series", "genre:preschool"),
+        ("quiz show", "genre:quiz"),
+        ("reality television", "genre:reality"),
+        ("game show", "genre:game show"),
+    ],
+)
+def test_non_narrative_series_are_excluded(genre: str, reason: str) -> None:
+    assert c.excluded_reason(item("tv_series", "english", 2003, 90, genre)) == reason
+
+
+def test_listed_non_narrative_titles_are_excluded() -> None:
+    """Zoboomafoo's Wikidata genres look like a children's comedy; it is listed by QID."""
+    zobo = item("tv_series", "english", 1999, 90, "children's television series")
+    zobo["qid"] = "Q3109770"
+    assert c.excluded_reason(zobo) == "non_narrative:listed"
+    assert c.SELECTOR_VERSION == "1.1.0"
+
+
+@pytest.mark.parametrize(
+    "genre",
+    ["time-travel fiction", "music television", "mockumentary", "sports drama",
+     "biographical television program", "children's television series", "natural horror film",
+     "teen sitcom", "musical"],
+)
+def test_story_genres_are_not_caught_by_the_new_words(genre: str) -> None:
+    assert c.excluded_reason(item("tv_series", "english", 2010, 90, genre)) is None
+
+
+@pytest.mark.parametrize(
     ("kw", "bucket"),
     [
         ({"media_type": "movie", "lang": "tamil", "country": "Q668"}, "film:tamil"),
