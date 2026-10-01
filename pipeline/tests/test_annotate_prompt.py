@@ -462,3 +462,14 @@ def test_old_ingest_ongoing_is_read_as_unknown() -> None:
     assert parse_plot(obj, "t").title["series_status"] == "unknown"
     obj["candidate"]["series_status_basis"] = "P582_novalue"
     assert parse_plot(obj, "t").title["series_status"] == "ongoing"
+
+
+def test_title_without_a_year_is_reported_unusable_with_a_clear_reason(tmp_path: Path) -> None:
+    """QA nit 1: records require release_year, so a year-less title is unusable before any
+    request is built (the builder's omit-the-line path stays covered by the test above)."""
+    obj = ingest_plot("Q7")
+    obj["candidate"]["year"] = None
+    with pytest.raises(NotAnnotatable, match="no release year"):
+        parse_plot(obj, "t")
+    write_plots(tmp_path, [obj])
+    assert "no release year" in dict(load_plots(tmp_path).unusable)[str(tmp_path / "Q7.json")]

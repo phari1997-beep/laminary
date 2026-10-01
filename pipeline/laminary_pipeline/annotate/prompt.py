@@ -15,7 +15,10 @@ annotate-1.1.0 on, the release year. The release year is the only non-Wikipedia 
 (Wikidata, CC0; DECISIONS 2026-09-30): the prompt's ``historical_past`` vs ``contemporary``
 definitions are relative to it. It is sent only as a validated integer between
 MIN_RELEASE_YEAR and the current year + 2 (``prompt_release_year``); any other value refuses the
-title, and a missing year omits the line (the prompt says how to judge without it). The title's
+title. A title with no year never reaches the builder: the schema requires ``release_year`` on
+every record, so ``inputs.parse_plot`` reports it unusable (and candidates without a year are
+excluded at ingest). The builder would omit the line, and the prompt says how to judge without
+it, so the behaviour stays defined if the schema ever makes the year optional. The title's
 display name is never sent, so the model reads only the summary (docs/NARRATIVE_SCHEMA.md
 section 1).
 

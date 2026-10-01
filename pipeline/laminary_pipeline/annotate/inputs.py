@@ -140,6 +140,8 @@ def parse_plot(obj: Any, origin: str) -> PlotInput:
     title, sources = obj.get("title"), obj.get("sources")
     if isinstance(title, dict) and not isinstance(title.get("tmdb_id"), int):
         raise NotAnnotatable("no integer tmdb_id (LLM records require one)")
+    if isinstance(title, dict) and title.get("release_year") is None:
+        raise NotAnnotatable("no release year (records require release_year)")
     errors = [e.message for e in _def_validator("title").iter_errors(title)]
     if errors:
         raise InputFormatError(f"{origin}: title: {'; '.join(errors)}")
