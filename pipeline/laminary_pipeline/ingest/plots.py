@@ -12,7 +12,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from laminary_pipeline.ingest.candidates import BUCKETS
+from laminary_pipeline.ingest.candidates import BUCKETS, language_display
 from laminary_pipeline.ingest.paths import DataPaths, read_json, write_json_atomic
 from laminary_pipeline.ingest.wikipedia import SKIP_FETCH_ERROR, PlotFetcher
 
@@ -163,7 +163,7 @@ def plots_report(paths: DataPaths, candidates: Sequence[dict[str, Any]]) -> dict
         "skip_reasons": dict(sorted(reasons.items())),
         "by_media_type": by(lambda c: c["media_type"]),
         "by_region": by(lambda c: c["region"]),
-        "by_language": by(lambda c: c["language"]),
+        "by_language": by(language_display),
         "by_decade": by(lambda c: c["decade"]),
         "by_bucket": by(lambda c: c["bucket"]),
         "by_role": by(lambda c: c["role"]),
@@ -192,7 +192,7 @@ def format_report(report: dict[str, Any]) -> str:
                        ("By bucket", "by_bucket")):
         lines.append(f"{title}:")
         for k, v in report[key].items():
-            lines.append(f"  {k:<18} {v['ok']:>4}/{v['total']:<4} {_pct(v['pass_rate'])}")
+            lines.append(f"  {k:<26} {v['ok']:>4}/{v['total']:<4} {_pct(v['pass_rate'])}")
     eff = report["effective_pilot"]
     lines.append(f"Effective pilot (after backfill): {eff['total']}/{eff['slots']} slots filled")
     lines.append("  " + ", ".join(f"{b} {v}" for b, v in eff["by_bucket"].items()))

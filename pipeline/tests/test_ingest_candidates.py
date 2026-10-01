@@ -291,3 +291,23 @@ def test_gather_runs_pool_seed_and_detail_queries() -> None:
     assert items["Q9000001"]["seed_labels"] == ["Lantern Keeper"]
     assert fake.hosts == {"query.wikidata.org"}
     assert all(r.method == "POST" for r in fake.requests)
+
+
+def test_language_labels_come_from_wikidata() -> None:
+    """Reports show other languages by their Wikidata label, not a bare QID."""
+    data = FakeWikimedia().data["sparql"]["detail"]
+    binding = {
+        **data["results"]["bindings"][0],
+        "languages": {"type": "literal", "value": "Q188|Q7976"},
+        "language_labels": {"type": "literal",
+                            "value": "Q188=German|Q7976=American English|bad"},
+    }
+    item = parse_details({"results": {"bindings": [binding]}})["Q9000001"]
+    assert item["language_labels"] == {"Q188": "German", "Q7976": "American English"}
+    assert "rdfs:label ?langLabel_" in detail_sparql(["Q1"])
+    assert c.language_display({"language": "Q188", "language_labels": {"Q188": "German"}}) == (
+        "German (Q188)"
+    )
+    assert c.language_display({"language": "english", "language_labels": {}}) == "english"
+    assert c.language_display({"language": "Q7979"}) == "Q7979"  # older files: no labels
+    assert c.language_display({"language": None}) == "unknown"

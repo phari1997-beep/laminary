@@ -170,6 +170,14 @@ def classify(item: dict[str, Any]) -> str:
     return "tv:world" if tv else "film:world"
 
 
+def language_display(candidate: dict[str, Any]) -> str:
+    """A candidate's primary language for reports: the bucket name for named languages
+    ("english"), else the English Wikidata label with its QID ("German (Q188)"), else the QID."""
+    lang = candidate.get("language") or "unknown"
+    label = (candidate.get("language_labels") or {}).get(lang)
+    return f"{label} ({lang})" if label else lang
+
+
 def primary_language(item: dict[str, Any]) -> str:
     for qid in item.get("languages", []):
         if qid in LANG_NAME:
@@ -410,6 +418,10 @@ def _row(
         "genre": it["genre"],
         "genres": it["genres"],
         "languages": it["languages"],
+        "language_labels": {
+            q: label for q, label in it.get("language_labels", {}).items()
+            if q in it["languages"]
+        },
         "countries": it["countries"],
         "sitelinks": it["sitelinks"],
         "gold_seed": seed_title is not None,

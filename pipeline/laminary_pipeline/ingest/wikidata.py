@@ -108,6 +108,8 @@ SELECT ?item
   (GROUP_CONCAT(DISTINCT ?imdb_; separator="|") AS ?imdb)
   (GROUP_CONCAT(DISTINCT STRAFTER(STR(?class_), "entity/"); separator="|") AS ?classes)
   (GROUP_CONCAT(DISTINCT STRAFTER(STR(?lang_), "entity/"); separator="|") AS ?languages)
+  (GROUP_CONCAT(DISTINCT CONCAT(STRAFTER(STR(?lang_), "entity/"), "=", ?langLabel_);
+                separator="|") AS ?language_labels)
   (GROUP_CONCAT(DISTINCT STRAFTER(STR(?country_), "entity/"); separator="|") AS ?countries)
   (GROUP_CONCAT(DISTINCT ?genreLabel_; separator="|") AS ?genres)
 WHERE {{
@@ -123,7 +125,8 @@ WHERE {{
   OPTIONAL {{ ?item wdt:P4947 ?tmdbMovie_ . }}
   OPTIONAL {{ ?item wdt:P4983 ?tmdbTv_ . }}
   OPTIONAL {{ ?item wdt:P345 ?imdb_ . }}
-  OPTIONAL {{ ?item wdt:P364 ?lang_ . }}
+  OPTIONAL {{ ?item wdt:P364 ?lang_ .
+             OPTIONAL {{ ?lang_ rdfs:label ?langLabel_ . FILTER(LANG(?langLabel_) = "en") }} }}
   OPTIONAL {{ ?item wdt:P495 ?country_ . }}
   OPTIONAL {{ ?item wdt:P136 ?genre_ . ?genre_ rdfs:label ?genreLabel_ .
              FILTER(LANG(?genreLabel_) = "en") }}
@@ -165,6 +168,16 @@ def _value(binding: dict[str, Any], name: str) -> str | None:
 
 def qid_from_uri(uri: str) -> str:
     return uri.rsplit("/", 1)[-1]
+
+
+def _pairs(value: str | None) -> dict[str, str]:
+    """'Q188=German|Q150=French' -> {'Q188': 'German', 'Q150': 'French'}."""
+    out = {}
+    for item in _split(value):
+        key, sep, label = item.partition("=")
+        if sep and key and label:
+            out[key] = label
+    return out
 
 
 def _split(value: str | None) -> list[str]:
@@ -276,6 +289,7 @@ def parse_details(data: dict[str, Any]) -> dict[str, dict[str, Any]]:
             "sitelinks": _int(_value(b, "sitelinks")) or 0,
             "classes": classes,
             "languages": _split(_value(b, "languages")),
+            "language_labels": _pairs(_value(b, "language_labels")),
             "countries": _split(_value(b, "countries")),
             "genres": _split(_value(b, "genres")),
         }
