@@ -36,7 +36,12 @@ from typing import Any
 
 from laminary_pipeline.annotation import require_wikipedia_sources
 from laminary_pipeline.ingest.http import HttpClient, HttpError
-from laminary_pipeline.ingest.seasons import SEASON_WORD_CAP, SeasonFinder, SeasonResult
+from laminary_pipeline.ingest.seasons import (
+    SEASON_ONE_CEILING,
+    SEASON_WORD_CAP,
+    SeasonFinder,
+    SeasonResult,
+)
 from laminary_pipeline.ingest.text import html_to_text, sha256_text, word_count
 
 FETCHER_VERSION = "1.1.0"  # 1.1.0: per-season articles for thin series
@@ -71,6 +76,7 @@ SKIP_QID_MISMATCH = "qid_mismatch"
 SKIP_NO_SECTION = "no_plot_section"
 SKIP_TOO_SHORT = "too_short"
 SKIP_FETCH_ERROR = "fetch_error"  # transient: retried on the next run
+SKIP_SEASON_TOO_LONG = "season_too_long"  # season 1 alone over seasons.SEASON_ONE_CEILING
 VIA_SEASON_ARTICLES = "season_articles"
 
 
@@ -285,7 +291,16 @@ class PlotFetcher:
             "left_out_over_cap": found.left_out_over_cap,
             "used_list_page": found.used_list_page,
             "word_cap": self.season_word_cap,
+            "season_one_ceiling": SEASON_ONE_CEILING,
         }
+        if found.too_long is not None:
+            return {
+                **skipped,
+                "skip_reason": SKIP_SEASON_TOO_LONG,
+                "skip_detail": f"season 1 alone is over {SEASON_ONE_CEILING} words: "
+                f"{found.too_long}"[:300],
+                "season_articles": report,
+            }
         if found.words < self.min_words:
             detail = (
                 f"{skipped.get('skip_detail') or skipped['skip_reason']}; season articles: "

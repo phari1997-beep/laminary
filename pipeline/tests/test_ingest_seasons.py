@@ -75,7 +75,9 @@ def sections(title: str, headings: list[str]) -> dict[str, Any]:
 SEASON_WORDS = {1: 120, 2: 130, 4: 2900}
 
 
-def season_fake(*, ordinals: dict[str, int] | None = None) -> FakeWikimedia:
+def season_fake(
+    *, ordinals: dict[str, int] | None = None, season_words: dict[int, int] | None = None
+) -> FakeWikimedia:
     """A thin main article and its seasons:
 
     - season 1 ("Tidewater season 1", also reached via the redirect "Tidewater (season 1)"):
@@ -109,7 +111,7 @@ def season_fake(*, ordinals: dict[str, int] | None = None) -> FakeWikimedia:
         w[f"sections:{rev}"] = sections(title, heads)
         for i, h in enumerate(heads, 1):
             if h in ("Plot", "Synopsis"):
-                body = words(SEASON_WORDS.get(n, 100), f"s{n}w")
+                body = words({**SEASON_WORDS, **(season_words or {})}.get(n, 100), f"s{n}w")
                 w[f"text:{rev}:{i}"] = section_html(h, body)
             else:
                 w[f"text:{rev}:{i}"] = section_html(h, "", table=True)
@@ -431,3 +433,36 @@ def test_thin_series_from_an_older_fetcher_are_fetched_again(tmp_path: Path) -> 
     assert not needs_fetch(paths, "Q1", False)  # already tried with the fallback
     write_json_atomic(paths.plot_file("Q1"), {**old, "candidate": {"media_type": "movie"}})
     assert not needs_fetch(paths, "Q1", False)
+
+
+# --- first-season exception (DECISIONS 2026-10-01) -----------------------------------------
+
+
+def test_season_one_over_the_cap_is_used_alone_and_whole() -> None:
+    rec = fetch(season_fake(season_words={1: 3500}))
+    assert rec["status"] == "ok"
+    assert [p["page_title"] for p in rec["sources"]] == ["Tidewater season 1"]
+    assert rec["word_count"] == 3500 == word_count(rec["sources"][0]["text"])  # not cut
+    assert rec["season_articles"]["left_out_over_cap"] == [
+        "Tidewater (season 2)", "Tidewater season 4"
+    ]
+
+
+def test_a_later_season_over_the_cap_is_excluded() -> None:
+    rec = fetch(season_fake(season_words={1: 200, 2: 3200}))
+    assert rec["status"] == "ok"
+    assert [p["page_title"] for p in rec["sources"]] == ["Tidewater season 1"]
+    assert rec["word_count"] == 200
+    assert rec["season_articles"]["left_out_over_cap"][0] == "Tidewater (season 2)"
+
+
+def test_season_one_over_the_ceiling_skips_the_title() -> None:
+    from laminary_pipeline.ingest.seasons import SEASON_ONE_CEILING
+
+    assert SEASON_ONE_CEILING == 6000
+    rec = fetch(season_fake(season_words={1: 6001}))
+    assert rec["status"] == "skipped" and rec["skip_reason"] == "season_too_long"
+    assert "Tidewater season 1 (6001 words)" in rec["skip_detail"]
+    assert not rec["season_articles"]["used_list_page"]  # no fallback to the list page
+    ok = fetch(season_fake(season_words={1: 6000}))
+    assert ok["status"] == "ok" and ok["word_count"] == 6000

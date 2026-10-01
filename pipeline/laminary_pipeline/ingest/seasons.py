@@ -23,8 +23,10 @@ story there; the main article holds only a premise.
    page yields text.
 4. **Cap:** seasons are added in order while the total stays within SEASON_WORD_CAP words and
    MAX_SEASON_SOURCES pages. The first season that would cross the cap stops the join, and it
-   and later seasons are left out; a season is never cut mid-way. The 150-word rule then
-   applies to the joined total.
+   and later seasons are left out; a season is never cut mid-way. Exception: if season 1 alone
+   is over the cap, season 1 is used in full and alone, up to SEASON_ONE_CEILING words; a
+   longer season 1 skips the title (``season_too_long``). The 150-word rule then applies to
+   the joined total.
 
 Each page becomes its own source (``kind: wikipedia_plot``, CC BY-SA, ref, revision,
 ``content_sha256`` of that page's text, ``season``). The annotation request sends one summary
@@ -46,6 +48,9 @@ if TYPE_CHECKING:
     from laminary_pipeline.ingest.wikipedia import PlotFetcher
 
 SEASON_WORD_CAP = 3000  # DECISIONS 2026-10-01
+# First-season exception (DECISIONS 2026-10-01): season 1 is used whole, alone, even over the
+# cap, up to this hard ceiling; above it the title is skipped (season_too_long).
+SEASON_ONE_CEILING = 6000
 MAX_SEASONS = 20  # season numbers guessed by title
 MAX_SEASON_SOURCES = 20  # also the schema's provenance.sources maxItems
 QUERY_BATCH = 50  # MediaWiki's limit on titles per query
@@ -132,6 +137,7 @@ class SeasonResult:
     skipped: list[dict[str, str]]  # {"title", "reason"}
     left_out_over_cap: list[str]
     used_list_page: bool
+    too_long: str | None = None  # season 1 over SEASON_ONE_CEILING: "<title> (<n> words)"
 
     @property
     def words(self) -> int:
@@ -141,9 +147,13 @@ class SeasonResult:
 class SeasonFinder:
     """Season-article lookup for one PlotFetcher (same HTTP client, throttle and cache)."""
 
-    def __init__(self, fetcher: PlotFetcher, *, cap: int = SEASON_WORD_CAP) -> None:
+    def __init__(
+        self, fetcher: PlotFetcher, *, cap: int = SEASON_WORD_CAP,
+        ceiling: int = SEASON_ONE_CEILING,
+    ) -> None:
         self.fetcher = fetcher
         self.cap = cap
+        self.ceiling = ceiling
 
     # ---------- discovery ----------
 
@@ -238,7 +248,7 @@ class SeasonFinder:
         lists = [p for p in verified if p.season is None]
 
         result = self._join(seasons, skipped)
-        if not result.texts and lists:
+        if not result.texts and lists and result.too_long is None:
             result = self._join(lists[:1], skipped)
             result.used_list_page = True
         return result
@@ -277,6 +287,15 @@ class SeasonFinder:
                 skipped.append({"title": page.title, "reason": "no plot, summary or synopsis "
                                 "section with prose"})
                 continue
+            if not out.texts and page.season == 1 and st.words > self.cap:
+                # first-season exception: season 1 whole and alone, or nothing
+                if st.words > self.ceiling:
+                    out.too_long = f"{page.title} ({st.words} words)"
+                    out.left_out_over_cap = [p.title for p in pages[i:]]
+                else:
+                    out.texts.append(st)
+                    out.left_out_over_cap = [p.title for p in pages[i + 1 :]]
+                break
             if total + st.words > self.cap or len(out.texts) >= MAX_SEASON_SOURCES:
                 out.left_out_over_cap = [p.title for p in pages[i:]]
                 break
