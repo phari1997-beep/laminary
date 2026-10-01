@@ -1,0 +1,46 @@
+#!/bin/sh
+# Laminary pre-commit hook (DECISIONS 2026-10-01). Enabled by scripts/bootstrap.sh via
+#   git config core.hooksPath .githooks
+# Runs `ruff check .` and `pytest -q` in pipeline/ when the commit touches pipeline/ or docs/
+# (docs are included because a test checks that backticked identifiers in docs exist).
+# Anything else (e.g. scripts/ only) skips in milliseconds. No network. Bypass for emergencies
+# only: git commit --no-verify. See docs/ENVIRONMENTS.md section 6.
+#
+# Known limitation: checks run against the WORKING TREE, not the staged snapshot. Unstaged edits
+# can make the hook pass or fail when the index alone would not. Stashing unstaged changes to test
+# the index exactly is fragile (partial stages, untracked files, a crash mid-hook loses work), so
+# we accept the gap; CI on main/PRs tests the committed tree.
+set -u
+
+ROOT="$(git rev-parse --show-toplevel)" || exit 1
+
+# --no-renames lists both sides of a rename, so moving a file out of pipeline/ still counts.
+# Deletions count too (deleting a module can break tests). Respects GIT_INDEX_FILE, so
+# `git commit -a` and `git commit <paths>` see the right file list.
+if ! git diff --cached --name-only --no-renames -z | tr '\0' '\n' | grep -q -E '^(pipeline|docs)/'; then
+  exit 0
+fi
+
+PIPE="$ROOT/pipeline"
+if [ ! -x "$PIPE/.venv/bin/python" ] || [ ! -x "$PIPE/.venv/bin/ruff" ]; then
+  echo "pre-commit: pipeline/.venv is missing or incomplete (need .venv/bin/python and .venv/bin/ruff)." >&2
+  echo "pre-commit: run scripts/bootstrap.sh to build it, then commit again." >&2
+  exit 1
+fi
+
+# Git exports GIT_INDEX_FILE (and sometimes GIT_DIR/GIT_WORK_TREE) to hooks. Clear them for the
+# tools so any test that shells out to git, or builds a temp repo, can't act on this repo's index.
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
+
+cd "$PIPE" || exit 1
+echo "pre-commit: ruff check (pipeline/)" >&2
+if ! .venv/bin/ruff check .; then
+  echo "pre-commit: ruff failed; commit aborted." >&2
+  exit 1
+fi
+echo "pre-commit: pytest -q (pipeline/)" >&2
+if ! .venv/bin/python -m pytest -q; then
+  echo "pre-commit: tests failed; commit aborted." >&2
+  exit 1
+fi
+exit 0

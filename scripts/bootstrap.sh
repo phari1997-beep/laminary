@@ -209,6 +209,12 @@ if [ -f .env ]; then
   if git ls-files --error-unmatch .env >/dev/null 2>&1; then note "WARNING: .env is TRACKED by git. Run: git rm --cached .env"; fi
 fi
 
+# ---------------------------------------------------------------- 8b. git hooks
+say "8b. git hooks (.githooks/pre-commit: ruff + pytest in pipeline/)"
+if ! git rev-parse --git-dir >/dev/null 2>&1; then note "not a git checkout; skipping"
+elif [ "$(git config --local --get core.hooksPath 2>/dev/null)" = .githooks ]; then note "core.hooksPath already .githooks"
+else act git config --local core.hooksPath .githooks; fi
+
 # ---------------------------------------------------------------- 9. Verify
 say "9. Verification"
 FAIL=0
@@ -244,6 +250,9 @@ row shellcheck 0 cmd shellcheck --version
 row xcodebuild 0 cmd xcodebuild -version
 if [ -x "$REPO/pipeline/.venv/bin/python" ]; then row pipeline-venv 1 cmd "$REPO/pipeline/.venv/bin/python" --version
 else printf '  MISSING  %-12s\n' pipeline-venv; FAIL=1; fi
+if [ "$(git config --local --get core.hooksPath 2>/dev/null)" = .githooks ] && [ -x "$REPO/.githooks/pre-commit" ]; then
+  printf '  PASS     %-12s core.hooksPath=.githooks\n' git-hooks
+else printf '  MISSING  %-12s run scripts/bootstrap.sh (sets core.hooksPath)\n' git-hooks; FAIL=1; fi
 if have docker && docker info >/dev/null 2>&1; then printf '  PASS     %-12s running\n' docker-daemon
 else printf '  MISSING  %-12s not running\n' docker-daemon; FAIL=1; fi
 [ "$WANT_EAS" = 1 ] && row eas 1 cmd eas --version
