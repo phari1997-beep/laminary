@@ -71,7 +71,7 @@ summary → Claude (Batch, fixed JSON schema) → tags + four layers + arc point
 Version every record (model, prompt, source). Pilot 500 titles to measure cost before scaling.
 
 ### 5.5 Quality [data-pipeline + qa]
-Gold set of ~100 titles hand-labeled by Hari (+ friends). Target ≥80% top-level archetype agreement before launch.
+Gold set of ~100 titles hand-labeled by Hari (+ friends). Target: two-part gate (DECISIONS 2026-09-30): ≥85% top-level archetype agreement (or within 5 points of human–human agreement), and ≥95% accuracy on labels shown at ≥0.95 confidence.
 
 ---
 
@@ -126,7 +126,7 @@ Top risks: availability cost/licensing; tag accuracy; low willingness to pay; in
 - [ ] Ingest 500 titles [data-pipeline]
 - [ ] Annotation pipeline + evaluation script [data-pipeline]; review [qa]
 - [ ] Prompt iteration until target met [data-pipeline]
-- **Exit:** ≥80% archetype agreement; cost per title known
+- **Exit:** two-part gate: ≥85% archetype agreement (or within 5 points of human agreement) and ≥95% accuracy on shown labels (DECISIONS 2026-09-30); cost per title known
 
 ### Phase 2 — Availability + scale (3 weeks)
 - [ ] Vendor comparison [backend + sre] → Hari decides

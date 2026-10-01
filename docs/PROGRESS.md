@@ -17,13 +17,16 @@ Current phase: **Phase 1 — Narrative data pilot** (started 2026-09-30)
   - Deferred until the first email is sent: double opt-in; optional signup throttle. Other polish items parked (see QA notes).
 
 ## Phase 1
-- [ ] Ingestion (Wikidata candidates, Wikipedia plots) + gold-set tooling [data-pipeline] — in progress
-- [ ] Annotation pipeline + evaluation script (mocked; no live calls) [data-pipeline] — in progress
+- [x] 2026-10-01 — Ingestion (Wikidata candidates, Wikipedia plots) + gold-set tooling [data-pipeline] — QA: pass after three rounds; merged to main (345d2f5).
+- [x] 2026-10-01 — Annotation pipeline + evaluation script (mocked; no live calls) [data-pipeline] — QA: pass after three rounds; merged to main (345d2f5). Budget enforced per request/round against a worst case, run lock, Wikipedia-only request gate re-verified.
+  - Follow-ups (QA should-fix, not blocking): `run.lock` deleted by hand bypasses the lock (check inode after flock); exact-count pricing margin ~1.05; namespace/interwiki gate gaps in the ref label; doc note on thread re-entrancy; `--abandon-round`. Budget is per run, not global.
+  - Pending, blocked on permissions (Hari to allow edits): commit the 0.95 display threshold; two-part exit gate + double labeling; prompt annotate-1.1.0 with release year; schema 1.1.0 (series_status `unknown`, tighter ref); gold text files for Drive.
+  - Pending [sre]: add `anthropic` to pipeline/pyproject.toml (Hari has sre in another session; confirm who does it).
+- [x] 2026-10-01 — Live ingestion smoke run (free) [coordinator]: `candidates --limit 20` took 4m24s (WDQS); pool 1,735; 20 picked (15 films, 5 series, 13 buckets), 19 are gold seeds; all have TMDB and IMDb ids. Missing seeds: True Detective, Paatal Lok, Your Lie in April, Mushishi. `plots --limit 20`: 20/20 fetched, 20/20 pass the 150-word rule. Nit: two languages print as raw QIDs (Q188, Q7976) in the report.
 - [ ] Live smoke call: one structured-output request (needs Hari: API key + spend approval)
 - [ ] Gold set of ~100 titles labeled (Hari + friends)
 - [ ] 500-title pilot annotation (needs Hari's spend approval) → agreement vs gold, cost per title
-- [ ] Prompt iteration until ≥80% primary-plot agreement
-- Blocked on environment: en.wikipedia.org, www.wikidata.org, query.wikidata.org not allowed by network policy; no ANTHROPIC_API_KEY yet.
+- [ ] Prompt iteration until the two-part gate passes: ≥85% primary-plot agreement (or within 5 points of human agreement) and ≥95% accuracy on labels shown at ≥0.95 confidence (DECISIONS 2026-09-30)
 
 ## Handoff: moving from the cloud session to a local Claude Code session (2026-09-30)
 - **Unreviewed Phase 1 code is on branch `claude/laminary-repo-setup-zyy6go`, not on main yet.** It covers ingestion, gold tooling, annotation and evaluation, and a QA review was in progress in the cloud session. If that review didn't finish and merge, the local session should:
@@ -45,7 +48,7 @@ Current phase: **Phase 1 — Narrative data pilot** (started 2026-09-30)
   - Titles with no TMDB id in Wikidata are excluded; alternatively, relax the schema to key on the Wikidata QID.
   - Pilot mix: 350 films and 150 series, with regional quotas.
   - Per-field confidence in the gold sheet?
-  - About 15 titles double-labeled?
+  - ~~About 15 titles double-labeled?~~ Decided 2026-09-30: 20–25 titles double-labeled.
   - Confirm the CC BY-SA 3.0 → 4.0 date (2023-06-29).
   - Add a cache-write token field in schema 1.1.0.
 - **Scratch files are not in the repo:** the landing SVGs are in Drive (Laminary → Landing page arc SVGs); the privacy text is live on the site.
