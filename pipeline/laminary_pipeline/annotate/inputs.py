@@ -27,7 +27,10 @@ is built and again on the built request (``prompt.verify_request``):
 - every source passes ``annotation.require_wikipedia_sources`` (one bad source rejects the
   title; TMDB text never gets through);
 - SHA-256 of each exact text equals the source's ``content_sha256``;
-- each text's word count equals its ``word_count``, and the total is at least 150.
+- each text's word count equals its ``word_count``, and the total is at least 150;
+- at most the schema's ``provenance.sources.maxItems`` sources, several sources total at most
+  the season-article cap, and season-article input at most the season-1 ceiling
+  (``check_source_limits``), so a record that could not be stored is never paid for.
 """
 
 from __future__ import annotations
@@ -42,6 +45,7 @@ from typing import Any
 from jsonschema import Draft202012Validator
 
 from laminary_pipeline.annotation import format_checker, load_schema, require_wikipedia_sources
+from laminary_pipeline.ingest.seasons import SEASON_ONE_CEILING, SEASON_WORD_CAP
 from laminary_pipeline.ingest.text import word_count
 from laminary_pipeline.ingest.wikidata import effective_series_status
 
@@ -245,7 +249,33 @@ def gate(plot: PlotInput) -> GatedInput:
     total = sum(count_words(s.text) for s in plot.sources)
     if total < MIN_SUMMARY_WORDS:
         raise GateError(f"{plot.key}: {total} words of summary, minimum is {MIN_SUMMARY_WORDS}")
+    check_source_limits(plot, total)
     return GatedInput(plot)
+
+
+def max_sources() -> int:
+    """The schema's limit on provenance.sources: a record with more could not be stored."""
+    return int(load_schema()["$defs"]["provenance"]["properties"]["sources"]["maxItems"])
+
+
+def check_source_limits(plot: PlotInput, total: int) -> None:
+    """Refuse inputs that ingest's season-article rules (DECISIONS 2026-10-01) can't produce,
+    before any paid call: more sources than a record may hold; several sources over the
+    season word cap; any season-article input over the season-1 ceiling. A single main
+    article has no upper word limit (unchanged)."""
+    n = len(plot.sources)
+    if n > max_sources():
+        raise GateError(f"{plot.key}: {n} sources, a record holds at most {max_sources()}")
+    if n > 1 and total > SEASON_WORD_CAP:
+        raise GateError(
+            f"{plot.key}: {n} sources with {total} words, over the {SEASON_WORD_CAP}-word "
+            "season-article cap"
+        )
+    if any("season" in s.meta for s in plot.sources) and total > SEASON_ONE_CEILING:
+        raise GateError(
+            f"{plot.key}: season-article input of {total} words, over the "
+            f"{SEASON_ONE_CEILING}-word ceiling"
+        )
 
 
 def read_titles_file(path: Path) -> list[str]:

@@ -466,3 +466,42 @@ def test_season_one_over_the_ceiling_skips_the_title() -> None:
     assert not rec["season_articles"]["used_list_page"]  # no fallback to the list page
     ok = fetch(season_fake(season_words={1: 6000}))
     assert ok["status"] == "ok" and ok["word_count"] == 6000
+
+
+# --- gate limits on multi-source input (QA should-fix 1, probe7) ---------------------------
+
+
+def _plot_with(texts: list[str], *, seasons: bool = True):
+    from annotate_support import source_meta
+
+    from laminary_pipeline.annotate.inputs import PlotInput, PlotSource
+
+    srcs = []
+    for i, text in enumerate(texts, 1):
+        meta = source_meta(text, ref=f"https://en.wikipedia.org/wiki/Tidewater_season_{i}")
+        if seasons:
+            meta["season"] = i
+        srcs.append(PlotSource(meta, text))
+    return PlotInput({"media_type": "tv_series", "tmdb_id": 91000}, tuple(srcs), "t")
+
+
+def test_gate_refuses_more_sources_than_a_record_holds() -> None:
+    from laminary_pipeline.annotate.inputs import max_sources
+
+    assert max_sources() == 20
+    with pytest.raises(GateError, match="21 sources, a record holds at most 20"):
+        gate(_plot_with([words(10, f"p{i}w") for i in range(21)]))
+    assert len(gate(_plot_with([words(10, f"p{i}w") for i in range(20)])).plot.sources) == 20
+
+
+def test_gate_refuses_multi_source_input_over_the_cap() -> None:
+    with pytest.raises(GateError, match="over the 3000-word season-article cap"):
+        gate(_plot_with([words(1600, "a"), words(1600, "b")]))
+    gate(_plot_with([words(1500, "a"), words(1500, "b")]))  # exactly at the cap
+
+
+def test_gate_bounds_a_lone_season_by_the_ceiling() -> None:
+    gate(_plot_with([words(6000, "a")]))  # season-1 exception
+    with pytest.raises(GateError, match="over the 6000-word ceiling"):
+        gate(_plot_with([words(6001, "a")]))
+    gate(_plot_with([words(6001, "a")], seasons=False))  # a main article has no upper limit
