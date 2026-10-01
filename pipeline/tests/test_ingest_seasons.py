@@ -515,6 +515,11 @@ def test_season_one_over_the_ceiling_skips_the_title() -> None:
     assert rec["status"] == "skipped" and rec["skip_reason"] == "season_too_long"
     assert "Tidewater season 1 (6001 words)" in rec["skip_detail"]
     assert not rec["season_articles"]["used_list_page"]  # no fallback to the list page
+    # no stubs before it, so no stubs-only fallback either (DECISIONS 2026-10-01)
+    assert rec["season_articles"]["used"] == []
+    assert rec["season_articles"]["left_out_over_cap"] == [
+        "Tidewater season 1", "Tidewater (season 2)", "Tidewater season 4"
+    ]
     ok = fetch(season_fake(season_words={1: 6000}))
     assert ok["status"] == "ok" and ok["word_count"] == 6000
 
@@ -653,16 +658,19 @@ def test_two_stub_seasons_lead_the_first_full_season() -> None:
 
 
 def test_lead_block_is_bounded_by_the_ceiling() -> None:
+    """100 + 5,900 is at the ceiling and used whole. 100 + 5,901 is over it: the full season
+    is dropped and the 100-word stub alone fails the 150-word minimum (DECISIONS 2026-10-01,
+    fallback; was season_too_long)."""
     ok = fetch(season_fake(season_words={1: 100, 2: 5900}))
     assert ok["status"] == "ok" and ok["word_count"] == 6000
     assert _titles(ok) == [S1, S2]
     gate(parse_plot(ok, "t"))
     rec = fetch(season_fake(season_words={1: 100, 2: 5901}))
-    assert rec["status"] == "skipped" and rec["skip_reason"] == "season_too_long"
-    assert "Tidewater season 1 + Tidewater (season 2) (6001 words)" in rec["skip_detail"]
+    assert rec["status"] == "skipped" and rec["skip_reason"] == "too_short"
+    assert "1 usable with 100 words" in rec["skip_detail"]
     assert not rec["season_articles"]["used_list_page"]  # no fallback to the list page
-    assert rec["season_articles"]["used"] == []
-    assert rec["season_articles"]["left_out_over_cap"] == [S1, S2, S4]
+    assert rec["season_articles"]["used"] == [S1]
+    assert rec["season_articles"]["left_out_over_cap"] == [S2, S4]
 
 
 def test_short_lead_block_joins_later_seasons_under_the_cap() -> None:
@@ -734,10 +742,32 @@ def test_two_stubs_over_150_lead_the_first_full_season() -> None:
     gate(parse_plot(rec, "t"))
 
 
-def test_stub_lead_block_one_word_over_the_ceiling_skips_the_title() -> None:
+def test_stub_lead_block_one_word_over_the_ceiling_uses_the_stub_alone() -> None:
+    """DECISIONS 2026-10-01 (fallback): 450 + 5,551 = 6,001 is over the ceiling, so season 2
+    and later pages are left out and season 1 is used alone (was season_too_long)."""
     rec = fetch(season_fake(season_words={1: 450, 2: 5551}))
-    assert rec["status"] == "skipped" and rec["skip_reason"] == "season_too_long"
-    assert "Tidewater season 1 + Tidewater (season 2) (6001 words)" in rec["skip_detail"]
+    assert rec["status"] == "ok" and _titles(rec) == [S1]
+    assert rec["word_count"] == 450
+    assert rec["season_articles"]["left_out_over_cap"] == [S2, S4]
+    assert not rec["season_articles"]["used_list_page"]
+    gate(parse_plot(rec, "t"))
+
+
+def test_two_stubs_over_the_ceiling_are_used_without_the_full_season() -> None:
+    """499 + 499 + 5,003 = 6,001: both stubs (998 words, under the cap) are used alone."""
+    rec = fetch(season_fake(season_words={1: 499, 2: 499, 4: 5003}))
+    assert rec["status"] == "ok" and _titles(rec) == [S1, S2]
+    assert rec["word_count"] == 998 and rec["season_articles"]["left_out_over_cap"] == [S4]
+    gate(parse_plot(rec, "t"))
+
+
+def test_stubs_alone_under_the_minimum_are_too_short() -> None:
+    """60 + 70 + 5,900 = 6,030 is over the ceiling; the stubs alone (130) are under 150."""
+    rec = fetch(season_fake(season_words={1: 60, 2: 70, 4: 5900}))
+    assert rec["status"] == "skipped" and rec["skip_reason"] == "too_short"
+    assert "2 usable with 130 words" in rec["skip_detail"]
+    assert rec["season_articles"]["used"] == [S1, S2]
+    assert rec["season_articles"]["left_out_over_cap"] == [S4]
     assert not rec["season_articles"]["used_list_page"]
 
 
@@ -870,3 +900,32 @@ def test_source_limit_inside_the_lead_block_then_the_cap_applies() -> None:
     assert rec["season_articles"]["left_out_over_cap"] == [
         f"Tidewater season {n}" for n in range(8, 22)
     ]
+
+
+# --- stubs alone when the lead block is over the ceiling (DECISIONS 2026-10-01) --------------
+
+
+def test_stubs_over_the_ceiling_are_trimmed_under_the_cap() -> None:
+    """13 x 490 + 500 = 6,870: season 14 is dropped and the stubs-only trim keeps 6 stubs
+    (2,940; a 7th would make 3,430). The rest are left out in order (was skipped)."""
+    rec = fetch(many_seasons_fake([490] * 13 + [500]))
+    assert rec["status"] == "ok" and rec["word_count"] == 2940
+    assert _titles(rec) == [f"Tidewater season {n}" for n in range(1, 7)]
+    assert rec["season_articles"]["left_out_over_cap"] == [
+        f"Tidewater season {n}" for n in range(7, 15)
+    ]
+    gate(parse_plot(rec, "t"))
+
+
+def test_ceiling_fallback_matches_the_source_limit_case() -> None:
+    """QA's inconsistency: 19 x 499 + 500 (over the ceiling) and 20 x 499 + 3,000 (source
+    limit first) now both end as stubs only, trimmed to the same 6 stubs (2,994 words)."""
+    over = fetch(many_seasons_fake([499] * 19 + [500]))
+    limit = fetch(many_seasons_fake([499] * 20 + [3000]))
+    for rec, last in ((over, 20), (limit, 21)):
+        assert rec["status"] == "ok" and rec["word_count"] == 2994
+        assert _titles(rec) == [f"Tidewater season {n}" for n in range(1, 7)]
+        assert rec["season_articles"]["left_out_over_cap"] == [
+            f"Tidewater season {n}" for n in range(7, last + 1)
+        ]
+        gate(parse_plot(rec, "t"))

@@ -28,11 +28,14 @@ story there; the main article holds only a premise.
    own text is under STUB_SEASON_WORDS (500) words, judged per season. Stub seasons before the
    first full season (500+ words) are kept and joined, in order, with that season; seasons
    that are missing, unverified or have no text don't count. That lead block may run past the
-   cap, up to SEASON_ONE_CEILING words; over the ceiling the title is skipped
-   (``season_too_long``, no list-page fallback). If the lead block is over the cap nothing
-   more is added; otherwise later seasons join under the cap as above. With no full season at
-   all (or when MAX_SEASON_SOURCES is reached before one), the stubs join under the cap as
-   usual. The fetcher's separate 150-word minimum then applies to the joined total.
+   cap, up to SEASON_ONE_CEILING words. Over the ceiling (fallback, DECISIONS 2026-10-01): if
+   stubs lead it, the full season and every later page are left out and the stubs are used
+   alone, joined under the cap as stubs only (below); a lone full season over the ceiling, with
+   no stubs before it, skips the title (``season_too_long``, no list-page fallback). If the
+   lead block is over the cap nothing more is added; otherwise later seasons join under the
+   cap as above. With no full season at all (or when MAX_SEASON_SOURCES is reached before
+   one), the stubs join under the cap as usual. The fetcher's separate 150-word minimum then
+   applies to the joined total (so 100 + 5,901 words ends as too_short on the 100-word stub).
 
 Each page becomes its own source (``kind: wikipedia_plot``, CC BY-SA, ref, revision,
 ``content_sha256`` of that page's text, ``season``). The annotation request sends one summary
@@ -60,8 +63,8 @@ SEASON_WORD_CAP = 3000  # DECISIONS 2026-10-01
 STUB_SEASON_WORDS = 500
 # Lead block (DECISIONS 2026-10-01): the first full season (STUB_SEASON_WORDS+ words) with the
 # seasons before it that are missing/unverified/no text, or are stubs (the stubs are joined
-# with it), is used whole even over the cap, up to this hard ceiling; above it the title is
-# skipped (season_too_long).
+# with it), is used whole even over the cap, up to this hard ceiling. Above it the stubs are
+# used alone under the cap, or, with no stubs, the title is skipped (season_too_long).
 SEASON_ONE_CEILING = 6000
 MAX_SEASONS = 20  # season numbers guessed by title
 MAX_SEASON_SOURCES = 20  # also the schema's provenance.sources maxItems
@@ -153,7 +156,7 @@ class SeasonResult:
     skipped: list[dict[str, str]]  # {"title", "reason"}
     left_out_over_cap: list[str]
     used_list_page: bool
-    too_long: str | None = None  # lead block over the ceiling: "<title> + <title> (<n> words)"
+    too_long: str | None = None  # lone full season over the ceiling: "<title> (<n> words)"
 
     @property
     def words(self) -> int:
@@ -274,8 +277,9 @@ class SeasonFinder:
         result = self._join(seasons, skipped)
         if not result.texts and lists and result.too_long is None:
             # keep what the season join left out (QA nit 3). With the lead block a season join
-            # only ends empty when no season has text (left_out is then empty) or the lead
-            # block is too long (no fallback), so this is defensive.
+            # only ends empty when no season has text (left_out is then empty) or a lone full
+            # season is over the ceiling (no fallback), so this is defensive. Stubs alone
+            # (the over-the-ceiling fallback) always keep at least one stub.
             left_out = result.left_out_over_cap
             result = self._join(lists[:1], skipped)
             result.left_out_over_cap = left_out + result.left_out_over_cap
@@ -328,12 +332,17 @@ class SeasonFinder:
                 if st.words < self.stub_words:
                     continue  # a stub season: kept for the first full season after it
                 in_lead = False
-                if total > self.ceiling:  # the lead block over the ceiling: skip the title
-                    out.too_long = (f"{' + '.join(t.page.title for t in out.texts)} "
-                                    f"({total} words)")
-                    out.left_out_over_cap = [t.page.title for t in out.texts] + [
-                        p.title for p in pages[i + 1 :]
-                    ]
+                if total > self.ceiling and len(out.texts) > 1:
+                    # stubs + the full season over the ceiling (DECISIONS 2026-10-01, fallback):
+                    # drop the full season and later pages; the stubs-only trim below applies
+                    full = out.texts.pop()
+                    total -= full.words
+                    in_lead = True
+                    out.left_out_over_cap = [full.page.title] + [p.title for p in pages[i + 1 :]]
+                    break
+                if total > self.ceiling:  # a lone full season over the ceiling: skip the title
+                    out.too_long = f"{st.page.title} ({total} words)"
+                    out.left_out_over_cap = [p.title for p in pages[i:]]
                     out.texts = []
                     break
                 if total > self.cap:  # the lead block over the cap: used alone, nothing added

@@ -45,8 +45,9 @@ from laminary_pipeline.ingest.seasons import (
 )
 from laminary_pipeline.ingest.text import html_to_text, sha256_text, word_count
 
-FETCHER_VERSION = "1.2.0"  # 1.1.0: per-season articles for thin series; 1.2.0: lead block
-# of stub seasons (under STUB_SEASON_WORDS, 500) before the first full season
+FETCHER_VERSION = "1.3.0"  # 1.1.0: per-season articles for thin series; 1.2.0: lead block
+# of stub seasons (under STUB_SEASON_WORDS, 500) before the first full season; 1.3.0: stubs
+# alone when the lead block is over the 6,000-word ceiling
 MIN_WORDS = 150
 API_URL = "https://en.wikipedia.org/w/api.php"
 WIKIDATA_API_URL = "https://www.wikidata.org/w/api.php"
@@ -78,7 +79,7 @@ SKIP_QID_MISMATCH = "qid_mismatch"
 SKIP_NO_SECTION = "no_plot_section"
 SKIP_TOO_SHORT = "too_short"
 SKIP_FETCH_ERROR = "fetch_error"  # transient: retried on the next run
-SKIP_SEASON_TOO_LONG = "season_too_long"  # season lead block over SEASON_ONE_CEILING
+SKIP_SEASON_TOO_LONG = "season_too_long"  # lone full season over SEASON_ONE_CEILING
 VIA_SEASON_ARTICLES = "season_articles"
 
 
@@ -303,7 +304,7 @@ class PlotFetcher:
             return {
                 **skipped,
                 "skip_reason": SKIP_SEASON_TOO_LONG,
-                "skip_detail": f"first full season (with any stub seasons before it) is over "
+                "skip_detail": f"first full season (no stub seasons before it) is over "
                 f"{SEASON_ONE_CEILING} words: "
                 f"{found.too_long}"[:300],
                 "season_articles": report,
