@@ -39,13 +39,17 @@ WIKIPEDIA_REF = WIKIPEDIA_ARTICLE_REF  # the schema mirror
 ARTICLE_PREFIX = "https://en.wikipedia.org/wiki/"
 FORBIDDEN_TITLE_CHARS = frozenset('<>[]{}|#"')
 MAX_TITLE_CHARS = 255
-# Non-article namespaces (and common aliases) on English Wikipedia. Compared case-insensitively
-# with the text before the first ':'; film titles like "Alien: Covenant" are not affected.
+# Prefixes that stop a title from being an English Wikipedia article. The text before the first
+# ':' is compared after MediaWiki-style normalization (one leading ':' dropped, runs of spaces
+# collapsed, case-insensitive); film titles like "Alien: Covenant" are not affected. No real
+# article can start with one of these followed by ':', because MediaWiki would read it as a
+# namespace or interwiki link, so refusing them costs no real titles.
+# 1. Namespaces and their aliases.
 NON_ARTICLE_NAMESPACES = frozenset(
     ns.casefold()
     for base in (
         "User", "Wikipedia", "File", "MediaWiki", "Template", "Help", "Category", "Portal",
-        "Draft", "TimedText", "Module", "Gadget", "Gadget definition",
+        "Draft", "TimedText", "Module", "Gadget", "Gadget definition", "Event",
     )
     for ns in (base, f"{base} talk")
 ) | frozenset(
@@ -53,6 +57,50 @@ NON_ARTICLE_NAMESPACES = frozenset(
     for ns in ("Talk", "Special", "Media", "Image", "Image talk", "Project", "Project talk",
                "WP", "WT")
 )
+# 2. Pseudo-namespaces: shortcut redirects in the main namespace (MOS:PLOT, CAT:X, H:X, ...).
+PSEUDO_NAMESPACES = frozenset(
+    p.casefold() for p in ("MOS", "CAT", "H", "P", "T", "MP", "WikiProject", "WPT", "Wikt")
+)
+# 3. Interwiki prefixes for sister projects and common Wikimedia sites.
+INTERWIKI_PREFIXES = frozenset(
+    """w wikipedia wikt wiktionary b wikibooks n wikinews q wikiquote s wikisource v wikiversity
+    voy wikivoyage species wikispecies d wikidata f wikifunctions c commons m meta metawikimedia
+    metawiki mw mediawikiwiki foundation wmf wikimedia outreach incubator phab phabricator
+    testwiki test2wiki betawikiversity quality strategy usability toollabs toolforge wikitech
+    mediazilla bugzilla gerrit irc""".split()
+)
+# 4. Wikipedia language editions (interlanguage prefixes), including "en" itself.
+LANGUAGE_PREFIXES = frozenset(
+    """aa ab ace ady af ak als alt am ami an ang anp ar arc ary arz as ast atj av avk awa ay az
+    azb ba ban bar bat-smg bbc bcl bdr be be-tarask be-x-old bew bg bh bi bjn blk bm bn bo bpy
+    br bs btm bug bxr ca cbk-zam cdo ce ceb ch cho chr chy ckb co cr crh cs csb cu cv cy da dag
+    de dga din diq dsb dtp dty dv dz ee el eml en eo es et eu ext fa fat ff fi fiu-vro fj fo
+    fon fr frp frr fur fy ga gag gan gcr gd gl glk gn gom gor got gpe gsw gu guc gur guw gv ha
+    hak haw he hi hif ho hr hsb ht hu hy hyw hz ia iba id ie ig igl ii ik ilo inh io is it iu
+    ja jam jbo jv ka kaa kab kbd kbp kcg kg kge ki kj kk kl km kn knc ko koi kr krc ks ksh ku
+    kus kv kw ky la lad lb lbe lez lfn lg li lij lld lmo ln lo lrc lt ltg lv lzh mad mai
+    map-bms mdf mg mh mhr mi min mk ml mn mni mnw mo mos mr mrj ms mt mus mwl my myv mzn na nah
+    nan nap nds nds-nl ne new ng nia nl nn no nov nqo nr nrm nso nup nv ny oc olo om or os pa
+    pag pam pap pcd pcm pdc pfl pi pih pl pms pnb pnt ps pt pwn qu rm rmy rn ro roa-rup
+    roa-tara rsk ru rue rup rw sa sah sat sc scn sco sd se sg sgs sh shi shn si simple sk skr
+    sl sm smn sn so sq sr srn ss st stq su sv sw syl szl szy ta tay tcy tdd te tet tg th ti
+    tig tk tl tly tn to tpi tr trv ts tt tum tw ty tyv udm ug uk ur uz ve vec vep vi vls vo
+    vro wa war wo wuu xal xh xmf yi yo yue za zea zgh zh zh-classical zh-min-nan zh-yue
+    zu""".split()
+)
+NOT_ARTICLE_PREFIXES = (
+    NON_ARTICLE_NAMESPACES | PSEUDO_NAMESPACES | INTERWIKI_PREFIXES | LANGUAGE_PREFIXES
+)
+
+
+def _title_prefix(title: str) -> str | None:
+    """The normalized text before the first ':' (MediaWiki-style: surrounding spaces and one
+    leading ':' dropped, runs of spaces collapsed, casefolded), or None without a ':'."""
+    norm = re.sub(r" +", " ", title).strip()
+    if norm.startswith(":"):
+        norm = norm[1:].lstrip()
+    prefix, sep, _ = norm.partition(":")
+    return prefix.strip().casefold() if sep else None
 
 
 @cache
@@ -148,7 +196,8 @@ def wikipedia_article_title(ref: object) -> str:
     """'https://en.wikipedia.org/wiki/The_Matrix' -> 'The Matrix'. Raises ValueError unless
     the ref is a plain article URL and the decoded title is safe to put inside the prompt's
     marker: no ``<>[]{}|#"``, no control or line-separator characters, at most 255 characters
-    (the MediaWiki title limit), and not in a non-article namespace."""
+    (the MediaWiki title limit), and no namespace, shortcut, interwiki or language prefix
+    (NOT_ARTICLE_PREFIXES, compared after MediaWiki-style normalization)."""
     if not isinstance(ref, str) or not WIKIPEDIA_ARTICLE_REF.match(ref):
         raise ValueError(f"ref {ref!r} is not a plain en.wikipedia.org article URL")
     path = urlparse(ref).path
@@ -164,9 +213,12 @@ def wikipedia_article_title(ref: object) -> str:
     )
     if bad or not title.strip() or len(title) > MAX_TITLE_CHARS:
         raise ValueError(f"ref {ref!r}: unsafe or invalid article title {title!r}")
-    prefix, sep, _ = title.partition(":")
-    if sep and prefix.strip().casefold() in NON_ARTICLE_NAMESPACES:
-        raise ValueError(f"ref {ref!r}: {prefix.strip()!r} pages are not articles")
+    prefix = _title_prefix(title)
+    if prefix is not None and prefix in NOT_ARTICLE_PREFIXES:
+        raise ValueError(
+            f"ref {ref!r}: {prefix!r} pages are not articles (namespace, shortcut, interwiki "
+            "or language prefix)"
+        )
     return title
 
 

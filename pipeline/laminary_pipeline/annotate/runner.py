@@ -20,12 +20,12 @@ reserves) plus the worst case of what it is about to send would exceed the budge
 cleanly: manifest ``status`` starts with ``stopped:`` and lists the unfinished titles, and
 cost.json is written. Fatal API errors stop the run the same way.
 
-Locking: run_batch, run_sync and run_smoke hold an exclusive ``fcntl.flock`` on
-``<run>/run.lock`` for their whole duration (the CLI's resume holds it from before it reads the
-manifest). A second process on the same run refuses to start (RunLockedError) instead of
-building its own spend tracker from a stale view of the run. The OS releases the lock when the
-holder exits or dies. Per-title state, the manifest and attempts.jsonl are read only after the
-lock is held.
+Locking: run_batch, run_sync and run_smoke hold an exclusive ``fcntl.flock`` on the run
+directory (``run_lock``; ``<run>/run.lock`` only notes the holder) for their whole duration
+(the CLI's resume holds it from before it reads the manifest). A second process on the same
+run refuses to start (RunLockedError) instead of building its own spend tracker from a stale
+view of the run. The OS releases the lock when the holder exits or dies. Per-title state, the
+manifest and attempts.jsonl are read only after the lock is held.
 
 Idempotency: a title is skipped when any run under the annotations directory already holds a
 record with the same title, model, prompt version and set of source content hashes. Failures
@@ -68,6 +68,7 @@ from laminary_pipeline.annotate.config import (
     TRANSIENT_BACKOFF_SECONDS,
 )
 from laminary_pipeline.annotate.cost import (
+    EXACT_COUNT_MARGIN,
     price_usage,
     request_token_split,
     worst_case_request_usd,
@@ -118,7 +119,7 @@ class RunDir:
     def __init__(self, root: Path, run_id: str) -> None:
         self.run_id = run_id
         self.path = root / run_id
-        self._lock_fd: int | None = None  # set while this handle holds run.lock
+        self._lock_fd: int | None = None  # set while this handle holds the run lock
 
     def file(self, name: str) -> Path:
         return self.path / name
@@ -145,31 +146,46 @@ class RunDir:
         return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line]
 
 
+LOCK_INFO = "run.lock"
+
+
 @contextmanager
 def run_lock(run: RunDir) -> Iterator[None]:
-    """Hold an exclusive, non-blocking flock on ``<run>/run.lock``. Re-entrant for the same
-    RunDir object (the CLI locks before reading the manifest, then calls run_batch with the
-    same handle); any other handle, in this process or another, gets RunLockedError."""
+    """Hold an exclusive, non-blocking flock on the run directory itself.
+
+    The lock is on the directory's descriptor, not on a file inside it, so deleting
+    ``run.lock`` by hand can't let a second process in: a lock file can be unlinked while
+    held, and the next process would create and lock a fresh file (QA should-fix,
+    runner.py:158). ``run.lock`` is now only a note of who holds the lock, for the error
+    message. The OS releases the lock when the process exits, however it exits (SIGKILL
+    included), because closing the last descriptor releases a flock.
+
+    Re-entrancy is per RunDir object: the CLI locks before reading the manifest, then calls
+    run_batch with the same handle, and the inner call is a no-op. Any other handle, in this
+    process or another, gets RunLockedError. A RunDir is not thread-safe: two threads sharing
+    one handle would both pass the re-entrancy check.
+    """
     if run._lock_fd is not None:
         yield
         return
     if not run.path.is_dir():
         raise FileNotFoundError(f"run directory {run.path} does not exist")
-    fd = os.open(run.file("run.lock"), os.O_RDWR | os.O_CREAT, 0o644)
+    fd = os.open(run.path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
     try:
         try:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError as e:
             if e.errno not in (errno.EWOULDBLOCK, errno.EAGAIN, errno.EACCES):
                 raise
-            holder = os.pread(fd, 200, 0).decode("utf-8", "replace").strip() or "unknown"
             raise RunLockedError(
-                f"run {run.run_id} is in use by another process ({holder}). Wait for it to "
-                "finish or stop it before resuming; two processes on one run would each "
-                "enforce the budget separately."
+                f"run {run.run_id} is in use by another process ({_lock_holder(run)}). Wait "
+                "for it to finish or stop it before resuming; two processes on one run would "
+                "each enforce the budget separately."
             ) from e
-        os.ftruncate(fd, 0)
-        os.pwrite(fd, f"pid {os.getpid()} since {now_rfc3339()}\n".encode(), 0)
+        info = run.file(LOCK_INFO)
+        tmp = run.file(LOCK_INFO + ".tmp")
+        tmp.write_text(f"pid {os.getpid()} since {now_rfc3339()}\n", encoding="utf-8")
+        tmp.replace(info)
         run._lock_fd = fd
         try:
             yield
@@ -177,6 +193,13 @@ def run_lock(run: RunDir) -> Iterator[None]:
             run._lock_fd = None
     finally:
         os.close(fd)  # closing the descriptor releases the flock
+
+
+def _lock_holder(run: RunDir) -> str:
+    try:
+        return run.file(LOCK_INFO).read_text(encoding="utf-8")[:200].strip() or "unknown"
+    except OSError:
+        return "unknown"
 
 
 # --- idempotency ---------------------------------------------------------------------------
@@ -310,7 +333,7 @@ def request_worst_usd(
 ) -> float:
     """Upper bound on one request for this title (see cost.py). With an exact input count
     (count_tokens endpoint), every input token is priced at the cache-write rate, the most
-    expensive input rate, with no estimate margin."""
+    expensive input rate, with the small EXACT_COUNT_MARGIN."""
     if exact_input_tokens is not None:
         return worst_case_request_usd(
             cfg.model,
@@ -318,7 +341,7 @@ def request_worst_usd(
             variable_tokens=0,
             max_tokens=cfg.max_tokens,
             batch=batch,
-            input_margin=1.0,
+            input_margin=EXACT_COUNT_MARGIN,
         )
     static, variable = request_token_split(prepared.params)
     return worst_case_request_usd(

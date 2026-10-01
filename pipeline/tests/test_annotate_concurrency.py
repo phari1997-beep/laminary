@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import signal
 import subprocess
 import sys
 import textwrap
@@ -35,6 +36,7 @@ from laminary_pipeline.annotate.client import (
 )
 from laminary_pipeline.annotate.config import DEFAULT_PROMPT_VERSION, MODELS
 from laminary_pipeline.annotate.cost import (
+    EXACT_COUNT_MARGIN,
     SCHEMA_CHARS_PER_TOKEN,
     price_usage,
     schema_tokens,
@@ -164,24 +166,30 @@ def test_lock_is_released_when_a_run_raises(env) -> None:
         pass  # acquirable again
 
 
-def test_cli_resume_refuses_while_another_process_holds_the_lock(env, tmp_path) -> None:
-    plots, cfg = env
-    plan, run = prepare(plots, cfg, "batch", budget=100)
+def hold_lock_in_subprocess(run: RunDir) -> subprocess.Popen:
+    """Another pipeline process holding ``run``'s lock until its stdin gets a line."""
     holder = textwrap.dedent(
         f"""
-        import fcntl, os, sys
-        fd = os.open({str(run.file("run.lock"))!r}, os.O_RDWR | os.O_CREAT)
-        fcntl.flock(fd, fcntl.LOCK_EX)
-        os.write(fd, b"pid holder")
-        print("locked", flush=True)
-        sys.stdin.readline()
+        import sys
+        from pathlib import Path
+        from laminary_pipeline.annotate.runner import RunDir, run_lock
+        with run_lock(RunDir(Path({str(run.path.parent)!r}), {run.run_id!r})):
+            print("locked", flush=True)
+            sys.stdin.readline()
         """
     )
     proc = subprocess.Popen(
         [sys.executable, "-c", holder], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True
     )
+    assert proc.stdout.readline().strip() == "locked"
+    return proc
+
+
+def test_cli_resume_refuses_while_another_process_holds_the_lock(env, tmp_path) -> None:
+    plots, cfg = env
+    plan, run = prepare(plots, cfg, "batch", budget=100)
+    proc = hold_lock_in_subprocess(run)
     try:
-        assert proc.stdout.readline().strip() == "locked"
         before = run.read_json("manifest.json")
         code, text = cli(
             ["batch", "--resume", run.run_id, "--plots-dir", str(plots), "--out-dir",
@@ -189,12 +197,60 @@ def test_cli_resume_refuses_while_another_process_holds_the_lock(env, tmp_path) 
             api=FakeAPI(batch_script=all_invalid()),
         )
         assert code == 2 and "in use by another process" in text
+        assert f"pid {proc.pid}" in text
         assert run.read_json("manifest.json") == before  # nothing written, budget unchanged
     finally:
         proc.communicate("\n", timeout=10)
     # the holder exited, so the OS released the lock
     with run_lock(RunDir(cfg.out_root, run.run_id)):
         pass
+
+
+def test_deleting_run_lock_by_hand_does_not_bypass_the_lock(env) -> None:
+    """QA should-fix (runner.py:158): the lock is on the run directory, not on run.lock."""
+    plots, cfg = env
+    plan, run = prepare(plots, cfg, "batch", budget=100)
+    with run_lock(RunDir(cfg.out_root, run.run_id)):
+        run.file("run.lock").unlink()
+        with pytest.raises(RunLockedError, match="unknown"):  # holder note gone, lock held
+            with run_lock(RunDir(cfg.out_root, run.run_id)):
+                pass
+    proc = hold_lock_in_subprocess(run)
+    try:
+        run.file("run.lock").unlink()
+        with pytest.raises(RunLockedError):
+            run_sync(FakeAPI([response()]), RunDir(cfg.out_root, run.run_id), plan.todo[:1], cfg)
+    finally:
+        proc.communicate("\n", timeout=10)
+    assert run.read_jsonl("attempts.jsonl") == []
+
+
+def test_sigkill_releases_the_lock(env) -> None:
+    plots, cfg = env
+    _, run = prepare(plots, cfg, "batch", budget=100)
+    proc = hold_lock_in_subprocess(run)
+    try:
+        with pytest.raises(RunLockedError, match=f"pid {proc.pid}"):
+            with run_lock(RunDir(cfg.out_root, run.run_id)):
+                pass
+    finally:
+        proc.send_signal(signal.SIGKILL)
+        proc.wait(timeout=10)
+    assert proc.returncode == -signal.SIGKILL
+    with run_lock(RunDir(cfg.out_root, run.run_id)):  # the OS released it
+        pass
+
+
+def test_lock_reentrancy_is_per_handle(env) -> None:
+    plots, cfg = env
+    _, run = prepare(plots, cfg, "batch", budget=100)
+    with run_lock(run):
+        with run_lock(run):  # same handle: no-op
+            pass
+        assert run._lock_fd is not None  # the inner exit didn't release the outer lock
+        with pytest.raises(RunLockedError):
+            with run_lock(RunDir(cfg.out_root, run.run_id)):
+                pass
 
 
 # --- SF1 / probe3 S1: plot changed while a round was in flight -----------------------------
@@ -264,11 +320,13 @@ def test_exact_counts_price_all_input_at_the_cache_write_rate(env) -> None:
     p = plan.todo[0]
     got = request_worst_usd(p, cfg, batch=True, exact_input_tokens=20_000)
     spec = MODELS[MODEL]
-    want = (20_000 * spec.cache_write_per_mtok + cfg.max_tokens * spec.output_per_mtok) / 1e6
+    assert EXACT_COUNT_MARGIN == 1.05
+    want = (21_000 * spec.cache_write_per_mtok + cfg.max_tokens * spec.output_per_mtok) / 1e6
     assert got == pytest.approx(want * 0.5)
     assert got == pytest.approx(
         worst_case_request_usd(MODEL, static_tokens=20_000, variable_tokens=0,
-                               max_tokens=cfg.max_tokens, batch=True, input_margin=1.0)
+                               max_tokens=cfg.max_tokens, batch=True,
+                               input_margin=EXACT_COUNT_MARGIN)
     )
 
 
@@ -384,6 +442,23 @@ def test_resume_warns_about_ignored_settings(env) -> None:
         "https://en.wikipedia.org/wiki/Template_talk:Film",
         "https://en.wikipedia.org/wiki/WP:PLOT",
         "https://en.wikipedia.org/wiki/file:Poster.jpg",
+        # QA should-fix: spaces collapsed, one leading ':' dropped (MediaWiki normalization)
+        "https://en.wikipedia.org/wiki/Template__talk:Film",
+        "https://en.wikipedia.org/wiki/_Talk_:The_Matrix",
+        "https://en.wikipedia.org/wiki/:Category:1999_films",
+        "https://en.wikipedia.org/wiki/:_Talk:X",
+        # interwiki and language prefixes
+        "https://en.wikipedia.org/wiki/fr:Matrix",
+        "https://en.wikipedia.org/wiki/wikt:matrix",
+        "https://en.wikipedia.org/wiki/commons:File:X.jpg",
+        "https://en.wikipedia.org/wiki/m:Main_Page",
+        "https://en.wikipedia.org/wiki/zh-yue:X",
+        "https://en.wikipedia.org/wiki/EN:The_Matrix",
+        "https://en.wikipedia.org/wiki/:de:Matrix",
+        # pseudo-namespaces
+        "https://en.wikipedia.org/wiki/MOS:PLOT",
+        "https://en.wikipedia.org/wiki/CAT:X",
+        "https://en.wikipedia.org/wiki/H:Links",
     ],
 )
 def test_non_article_namespaces_are_refused(ref) -> None:
@@ -397,6 +472,11 @@ def test_non_article_namespaces_are_refused(ref) -> None:
         ("https://en.wikipedia.org/wiki/Alien:_Covenant", "Alien: Covenant"),
         ("https://en.wikipedia.org/wiki/Star_Trek:_The_Motion_Picture",
          "Star Trek: The Motion Picture"),
+        ("https://en.wikipedia.org/wiki/2001:_A_Space_Odyssey_(film)",
+         "2001: A Space Odyssey (film)"),
+        ("https://en.wikipedia.org/wiki/1:_Nenokkadine", "1: Nenokkadine"),
+        ("https://en.wikipedia.org/wiki/Xena:_Warrior_Princess", "Xena: Warrior Princess"),
+        ("https://en.wikipedia.org/wiki/Mad_Max:_Fury_Road", "Mad Max: Fury Road"),
     ],
 )
 def test_titles_with_colons_are_still_articles(ref, title) -> None:

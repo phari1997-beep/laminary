@@ -15,7 +15,8 @@ Two numbers per plan:
   variable input + max_tokens of output at the output price), with the batch discount only for
   batch runs. max_tokens caps all output including thinking, so whatever effort level is used,
   output can't exceed it. Character-based input counts are multiplied by
-  INPUT_ESTIMATE_MARGIN because they are estimates.
+  INPUT_ESTIMATE_MARGIN because they are estimates; exact counts from the count_tokens
+  endpoint by EXACT_COUNT_MARGIN, since those are documented as close but not exact.
 
 Token ratios: prose uses CHARS_PER_TOKEN; the minified schema JSON (about 5K of the ~7K
 per-title variable tokens) uses the denser SCHEMA_CHARS_PER_TOKEN, because punctuation-heavy
@@ -63,6 +64,9 @@ CHARS_PER_WORD = 6.0  # including the following space
 RETRY_RATE_HIGH = 0.10
 # Safety factor on character-based input token estimates in the worst-case bound.
 INPUT_ESTIMATE_MARGIN = 1.25
+# Safety factor on exact counts from the count_tokens endpoint: Anthropic documents them as
+# estimates that may differ slightly from the tokens billed (system-added tokens included).
+EXACT_COUNT_MARGIN = 1.05
 
 EXAMPLES_DIR = Path(__file__).resolve().parents[2] / "tests" / "examples"
 
