@@ -39,12 +39,14 @@ from laminary_pipeline.ingest.http import HttpClient, HttpError
 from laminary_pipeline.ingest.seasons import (
     SEASON_ONE_CEILING,
     SEASON_WORD_CAP,
+    STUB_SEASON_WORDS,
     SeasonFinder,
     SeasonResult,
 )
 from laminary_pipeline.ingest.text import html_to_text, sha256_text, word_count
 
-FETCHER_VERSION = "1.1.0"  # 1.1.0: per-season articles for thin series
+FETCHER_VERSION = "1.2.0"  # 1.1.0: per-season articles for thin series; 1.2.0: lead block
+# of stub seasons (under STUB_SEASON_WORDS, 500) before the first full season
 MIN_WORDS = 150
 API_URL = "https://en.wikipedia.org/w/api.php"
 WIKIDATA_API_URL = "https://www.wikidata.org/w/api.php"
@@ -295,6 +297,7 @@ class PlotFetcher:
             "used_list_page": found.used_list_page,
             "word_cap": self.season_word_cap,
             "season_one_ceiling": SEASON_ONE_CEILING,
+            "stub_season_words": STUB_SEASON_WORDS,
         }
         if found.too_long is not None:
             return {

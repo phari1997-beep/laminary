@@ -24,15 +24,15 @@ story there; the main article holds only a premise.
 4. **Cap:** seasons are added in order while the total stays within SEASON_WORD_CAP words and
    MAX_SEASON_SOURCES pages. The first season that would cross the cap stops the join, and it
    and later seasons are left out; a season is never cut mid-way. Lead block (DECISIONS
-   2026-10-01, superseding the same day's first-season exception wording): a *stub* season
-   is one whose own text is under the fetcher's 150-word minimum, judged per season. Stub
-   seasons before the first full season are kept and joined, in order, with that season;
-   seasons that are missing, unverified or have no text don't count. That lead block may run
-   past the cap, up to SEASON_ONE_CEILING words; over the ceiling the title is skipped
+   2026-10-01, stub threshold raised to 500 words the same day): a *stub* season is one whose
+   own text is under STUB_SEASON_WORDS (500) words, judged per season. Stub seasons before the
+   first full season (500+ words) are kept and joined, in order, with that season; seasons
+   that are missing, unverified or have no text don't count. That lead block may run past the
+   cap, up to SEASON_ONE_CEILING words; over the ceiling the title is skipped
    (``season_too_long``, no list-page fallback). If the lead block is over the cap nothing
    more is added; otherwise later seasons join under the cap as above. With no full season at
-   all, the stubs join under the cap as usual. The 150-word rule then applies to the joined
-   total.
+   all (or when MAX_SEASON_SOURCES is reached before one), the stubs join under the cap as
+   usual. The fetcher's separate 150-word minimum then applies to the joined total.
 
 Each page becomes its own source (``kind: wikipedia_plot``, CC BY-SA, ref, revision,
 ``content_sha256`` of that page's text, ``season``). The annotation request sends one summary
@@ -54,9 +54,13 @@ if TYPE_CHECKING:
     from laminary_pipeline.ingest.wikipedia import PlotFetcher
 
 SEASON_WORD_CAP = 3000  # DECISIONS 2026-10-01
-# Lead block (DECISIONS 2026-10-01): the first full season (150+ words; season 1, or the first
-# later one when earlier seasons are missing, unverified or have no text) with any stub seasons
-# before it is used whole even over the cap, up to this hard ceiling; above it the title is
+# A season whose own text is under this many words is a stub for the lead block (DECISIONS
+# 2026-10-01, raised from 150). Separate from the fetcher's 150-word minimum, which still
+# decides whether the joined text is usable at all.
+STUB_SEASON_WORDS = 500
+# Lead block (DECISIONS 2026-10-01): the first full season (STUB_SEASON_WORDS+ words) with the
+# seasons before it that are missing/unverified/no text, or are stubs (the stubs are joined
+# with it), is used whole even over the cap, up to this hard ceiling; above it the title is
 # skipped (season_too_long).
 SEASON_ONE_CEILING = 6000
 MAX_SEASONS = 20  # season numbers guessed by title
@@ -161,14 +165,12 @@ class SeasonFinder:
 
     def __init__(
         self, fetcher: PlotFetcher, *, cap: int = SEASON_WORD_CAP,
-        ceiling: int = SEASON_ONE_CEILING,
+        ceiling: int = SEASON_ONE_CEILING, stub_words: int = STUB_SEASON_WORDS,
     ) -> None:
         self.fetcher = fetcher
         self.cap = cap
         self.ceiling = ceiling
-        # a season with less text than this is a stub (DECISIONS 2026-10-01): the same
-        # minimum the fetcher applies to the joined text
-        self.min_words = fetcher.min_words
+        self.stub_words = stub_words  # not fetcher.min_words: the two thresholds are separate
 
     # ---------- discovery ----------
 
@@ -323,7 +325,7 @@ class SeasonFinder:
             if in_lead and page.season is not None:
                 out.texts.append(st)
                 total += st.words
-                if st.words < self.min_words:
+                if st.words < self.stub_words:
                     continue  # a stub season: kept for the first full season after it
                 in_lead = False
                 if total > self.ceiling:  # the lead block over the ceiling: skip the title
@@ -345,8 +347,8 @@ class SeasonFinder:
             out.texts.append(st)
             total += st.words
         if in_lead and total > self.cap:
-            # stubs only, no full season: the cap applies as in normal joining (reachable
-            # only with a cap under MAX_SEASON_SOURCES stubs' worth of words)
+            # stubs only (no full season, or the source limit came first): the cap applies as
+            # in normal joining
             kept, words = [], 0
             for t in out.texts:
                 if words + t.words > self.cap:

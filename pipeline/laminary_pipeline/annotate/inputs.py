@@ -29,8 +29,9 @@ is built and again on the built request (``prompt.verify_request``):
 - SHA-256 of each exact text equals the source's ``content_sha256``;
 - each text's word count equals its ``word_count``, and the total is at least 150;
 - at most the schema's ``provenance.sources.maxItems`` sources, and season-article input
-  (several sources, or one with a season) at most the 6,000-word ceiling
-  (``check_source_limits``), so a record that could not be stored is never paid for.
+  (``via: "season_articles"``, several sources, or one with a season) at most the 6,000-word
+  ceiling, or the ~3,000-word cap for a lone episode-list page (``check_source_limits``), so
+  a record that could not be stored, or that ingest could not have produced, is never paid for.
 """
 
 from __future__ import annotations
@@ -45,9 +46,10 @@ from typing import Any
 from jsonschema import Draft202012Validator
 
 from laminary_pipeline.annotation import format_checker, load_schema, require_wikipedia_sources
-from laminary_pipeline.ingest.seasons import SEASON_ONE_CEILING
+from laminary_pipeline.ingest.seasons import SEASON_ONE_CEILING, SEASON_WORD_CAP
 from laminary_pipeline.ingest.text import word_count
 from laminary_pipeline.ingest.wikidata import effective_series_status
+from laminary_pipeline.ingest.wikipedia import VIA_SEASON_ARTICLES
 
 MIN_SUMMARY_WORDS = 150  # DECISIONS.md 2026-09-26
 
@@ -87,6 +89,7 @@ class PlotInput:
     title: dict[str, Any]
     sources: tuple[PlotSource, ...]
     origin: str  # file (and line) it came from
+    via: str | None = None  # "season_articles" when ingest built it from season articles
 
     @property
     def key(self) -> str:
@@ -117,13 +120,22 @@ def _from_ingest_shape(obj: dict[str, Any], origin: str) -> dict[str, Any]:
     }
     if cand.get("media_type") == "tv_series":
         title["series_status"] = effective_series_status(cand)
-    return {"title": title, "sources": ingest_sources(obj)}
+    return {"title": title, "sources": ingest_sources(obj), "via": ingest_via(obj)}
+
+
+def ingest_via(obj: dict[str, Any]) -> str | None:
+    """``"season_articles"`` for an ingest plot file built from season articles (the same
+    test ``ingest_sources`` uses), else its ``via`` (None for a main article)."""
+    if obj.get("via") == VIA_SEASON_ARTICLES or "sources" in obj:
+        return VIA_SEASON_ARTICLES
+    via = obj.get("via")
+    return via if isinstance(via, str) else None
 
 
 def ingest_sources(obj: dict[str, Any]) -> list[dict[str, Any]]:
     """An ok ingest plot file's sources, in order, as ``{<source fields>, "text": ...}``: the
     season articles of a ``season_articles`` file, else its single source."""
-    if obj.get("via") == "season_articles" or "sources" in obj:
+    if ingest_via(obj) == VIA_SEASON_ARTICLES:
         parts = obj.get("sources")
         if not isinstance(parts, list) or not parts:
             raise InputFormatError("season-article plot file without sources")
@@ -160,7 +172,9 @@ def parse_plot(obj: Any, origin: str) -> PlotInput:
         if errors:
             raise InputFormatError(f"{origin}: source {i}: {'; '.join(errors)}")
         parsed.append(PlotSource(meta=meta, text=src["text"]))
-    return PlotInput(title=title, sources=tuple(parsed), origin=origin)
+    via = obj.get("via")
+    return PlotInput(title=title, sources=tuple(parsed), origin=origin,
+                     via=via if isinstance(via, str) else None)
 
 
 def iter_plot_files(plots_dir: Path) -> Iterator[tuple[Any, str]]:
@@ -262,18 +276,28 @@ def max_sources() -> int:
 
 def check_source_limits(plot: PlotInput, total: int) -> None:
     """Refuse inputs that ingest's season-article rules (DECISIONS 2026-10-01) can't produce,
-    before any paid call: more sources than a record may hold; any season-article input
-    (several sources, or one with a season) over the 6,000-word ceiling. A lead block of stub
-    seasons plus the first full season may be several sources up to the ceiling, so the
-    ~3,000-word cap is not checked here (it is a joining rule, not an input limit). A single
-    main article has no upper word limit (unchanged)."""
+    before any paid call: more sources than a record may hold; any season-article input over
+    its word limit. Season-article input is ``via: "season_articles"``, several sources, or
+    one with a season. Its limit is the 6,000-word ceiling (a lead block of stub seasons plus
+    the first full season may be several sources up to it, so the ~3,000-word cap is a joining
+    rule, not an input limit), except a lone episode-list page (no season) from season
+    articles: ingest joins that only under the cap, so the tighter cap applies. A single main
+    article has no upper word limit (unchanged)."""
     n = len(plot.sources)
     if n > max_sources():
         raise GateError(f"{plot.key}: {n} sources, a record holds at most {max_sources()}")
-    if (n > 1 or any("season" in s.meta for s in plot.sources)) and total > SEASON_ONE_CEILING:
+    has_season = any("season" in s.meta for s in plot.sources)
+    via_seasons = plot.via == VIA_SEASON_ARTICLES
+    if not (via_seasons or n > 1 or has_season):
+        return  # a single main article
+    if via_seasons and n == 1 and not has_season:
+        limit, what = SEASON_WORD_CAP, "episode-list page"
+    else:
+        limit, what = SEASON_ONE_CEILING, "ceiling"
+    if total > limit:
         raise GateError(
             f"{plot.key}: season-article input of {n} source(s) and {total} words, over the "
-            f"{SEASON_ONE_CEILING}-word ceiling"
+            f"{limit}-word {what}"
         )
 
 

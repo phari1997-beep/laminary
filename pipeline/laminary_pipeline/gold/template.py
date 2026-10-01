@@ -45,6 +45,7 @@ from laminary_pipeline.annotate.inputs import (
     PlotSource,
     gate,
     ingest_sources,
+    ingest_via,
 )
 from laminary_pipeline.annotate.prompt import labeler_text
 from laminary_pipeline.gold.columns import (
@@ -106,7 +107,8 @@ def labeler_text_for(plot: dict[str, Any]) -> str:
         sources.append(PlotSource({k: v for k, v in src.items() if k != "text"}, src["text"]))
     cand = plot.get("candidate") or {}
     title = {"media_type": cand.get("media_type"), "tmdb_id": cand.get("tmdb_id")}
-    return labeler_text(gate(PlotInput(title, tuple(sources), plot.get("qid", "plot file"))))
+    return labeler_text(gate(PlotInput(title, tuple(sources), plot.get("qid", "plot file"),
+                                       via=ingest_via(plot))))
 
 
 def template_rows(
