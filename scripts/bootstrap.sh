@@ -12,7 +12,7 @@ usage() {
 Usage: scripts/bootstrap.sh [--check] [--android] [--eas] [--orbstack] [--help]
 
   (no flags)   Install/configure everything needed for Phases 0-1, then verify.
-  --check      Verify only. Installs and writes nothing.
+  --check      Verify only. Installs nothing, writes no config.
   --android    Also install JDK 17 (Temurin), Android platform-tools (adb) and Android Studio.
   --eas        Also install eas-cli globally with npm (needed from Phase 3).
   --orbstack   Use OrbStack instead of Docker Desktop (see licence note in docs/ENVIRONMENTS.md).

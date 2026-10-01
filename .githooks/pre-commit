@@ -1,7 +1,8 @@
 #!/bin/sh
 # Laminary pre-commit hook (DECISIONS 2026-10-01). Enabled by scripts/bootstrap.sh via
 #   git config core.hooksPath .githooks
-# Runs `ruff check .` and `pytest -q` in pipeline/ when the commit touches pipeline/ or docs/
+# Runs `ruff check .` and `pytest -q -p no:cacheprovider` (with PYTEST_ADDOPTS unset) in pipeline/
+# when the commit touches pipeline/ or docs/
 # (docs are included because a test checks that backticked identifiers in docs exist).
 # Anything else (e.g. scripts/ only) skips in milliseconds. No network. Bypass for emergencies
 # only: git commit --no-verify. See docs/ENVIRONMENTS.md section 6.
