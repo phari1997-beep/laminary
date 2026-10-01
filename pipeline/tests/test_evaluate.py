@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 from annotate_support import STORY, gold_from_example, source_meta, valid_output
 
-from laminary_pipeline.annotation import validate_record
+from laminary_pipeline.annotation import DISPLAY_CONFIDENCE_THRESHOLD, validate_record
 from laminary_pipeline.evaluate import metrics as m
 from laminary_pipeline.evaluate.__main__ import main as eval_main
 from laminary_pipeline.evaluate.pairs import (
@@ -130,7 +130,8 @@ def test_presence_prf_and_calibration(fixture_records) -> None:
     assert rebirth["precision"] == 0.75 and rebirth["recall"] == 1.0
     cal = report["calibration"]["primary"]
     assert cal["0.80-0.89"] == {"n": 3, "accuracy": pytest.approx(1 / 3)}
-    assert cal["0.90-1.00"] == {"n": 1, "accuracy": 1.0}
+    assert cal["0.90-0.94"] == {"n": 1, "accuracy": 1.0}
+    assert cal["0.95-1.00"] == {"n": 0, "accuracy": None}  # none would be shown
 
 
 def test_abstention_flat_rates_and_leaks(fixture_records) -> None:
@@ -233,9 +234,11 @@ def test_confusion_and_bands() -> None:
     s = c.summary()
     assert (s["precision"], s["recall"], s["f1"], s["accuracy"]) == (0.5, 0.5, 0.5, 0.5)
     assert m.Confusion().summary()["f1"] is None
-    assert [m.band(x) for x in (1.0, 0.9, 0.85, 0.8, 0.75, 0.5, 0.49)] == [
-        "0.90-1.00",
-        "0.90-1.00",
+    assert [m.band(x) for x in (1.0, 0.95, 0.949, 0.9, 0.85, 0.8, 0.75, 0.5, 0.49)] == [
+        "0.95-1.00",
+        "0.95-1.00",
+        "0.90-0.94",
+        "0.90-0.94",
         "0.80-0.89",
         "0.80-0.89",
         "0.70-0.79",
@@ -243,6 +246,9 @@ def test_confusion_and_bands() -> None:
         "<0.50",
     ]
     assert m.jaccard(["a", "b"], ["b", "c"]) == pytest.approx(1 / 3)
+    # the top band starts exactly at the display threshold
+    assert m.BANDS[0] == (m.DISPLAY_BAND, DISPLAY_CONFIDENCE_THRESHOLD)
+    assert m.band(DISPLAY_CONFIDENCE_THRESHOLD) == m.DISPLAY_BAND
 
 
 # --- pairs stub ----------------------------------------------------------------------------

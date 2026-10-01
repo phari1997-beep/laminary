@@ -34,6 +34,7 @@ from laminary_pipeline.annotation import (
     usable_arc_label,
     validate_record,
     validator,
+    wikipedia_article_title,
 )
 from laminary_pipeline.model_output import model_output_schema
 
@@ -849,7 +850,8 @@ def test_require_wikipedia_sources_fails_closed(sources: list[Any]) -> None:
 def test_usable_arc_label_consumer_rule() -> None:
     rec = llm_record()
     arc = rec["layers"]["structural_skeleton"]["emotional_arc"]
-    assert arc["confidence"] >= DISPLAY_CONFIDENCE_THRESHOLD
+    assert DISPLAY_CONFIDENCE_THRESHOLD == 0.95  # DECISIONS 2026-09-30
+    arc["confidence"] = DISPLAY_CONFIDENCE_THRESHOLD  # exactly at the threshold: shown
     assert usable_arc_label(rec) == arc["label"]
     for flag in ("net_change_fallback", "reduced_shape"):
         flagged = copy.deepcopy(rec)
@@ -857,6 +859,30 @@ def test_usable_arc_label_consumer_rule() -> None:
         flagged["layers"]["structural_skeleton"]["emotional_arc"]["confidence"] = 1.0
         assert usable_arc_label(flagged) is None, flag  # ignored whatever the confidence
     low = copy.deepcopy(rec)
-    low["layers"]["structural_skeleton"]["emotional_arc"]["confidence"] = 0.79
-    assert usable_arc_label(low) is None
+    for below in (0.94, 0.8):  # 0.80 was the old threshold; no longer shown
+        low["layers"]["structural_skeleton"]["emotional_arc"]["confidence"] = below
+        assert usable_arc_label(low) is None
     assert usable_arc_label(abstained_record()) is None
+
+
+@pytest.mark.parametrize(
+    "ref",
+    [
+        "https://en.wikipedia.org/wiki/Talk:The_Matrix",
+        "https://en.wikipedia.org/wiki/Talk%3AThe_Matrix",  # encoded ':' is still a namespace
+        "https://en.wikipedia.org/wiki/category:1999_films",
+        "https://en.wikipedia.org/wiki/The%0AMatrix",  # control character once decoded
+    ],
+)
+def test_input_gate_refuses_non_article_refs(ref: str) -> None:
+    """The embedding/input gate runs the same article-title check as the prompt's marker."""
+    with pytest.raises(ValueError, match="source 0: ref"):
+        require_wikipedia_sources([wiki_source(ref=ref)])
+    with pytest.raises(ValueError):
+        wikipedia_article_title(ref)
+
+
+def test_input_gate_accepts_titles_with_colons() -> None:
+    src = wiki_source(ref="https://en.wikipedia.org/wiki/Alien:_Covenant")
+    assert require_wikipedia_sources([src]) == [src]
+    assert wikipedia_article_title(src["ref"]) == "Alien: Covenant"

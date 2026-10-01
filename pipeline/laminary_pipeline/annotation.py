@@ -9,10 +9,12 @@ from __future__ import annotations
 
 import json
 import re
+import unicodedata
 from datetime import datetime
 from functools import cache
 from importlib import resources
 from typing import Any
+from urllib.parse import unquote, urlparse
 
 from jsonschema import Draft202012Validator, FormatChecker
 
@@ -20,9 +22,10 @@ from laminary_pipeline.arc import FALLBACK_CONFIDENCE_CAP, derive_arc
 
 SCHEMA_RESOURCE = ("laminary_pipeline", "schema/annotation.schema.json")
 MAX_SECONDARY_PLOTS = 2
-# Minimum confidence for showing a label or using it in a browse row (DECISIONS.md 2026-09-26).
-# To be re-tuned from gold-set calibration after the 500-title pilot.
-DISPLAY_CONFIDENCE_THRESHOLD = 0.80
+# Minimum confidence for showing a label or using it in a browse row (DECISIONS.md 2026-09-30,
+# replacing 0.80 from 2026-09-26). To be re-tuned from gold-set calibration after the
+# 500-title pilot.
+DISPLAY_CONFIDENCE_THRESHOLD = 0.95
 # The only sources allowed as annotation or embedding input until TMDB authorizes LLM use in
 # writing (docs/NARRATIVE_SCHEMA.md section 1). Mirrors the schema's rule for LLM/gold records.
 ALLOWED_INPUT_LICENSES = frozenset({"CC-BY-SA-4.0", "CC-BY-SA-3.0"})
@@ -30,7 +33,26 @@ ALLOWED_INPUT_LICENSES = frozenset({"CC-BY-SA-4.0", "CC-BY-SA-3.0"})
 WIKIPEDIA_REF = re.compile(r"^https://en\.wikipedia\.org/")
 # Stricter gate for anything sent to the model: an article URL with nothing after the
 # (percent-encoded) title, so no query, fragment, whitespace, quotes or markup characters.
+# The pattern alone can't see namespaces (they may be percent-encoded), so the input gate also
+# decodes the title with ``wikipedia_article_title`` below.
 WIKIPEDIA_ARTICLE_REF = re.compile(r'^https://en\.wikipedia\.org/wiki/[^\s?#<>\[\]{}|"]+$')
+ARTICLE_PREFIX = "https://en.wikipedia.org/wiki/"
+FORBIDDEN_TITLE_CHARS = frozenset('<>[]{}|#"')
+MAX_TITLE_CHARS = 255
+# Non-article namespaces (and common aliases) on English Wikipedia. Compared case-insensitively
+# with the text before the first ':'; film titles like "Alien: Covenant" are not affected.
+NON_ARTICLE_NAMESPACES = frozenset(
+    ns.casefold()
+    for base in (
+        "User", "Wikipedia", "File", "MediaWiki", "Template", "Help", "Category", "Portal",
+        "Draft", "TimedText", "Module", "Gadget", "Gadget definition",
+    )
+    for ns in (base, f"{base} talk")
+) | frozenset(
+    ns.casefold()
+    for ns in ("Talk", "Special", "Media", "Image", "Image talk", "Project", "Project talk",
+               "WP", "WT")
+)
 
 
 @cache
@@ -122,12 +144,39 @@ def semantic_errors(record: dict[str, Any]) -> list[str]:
     return errors
 
 
+def wikipedia_article_title(ref: object) -> str:
+    """'https://en.wikipedia.org/wiki/The_Matrix' -> 'The Matrix'. Raises ValueError unless
+    the ref is a plain article URL and the decoded title is safe to put inside the prompt's
+    marker: no ``<>[]{}|#"``, no control or line-separator characters, at most 255 characters
+    (the MediaWiki title limit), and not in a non-article namespace."""
+    if not isinstance(ref, str) or not WIKIPEDIA_ARTICLE_REF.match(ref):
+        raise ValueError(f"ref {ref!r} is not a plain en.wikipedia.org article URL")
+    path = urlparse(ref).path
+    if not path.startswith("/wiki/"):
+        raise ValueError(f"ref {ref!r} is not an article URL")
+    try:
+        title = unquote(path[len("/wiki/") :], errors="strict").replace("_", " ")
+    except UnicodeDecodeError as e:
+        raise ValueError(f"ref {ref!r}: article title is not valid UTF-8") from e
+    bad = sorted(
+        {c for c in title if c in FORBIDDEN_TITLE_CHARS or unicodedata.category(c)[0] in "CZ"}
+        - {" "}
+    )
+    if bad or not title.strip() or len(title) > MAX_TITLE_CHARS:
+        raise ValueError(f"ref {ref!r}: unsafe or invalid article title {title!r}")
+    prefix, sep, _ = title.partition(":")
+    if sep and prefix.strip().casefold() in NON_ARTICLE_NAMESPACES:
+        raise ValueError(f"ref {ref!r}: {prefix.strip()!r} pages are not articles")
+    return title
+
+
 def require_wikipedia_sources(sources: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Fail-closed gate for anything sent to the model or embedded (prompt builder, embeddings).
 
-    Returns the sources unchanged if every one is a Wikipedia plot section under CC BY-SA with
-    an en.wikipedia.org ref; raises ValueError otherwise, including for an empty list or any
-    missing field. Never filters silently: one bad source rejects the whole title.
+    Returns the sources unchanged if every one is a Wikipedia plot section under CC BY-SA whose
+    ref is an en.wikipedia.org article (``wikipedia_article_title``); raises ValueError
+    otherwise, including for an empty list or any missing field. Never filters silently: one
+    bad source rejects the whole title.
     """
     if not sources:
         raise ValueError("no sources: refusing to build model or embedding input")
@@ -139,8 +188,10 @@ def require_wikipedia_sources(sources: list[dict[str, Any]]) -> list[dict[str, A
             raise ValueError(f"source {i}: kind {kind!r} is not allowed as input")
         if license_ not in ALLOWED_INPUT_LICENSES:
             raise ValueError(f"source {i}: license {license_!r} is not allowed as input")
-        if not isinstance(ref, str) or not WIKIPEDIA_ARTICLE_REF.match(ref):
-            raise ValueError(f"source {i}: ref {ref!r} is not a plain en.wikipedia.org article URL")
+        try:
+            wikipedia_article_title(ref)
+        except ValueError as e:
+            raise ValueError(f"source {i}: {e}") from e
     return sources
 
 

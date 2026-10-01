@@ -29,11 +29,9 @@ with.
 from __future__ import annotations
 
 import hashlib
-import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-from urllib.parse import unquote, urlparse
 
 from laminary_pipeline.annotate.config import MODELS, PROMPTS_DIR
 from laminary_pipeline.annotate.inputs import (
@@ -44,7 +42,7 @@ from laminary_pipeline.annotate.inputs import (
     check_text,
     gate,
 )
-from laminary_pipeline.annotation import WIKIPEDIA_ARTICLE_REF
+from laminary_pipeline.annotation import wikipedia_article_title as _article_title
 from laminary_pipeline.model_output import model_output_schema
 
 # prompt_version -> (file name, sha256 of the body sent). Editing a prompt without adding a new
@@ -102,49 +100,13 @@ def load_prompt(version: str, prompts_dir: Path = PROMPTS_DIR) -> Prompt:
     return prompt
 
 
-ARTICLE_PREFIX = "https://en.wikipedia.org/wiki/"
-FORBIDDEN_TITLE_CHARS = frozenset('<>[]{}|#"')
-MAX_TITLE_CHARS = 255
-# Non-article namespaces (and common aliases) on English Wikipedia. Compared case-insensitively
-# with the text before the first ':'; film titles like "Alien: Covenant" are not affected.
-NON_ARTICLE_NAMESPACES = frozenset(
-    ns.casefold()
-    for base in (
-        "User", "Wikipedia", "File", "MediaWiki", "Template", "Help", "Category", "Portal",
-        "Draft", "TimedText", "Module", "Gadget", "Gadget definition",
-    )
-    for ns in (base, f"{base} talk")
-) | frozenset(
-    ns.casefold()
-    for ns in ("Talk", "Special", "Media", "Image", "Image talk", "Project", "Project talk",
-               "WP", "WT")
-)
-
-
 def wikipedia_article_title(ref: str) -> str:
-    """'https://en.wikipedia.org/wiki/The_Matrix' -> 'The Matrix'. Raises GateError unless
-    the ref is a plain article URL and the decoded title is safe to put inside the marker:
-    no ``<>[]{}|#"``, no control or line-separator characters, at most 255 characters (the
-    MediaWiki title limit)."""
-    if not isinstance(ref, str) or not WIKIPEDIA_ARTICLE_REF.match(ref):
-        raise GateError(f"ref {ref!r} is not a plain en.wikipedia.org article URL")
-    path = urlparse(ref).path
-    if not path.startswith("/wiki/"):
-        raise GateError(f"ref {ref!r} is not an article URL")
+    """``annotation.wikipedia_article_title`` (the same check the input gate runs), raising
+    GateError."""
     try:
-        title = unquote(path[len("/wiki/") :], errors="strict").replace("_", " ")
-    except UnicodeDecodeError as e:
-        raise GateError(f"ref {ref!r}: article title is not valid UTF-8") from e
-    bad = sorted(
-        {c for c in title if c in FORBIDDEN_TITLE_CHARS or unicodedata.category(c)[0] in "CZ"}
-        - {" "}
-    )
-    if bad or not title.strip() or len(title) > MAX_TITLE_CHARS:
-        raise GateError(f"ref {ref!r}: unsafe or invalid article title {title!r}")
-    prefix, sep, _ = title.partition(":")
-    if sep and prefix.strip().casefold() in NON_ARTICLE_NAMESPACES:
-        raise GateError(f"ref {ref!r}: {prefix.strip()!r} pages are not articles")
-    return title
+        return _article_title(ref)
+    except ValueError as e:
+        raise GateError(str(e)) from e
 
 
 def _open_marker(i: int, meta: dict[str, Any]) -> str:

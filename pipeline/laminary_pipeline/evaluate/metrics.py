@@ -6,14 +6,20 @@ from collections import Counter
 from collections.abc import Hashable, Iterable, Sequence
 from dataclasses import dataclass
 
-# Confidence bands from docs/NARRATIVE_SCHEMA.md section 4 (lower bound inclusive).
+from laminary_pipeline.annotation import DISPLAY_CONFIDENCE_THRESHOLD
+
+# Confidence bands (lower bound inclusive): docs/NARRATIVE_SCHEMA.md section 4, with the top
+# band split exactly at the display threshold so calibration of shown labels is reported on its
+# own, and 0.80-0.89 kept apart from 0.70-0.79.
 BANDS: tuple[tuple[str, float], ...] = (
-    ("0.90-1.00", 0.90),
-    ("0.80-0.89", 0.80),  # split out of the 0.70 band: 0.80 is the display threshold
+    ("0.95-1.00", DISPLAY_CONFIDENCE_THRESHOLD),  # shown in the app
+    ("0.90-0.94", 0.90),
+    ("0.80-0.89", 0.80),
     ("0.70-0.79", 0.70),
     ("0.50-0.69", 0.50),
     ("<0.50", float("-inf")),
 )
+DISPLAY_BAND = BANDS[0][0]
 
 
 def ratio(num: int, den: int) -> float | None:

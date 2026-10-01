@@ -111,7 +111,7 @@ Bands, used in both the prompt and the labeling guide:
 | 0.50 to 0.69 | Plausible; reasonable readers could disagree. |
 | below 0.50 | Weak (single-choice labels only). |
 
-Display rule (decided 2026-09-26): show a label on a title page or use it for a browse row only at confidence **0.80** or higher (`DISPLAY_CONFIDENCE_THRESHOLD` in `laminary_pipeline/annotation.py`). It can be re-tuned after the 500-title pilot, based on gold-set calibration: of labels given 0.8, about 80% should match (section 14).
+Display rule (decided 2026-09-30, replacing 0.80 from 2026-09-26): show a label on a title page or use it for a browse row only at confidence **0.95** or higher (`DISPLAY_CONFIDENCE_THRESHOLD` in `laminary_pipeline/annotation.py`). In the bands above, that is the top of "states it directly, or it is unmistakable", so fewer labels are shown than at 0.80. It can be re-tuned after the 500-title pilot, based on gold-set calibration: of labels given 0.95, about 95% should match (section 14). The evaluation's calibration bands split exactly at the threshold (0.95 to 1.00, 0.90 to 0.94, 0.80 to 0.89, ...). The prompt and the labelers use the bands above unchanged.
 
 ---
 
@@ -459,6 +459,8 @@ Done at ingestion, not here: `tmdb_id` exists in TMDB and its title and year mat
 
 `prompt_version` changes whenever the annotation prompt text changes (including definition wording pulled from this document), and `model_version` records the exact model id. Evaluation results are always reported per (schema_version, prompt_version, model_version).
 
+**Doc-only note, 2026-09-30:** the display threshold rose from 0.80 to 0.95 (DECISIONS 2026-09-30). The JSON schema and `schema_version` are unchanged; only `DISPLAY_CONFIDENCE_THRESHOLD`, the evaluation's calibration bands and this document changed.
+
 **Changelog, 0.1.0 → 1.0.0:** the Phase 0 drafts reviewed by QA and approved by Hari. Presence maps became fixed-key judgments. `emotional_arc` is derived from the arc points, with `net_change_fallback` and `reduced_shape` flags. Booker has nine plots, and Vogler's stage names are exact. Gold records are light. Input is Wikipedia-only, with the 150-word gate. `usage` is required on LLM records. 1.0.0 itself changes only the version, and narrows `reduced_shape` to "threshold used is 0.6 or more".
 
 0.2.0 → 0.3.0 changes: `emotional_arc.reduced_shape` added; the threshold search stops at 2.0; `confidence` is required on LLM arcs; LLM and gold sources must have a CC BY-SA license and an en.wikipedia.org ref.
@@ -497,7 +499,7 @@ If the leak metric misses its target, the fix is prompt work (tighter setup-only
 
 ## 15. Browse rows
 
-Decided 2026-09-26: keep all 15 for now and prune after the 500-title pilot shows row sizes. Row names are working titles; final copy belongs to frontend and Hari. Each row uses only labels at or above the 0.80 display threshold (re-tunable after the pilot).
+Decided 2026-09-26: keep all 15 for now and prune after the 500-title pilot shows row sizes. Row names are working titles; final copy belongs to frontend and Hari. Each row uses only labels at or above the 0.95 display threshold (DECISIONS 2026-09-30; re-tunable after the pilot).
 
 The "Spoiler" column is the highest level any label in the row's query carries, and the group it comes from (section 3). Arc rows use only usable arc labels (section 8 consumer rule), so fallback and reduced-shape labels never appear in rows 1 to 4.
 
@@ -537,7 +539,7 @@ Decided by Hari on 2026-09-26 and 2026-09-29 (logged in `docs/DECISIONS.md`) and
 
 - **Spoiler visibility:** story shapes and the arc line are visible by default, and plot spoilers are hidden (section 3).
 - **Spoiler levels:** the per-term levels are approved as drafted (section 3).
-- **Display threshold:** 0.80, to be re-tuned after the pilot (section 4).
+- **Display threshold:** 0.95 (2026-09-30, replacing 0.80), to be re-tuned after the pilot (section 4).
 - **Journey stages:** Vogler's 12 stages (section 7).
 - **Booker plots:** keep Rebellion Against "The One" and Mystery, for 9 plots (section 6).
 - **Tones:** internal labels only; frontend proposes mood names in Phase 3 (section 5).
