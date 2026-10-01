@@ -9,15 +9,20 @@ Request layout, ordered for prompt caching (render order: tools, system, message
   closing marker block.
 - ``output_config.format``: ``model_output_schema()`` as a JSON-schema structured output.
 
-Only Wikipedia-derived identifiers go into the request besides the summary: the article title
-from each source's en.wikipedia.org ref (validated, see ``wikipedia_article_title``) and the
-media type. The title's display name and year are never sent; they come from Wikidata
-candidates and are kept out so the model reads only the summary (docs/NARRATIVE_SCHEMA.md
+Besides the summary, the request carries the article title from each source's
+en.wikipedia.org ref (validated, see ``wikipedia_article_title``), the media type and, from
+annotate-1.1.0 on, the release year. The release year is the only non-Wikipedia field
+(Wikidata, CC0; DECISIONS 2026-09-30): the prompt's ``historical_past`` vs ``contemporary``
+definitions are relative to it. It is sent only as a validated integer between
+MIN_RELEASE_YEAR and the current year + 2 (``prompt_release_year``); any other value refuses the
+title, and a missing year omits the line (the prompt says how to judge without it). The title's
+display name is never sent, so the model reads only the summary (docs/NARRATIVE_SCHEMA.md
 section 1).
 
 ``verify_request`` re-checks the built request block by block: the system prompt is the pinned
-body, every non-source block equals its expected constant or a marker rebuilt from the
-validated ref, and every source block passes the hash and word-count checks.
+body, every non-source block equals its expected constant, the header rebuilt from the
+validated year, or a marker rebuilt from the validated ref, and every source block passes the
+hash and word-count checks.
 
 What the hash check proves: ``content_sha256`` and ``word_count`` come from the same local plot
 file as the text, so a match shows the text is internally consistent and unchanged since
@@ -30,8 +35,9 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 from laminary_pipeline.annotate.config import MODELS, PROMPTS_DIR
 from laminary_pipeline.annotate.inputs import (
@@ -45,14 +51,29 @@ from laminary_pipeline.annotate.inputs import (
 from laminary_pipeline.annotation import wikipedia_article_title as _article_title
 from laminary_pipeline.model_output import model_output_schema
 
-# prompt_version -> (file name, sha256 of the body sent). Editing a prompt without adding a new
-# version here fails load_prompt(), so a record's prompt_version always names one exact text.
-PINNED_PROMPTS: dict[str, tuple[str, str]] = {
-    "annotate-1.0.0": (
+
+class PinnedPrompt(NamedTuple):
+    filename: str
+    sha256: str  # of the body sent
+    sends_release_year: bool  # the user-message header carries "Release year: <year>"
+
+
+# prompt_version -> pinned file. Editing a prompt without adding a new version here fails
+# load_prompt(), so a record's prompt_version always names one exact text and header format.
+PINNED_PROMPTS: dict[str, PinnedPrompt] = {
+    "annotate-1.0.0": PinnedPrompt(
         "annotate_v1.md",
         "bb0b76670ab07abf9d60c645c2b72ab0b7780d92953c4a81c8b26adc44c94bf2",
+        sends_release_year=False,
+    ),
+    "annotate-1.1.0": PinnedPrompt(
+        "annotate_v1_1.md",
+        "f481bcdb60b7802339a8f4b2e8ad57488c690bd03a15a8459705c3856ea2d397",
+        sends_release_year=True,
     ),
 }
+MIN_RELEASE_YEAR = 1880
+MAX_YEARS_AHEAD = 2
 
 MEDIA_LABELS = {"movie": "film", "tv_series": "TV series (annotate the whole series)"}
 
@@ -71,6 +92,10 @@ class Prompt:
     def sha256(self) -> str:
         return hashlib.sha256(self.body.encode("utf-8")).hexdigest()
 
+    @property
+    def sends_release_year(self) -> bool:
+        return PINNED_PROMPTS[self.version].sends_release_year
+
 
 def split_front_matter(raw: str) -> tuple[dict[str, str], str]:
     if not raw.startswith("---\n"):
@@ -86,7 +111,7 @@ def split_front_matter(raw: str) -> tuple[dict[str, str], str]:
 def load_prompt(version: str, prompts_dir: Path = PROMPTS_DIR) -> Prompt:
     if version not in PINNED_PROMPTS:
         raise PromptError(f"unknown prompt version {version!r}; known: {sorted(PINNED_PROMPTS)}")
-    filename, pinned = PINNED_PROMPTS[version]
+    filename, pinned, _ = PINNED_PROMPTS[version]
     path = prompts_dir / filename
     meta, body = split_front_matter(path.read_text(encoding="utf-8"))
     if meta.get("prompt_version") != version:
@@ -123,17 +148,38 @@ INSTRUCTION = (
 )
 
 
-def _header(gated: GatedInput) -> str:
+def _current_year() -> int:
+    return datetime.now(UTC).year
+
+
+def prompt_release_year(title: dict[str, Any]) -> int | None:
+    """The release year to send, or None if the title has none. Raises GateError unless it is
+    a plain int (not a bool or a string) from MIN_RELEASE_YEAR to the current year + 2."""
+    year = title.get("release_year")
+    if year is None:
+        return None
+    if type(year) is not int:
+        raise GateError(f"release_year {year!r} is not an integer")
+    latest = _current_year() + MAX_YEARS_AHEAD
+    if not MIN_RELEASE_YEAR <= year <= latest:
+        raise GateError(f"release_year {year} is outside {MIN_RELEASE_YEAR}-{latest}")
+    return year
+
+
+def _header(gated: GatedInput, prompt: Prompt) -> str:
     plot = gated.plot
     n = len(plot.sources)
-    return (
-        f"Work type: {MEDIA_LABELS[plot.title['media_type']]}\n"
-        f"The plot summary follows in {n} part{'s' if n > 1 else ''}."
-    )
+    lines = [f"Work type: {MEDIA_LABELS[plot.title['media_type']]}"]
+    if prompt.sends_release_year:
+        year = prompt_release_year(plot.title)
+        if year is not None:
+            lines.append(f"Release year: {year}")
+    lines.append(f"The plot summary follows in {n} part{'s' if n > 1 else ''}.")
+    return "\n".join(lines)
 
 
-def _user_content(gated: GatedInput) -> list[dict[str, Any]]:
-    blocks: list[dict[str, Any]] = [{"type": "text", "text": _header(gated)}]
+def _user_content(gated: GatedInput, prompt: Prompt) -> list[dict[str, Any]]:
+    blocks: list[dict[str, Any]] = [{"type": "text", "text": _header(gated, prompt)}]
     for i, src in enumerate(gated.plot.sources):
         blocks.append({"type": "text", "text": _open_marker(i, src.meta)})
         blocks.append({"type": "text", "text": src.text})
@@ -172,17 +218,17 @@ def build_request(
         "model": model,
         "max_tokens": max_tokens,
         "system": [{"type": "text", "text": prompt.body, "cache_control": {"type": "ephemeral"}}],
-        "messages": [{"role": "user", "content": _user_content(gated)}],
+        "messages": [{"role": "user", "content": _user_content(gated, prompt)}],
         "output_config": output_config,
     }
     verify_request(params, gated, prompt)
     return gated, params
 
 
-def _expected_non_source_blocks(gated: GatedInput) -> dict[int, str]:
+def _expected_non_source_blocks(gated: GatedInput, prompt: Prompt) -> dict[int, str]:
     """Position -> exact text of every block that isn't summary text."""
     sources = gated.plot.sources
-    expected = {0: _header(gated)}
+    expected = {0: _header(gated, prompt)}
     for i, src in enumerate(sources):
         expected[1 + 3 * i] = _open_marker(i, src.meta)
         expected[3 + 3 * i] = CLOSE_MARKER
@@ -190,21 +236,15 @@ def _expected_non_source_blocks(gated: GatedInput) -> dict[int, str]:
     return expected
 
 
-def verify_request(
-    params: dict[str, Any], gated: GatedInput, prompt: Prompt | None = None
-) -> None:
-    """Re-check the built request against the gated sources (fail closed): one user message;
-    every block is a plain text block; every non-source block is exactly the expected constant
-    or a marker rebuilt from the validated ref; every source block passes the hash and
-    word-count checks; with ``prompt``, the system prompt is the pinned body."""
-    if prompt is not None:
-        system = params.get("system")
-        if (
-            not isinstance(system, list)
-            or len(system) != 1
-            or system[0].get("text") != prompt.body
-        ):
-            raise GateError("request system prompt is not the pinned prompt body")
+def verify_request(params: dict[str, Any], gated: GatedInput, prompt: Prompt) -> None:
+    """Re-check the built request against the gated sources (fail closed): the system prompt is
+    the pinned body; one user message; every block is a plain text block; every non-source
+    block is exactly the expected constant, the header rebuilt for ``prompt`` from the
+    validated release year, or a marker rebuilt from the validated ref; every source block
+    passes the hash and word-count checks."""
+    system = params.get("system")
+    if not isinstance(system, list) or len(system) != 1 or system[0].get("text") != prompt.body:
+        raise GateError("request system prompt is not the pinned prompt body")
     messages = params["messages"]
     if len(messages) != 1 or messages[0]["role"] != "user":
         raise GateError("request must hold exactly one user message")
@@ -216,7 +256,7 @@ def verify_request(
     for idx, block in enumerate(content):
         if set(block) != {"type", "text"} or block["type"] != "text":
             raise GateError(f"request block {idx} is not a plain text block")
-    for idx, text in _expected_non_source_blocks(gated).items():
+    for idx, text in _expected_non_source_blocks(gated, prompt).items():
         if content[idx]["text"] != text:
             raise GateError(f"request block {idx} is not the expected marker or instruction")
     total = 0

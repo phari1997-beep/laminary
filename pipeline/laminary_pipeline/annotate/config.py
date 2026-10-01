@@ -20,7 +20,7 @@ ANNOTATIONS_DIR = DATA_DIR / "annotations"
 
 API_KEY_ENV = "ANTHROPIC_API_KEY"
 
-DEFAULT_PROMPT_VERSION = "annotate-1.0.0"
+DEFAULT_PROMPT_VERSION = "annotate-1.1.0"
 # Phase 1 annotates with this model only (DECISIONS.md). Other models in MODELS stay for
 # offline estimates; using one for a run needs an explicit override flag.
 PHASE1_MODEL = "claude-opus-5-5"
