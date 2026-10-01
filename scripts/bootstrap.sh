@@ -166,8 +166,8 @@ if [ -f "$PYPROJ" ]; then
     fi
     # uv pip install is a no-op when already satisfied. Editable install keeps tests importing local code.
     if [ "$CHECK_ONLY" = 0 ]; then
-      ( cd "$REPO/pipeline" && VIRTUAL_ENV="$VENV" uv pip install -e ".[dev]" )
-    else note "[check] would run: uv pip install -e \"pipeline[dev]\""; fi
+      ( cd "$REPO/pipeline" && VIRTUAL_ENV="$VENV" uv pip install -e ".[dev,annotate]" )
+    else note "[check] would run: uv pip install -e \"pipeline[dev,annotate]\""; fi
   fi
 elif [ -f "$PYREQ" ]; then
   note "requirements.txt found but no pyproject; not expected for this repo. Skipping rather than guessing."

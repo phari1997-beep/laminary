@@ -19,6 +19,10 @@ dev = [
     "pytest>=8",
     "ruff>=0.16,<0.17",  # minor pinned: new ruff minors add rules
 ]
+# LLM annotation (laminary_pipeline/annotate). Optional: ingest, gold and evaluate don't import it.
+annotate = [
+    "anthropic>=1.9,<2",
+]
 
 [tool.setuptools.packages.find]
 where = ["."]

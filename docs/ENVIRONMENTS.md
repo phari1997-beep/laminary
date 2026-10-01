@@ -78,7 +78,7 @@ Runs on every push to `main`, every PR into `main`, and manual dispatch. It uses
 
 | Job | What it does | Expected duration |
 |---|---|---|
-| `pipeline` | Python 3.12, `pip install -e .[dev]`, `ruff check`, `pytest` in `pipeline/` | about 1 min |
+| `pipeline` | Python 3.12, `pip install -e .[dev,annotate]`, `ruff check`, `pytest` in `pipeline/` | about 1 min |
 | `app` | Passes as a no-op until `app/package.json` exists, then runs `npm ci`, `npm run lint --if-present`, `npm test --if-present` on Node 22 | under 10 s now |
 | `secret-scan` | Installs a pinned, checksum-verified gitleaks 8.30.1, scans the full history, then runs the prod-secret tripwire | under 30 s |
 
@@ -108,7 +108,7 @@ Local equivalent of the `pipeline` job:
 ```sh
 cd pipeline
 python3.12 -m venv .venv && . .venv/bin/activate
-pip install -e ".[dev]"
+pip install -e ".[dev,annotate]"
 ruff check . && pytest
 ```
 
