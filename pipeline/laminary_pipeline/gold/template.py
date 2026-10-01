@@ -14,6 +14,10 @@ Three files (one per tab; File > Import > "Insert new sheet(s)" for each):
   tables, captions, hatnotes and notes that ingest strips (``ingest/text.py``), and a TV
   series' episode tables are dropped. The revision link stays in the sheet for attribution.
   These files hold CC BY-SA text and live under the gitignored data directory.
+- ``texts/manifest.csv``: one row per text file (filename, qid, title, sha256, word_count), so
+  the ``texts`` folder can be uploaded to the Drive Laminary folder as is (DECISIONS
+  2026-09-30) and checked after upload. Stale ``Q*.txt`` files from earlier runs are removed,
+  so the folder holds exactly the files the manifest lists. Nothing is uploaded from here.
 
 Titles the selector flagged ``double_label`` get two rows, ``label_slot`` 1 and 2, for two
 different labelers working independently. The model's guessed plot/arc from the selector are
@@ -43,6 +47,8 @@ TEMPLATE_NAME = "gold_labels_template.csv"
 LISTS_NAME = "gold_labels_lists.csv"
 README_NAME = "gold_labels_readme.csv"
 TEXTS_DIR = "texts"
+MANIFEST_NAME = "manifest.csv"
+MANIFEST_COLUMNS = ["filename", "qid", "title", "sha256", "word_count"]
 
 
 def text_file_name(qid: str) -> str:
@@ -55,7 +61,8 @@ README_LINES = [
     "1. Pick a row assigned to you. Put your labeler code in labeler_id. Some titles have",
     "   two rows (label_slot 1 and 2) for two different people: label on your own and",
     "   don't discuss the title or look at the other row until Hari says labeling is done.",
-    "2. Open the file named in summary_text_file and read ONLY that text. It is exactly",
+    "2. Open the file named in summary_text_file (in the 'texts' folder next to this sheet",
+    "   in the Laminary Drive folder) and read ONLY that text. It is exactly",
     "   what the model reads. Don't label from the Wikipedia page (wikipedia_revision_link",
     "   is there for attribution) and don't use anything you know about the film or show.",
     "3. Fill every white column: primary_plot, the 9 plot_ columns (Y/N), blueprint,",
@@ -146,12 +153,37 @@ def readme_csv() -> str:
     return _csv([[line] for line in lines])
 
 
+def manifest_rows(
+    rows: Sequence[dict[str, str]], plots: Mapping[str, dict[str, Any]]
+) -> list[dict[str, str]]:
+    """One manifest row per text file (double-labeled titles share one file)."""
+    out: dict[str, dict[str, str]] = {}
+    for row in rows:
+        qid = row["qid"]
+        if qid in out:
+            continue
+        data = plots[qid]["text"].encode("utf-8")
+        out[qid] = {
+            "filename": text_file_name(qid).removeprefix(f"{TEXTS_DIR}/"),
+            "qid": qid,
+            "title": row["title"],
+            "sha256": hashlib.sha256(data).hexdigest(),
+            "word_count": row["word_count"],
+        }
+    return list(out.values())
+
+
+def manifest_csv(rows: Sequence[dict[str, str]]) -> str:
+    return _csv([MANIFEST_COLUMNS] + [[r[c] for c in MANIFEST_COLUMNS] for r in rows])
+
+
 def write_template(
     out_dir: Path,
     rows: Sequence[dict[str, str]],
     plots: Mapping[str, dict[str, Any]] | None = None,
 ) -> list[Path]:
-    """Write the three CSV tabs and, for every row, ``texts/<QID>.txt`` from ``plots``."""
+    """Write the three CSV tabs and, with ``plots``, ``texts/<QID>.txt`` for every title plus
+    ``texts/manifest.csv``; stale ``texts/Q*.txt`` files are removed."""
     out_dir.mkdir(parents=True, exist_ok=True)
     files = {TEMPLATE_NAME: template_csv(rows), LISTS_NAME: lists_csv(), README_NAME: readme_csv()}
     written = []
@@ -160,12 +192,18 @@ def write_template(
         path.write_text(text, encoding="utf-8")
         written.append(path)
     if plots is not None:
-        for row in rows:
-            if row.get("label_slot") == "2":
-                continue  # same text file as slot 1
-            qid = row["qid"]
-            path = out_dir / text_file_name(qid)
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_bytes(plots[qid]["text"].encode("utf-8"))
+        texts = out_dir / TEXTS_DIR
+        texts.mkdir(parents=True, exist_ok=True)
+        manifest = manifest_rows(rows, plots)
+        keep = {m["filename"] for m in manifest}
+        for stale in texts.glob("Q*.txt"):
+            if stale.name not in keep:
+                stale.unlink()
+        for m in manifest:
+            path = texts / m["filename"]
+            path.write_bytes(plots[m["qid"]]["text"].encode("utf-8"))
             written.append(path)
+        path = texts / MANIFEST_NAME
+        path.write_text(manifest_csv(manifest), encoding="utf-8")
+        written.append(path)
     return written

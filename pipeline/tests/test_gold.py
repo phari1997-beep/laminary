@@ -19,7 +19,13 @@ from laminary_pipeline.gold.__main__ import main as gold_main
 from laminary_pipeline.gold.importer import import_csv_text
 from laminary_pipeline.gold.pairs import load_pairs, resolve_pairs
 from laminary_pipeline.gold.select import select_gold, summarize_gold
-from laminary_pipeline.gold.template import lists_csv, readme_csv, template_csv, template_rows
+from laminary_pipeline.gold.template import (
+    lists_csv,
+    manifest_rows,
+    readme_csv,
+    template_csv,
+    template_rows,
+)
 from laminary_pipeline.ingest.http import HttpClient
 from laminary_pipeline.ingest.paths import DEFAULT_DATA_DIR, read_jsonl, write_jsonl_atomic
 from laminary_pipeline.ingest.wikipedia import PlotFetcher
@@ -282,6 +288,8 @@ def test_template_from_plot_files_round_trips(tmp_path: Path) -> None:
         ("Q9000001", "1"), ("Q9000003", "1"), ("Q9000003", "2")
     ]
     assert rows[1] == {**rows[2], "label_slot": "1"}  # the two slots differ only in the slot
+    # one text file per title, even with two rows
+    assert [m["qid"] for m in manifest_rows(rows, plots)] == ["Q9000001", "Q9000003"]
     assert "Q9000002" in skipped[0]
     text = template_csv(rows)
     lines = list(csv.reader(io.StringIO(text)))
@@ -425,6 +433,20 @@ def test_gold_cli_select_template_import(tmp_path: Path) -> None:
     assert text_file.read_bytes() == plot["text"].encode("utf-8")
     assert hashlib.sha256(text_file.read_bytes()).hexdigest() == plot["source"]["content_sha256"]
     assert "texts/Q9000001.txt" in template
+    # the texts folder is ready for Drive: exactly the listed files plus the manifest
+    manifest = list(csv.DictReader(io.StringIO(
+        (data / "gold" / "texts" / "manifest.csv").read_text())))
+    assert manifest == [{
+        "filename": "Q9000001.txt", "qid": "Q9000001", "title": "The Lantern Keeper",
+        "sha256": plot["source"]["content_sha256"], "word_count": str(plot["word_count"]),
+    }]
+    stale = data / "gold" / "texts" / "Q123.txt"
+    stale.write_text("from an earlier selection")
+    assert gold_main(["--data-dir", str(data), "template"], log=log.append) == 0
+    assert sorted(p.name for p in (data / "gold" / "texts").iterdir()) == [
+        "Q9000001.txt", "manifest.csv"
+    ]
+    assert any("Laminary Drive folder" in line for line in log)
 
     filled = list(csv.DictReader(io.StringIO(template)))[1:]
     filled[0].update(MOVIE_LABELS)

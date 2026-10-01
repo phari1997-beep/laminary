@@ -1,7 +1,8 @@
 """CLI: ``python -m laminary_pipeline.gold {select,template,import,pairs}``.
 
     select [--n 100]       pick gold titles -> data/gold/gold_selection.jsonl (+ summary)
-    template               write the Google Sheets CSVs -> data/gold/gold_labels_*.csv
+    template               write the Google Sheets CSVs -> data/gold/gold_labels_*.csv, and
+                           the summary texts + manifest -> data/gold/texts/ (for Drive)
     import FILLED.csv [--out PATH] [--labeled-at ISO] [--allow-partial]
                            filled sheet -> data/gold/gold_labels.jsonl (schema-valid records);
                            prints every row problem. Writes nothing on errors unless
@@ -105,8 +106,12 @@ def _template(paths: DataPaths, log: Callable[[str], None]) -> int:
     written = write_template(paths.gold, rows, plots)
     for msg in skipped:
         log(f"left out {msg}")
-    log(f"{len(rows)} titles in the sheet; wrote " + ", ".join(str(w) for w in written[:3])
-        + f" and {len(written) - 3} summary text files under {paths.gold / 'texts'}")
+    n_texts = len(written) - 4  # three CSV tabs and the manifest
+    log(f"{len(rows)} rows in the sheet ({sum(r['label_slot'] == '2' for r in rows)} second-"
+        "labeler rows); wrote " + ", ".join(str(w) for w in written[:3])
+        + f", {n_texts} summary text files and {written[-1]}")
+    log(f"upload the folder {paths.gold / 'texts'} to the Laminary Drive folder, next to the "
+        "gold sheet; manifest.csv lists each file's sha256")
     return 0
 
 
