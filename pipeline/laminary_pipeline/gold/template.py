@@ -8,9 +8,13 @@ Three files (one per tab; File > Import > "Insert new sheet(s)" for each):
 - ``gold_labels_lists.csv`` -> tab "Lists": one column per dropdown. In "Labels", use Data >
   Data validation > "Dropdown (from a range)" pointing at these columns.
 - ``gold_labels_readme.csv`` -> tab "README": short instructions and the column guide.
-- ``texts/<QID>.txt``: the exact summary text the model receives for each title (the plot
-  file's ``text``, byte for byte, UTF-8, no trailing newline), so its SHA-256 equals the
-  sheet's ``source_sha256``. Labelers read this file, not the Wikipedia page: the page also has
+- ``texts/<QID>.txt``: the exact summary text the model receives for each title
+  (``prompt.labeler_text``, UTF-8, no trailing newline). For a single source that is the plot
+  file's ``text`` byte for byte, so its SHA-256 equals the sheet's ``source_sha256``. For a
+  series summarized from season articles (DECISIONS 2026-10-01) it is every season's summary
+  block exactly as the request carries it, marker naming the article included, in season
+  order; the per-article hashes are in ``source_sha256``, separated by " | ", like the other
+  ``source_*`` columns. Labelers read this file, not the Wikipedia page: the page also has
   tables, captions, hatnotes and notes that ingest strips (``ingest/text.py``), and a TV
   series' episode tables are dropped. The revision link stays in the sheet for attribution.
   These files hold CC BY-SA text and live under the gitignored data directory.
@@ -33,6 +37,16 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
+from laminary_pipeline.annotate.inputs import (
+    GateError,
+    InputFormatError,
+    NotAnnotatable,
+    PlotInput,
+    PlotSource,
+    gate,
+    ingest_sources,
+)
+from laminary_pipeline.annotate.prompt import labeler_text
 from laminary_pipeline.gold.columns import (
     ALL_COLUMNS,
     GUIDE_VERSION,
@@ -78,24 +92,48 @@ README_LINES = [
 ]
 
 
+MULTI_SEP = " | "  # separates per-source values in the source_* columns
+
+
+def labeler_text_for(plot: dict[str, Any]) -> str:
+    """The text file for one ok plot file: its sources gated exactly like annotation input
+    (Wikipedia-only, hashes, word counts, 150 words), then ``prompt.labeler_text``. Raises
+    GateError or InputFormatError if the model could not be sent this text."""
+    sources = []
+    for src in ingest_sources(plot):
+        if not isinstance(src.get("text"), str):
+            raise InputFormatError("plot file source without text")
+        sources.append(PlotSource({k: v for k, v in src.items() if k != "text"}, src["text"]))
+    cand = plot.get("candidate") or {}
+    title = {"media_type": cand.get("media_type"), "tmdb_id": cand.get("tmdb_id")}
+    return labeler_text(gate(PlotInput(title, tuple(sources), plot.get("qid", "plot file"))))
+
+
 def template_rows(
     selection: Sequence[dict[str, Any]], plots: dict[str, dict[str, Any]]
 ) -> tuple[list[dict[str, str]], list[str]]:
-    """Sheet rows for selected titles that have an ok plot file; plus messages for the rest."""
+    """Sheet rows for selected titles whose ok plot file passes the annotation gate; plus
+    messages for the rest."""
     rows, skipped = [], []
     for sel in selection:
         plot = plots.get(sel["qid"])
         if not plot or plot.get("status") != "ok":
             skipped.append(f"{sel['qid']} {sel['title']!r}: no passing plot section yet")
             continue
-        src = plot["source"]
-        text = plot.get("text")
-        if not isinstance(text, str) or (
-            hashlib.sha256(text.encode("utf-8")).hexdigest() != src.get("content_sha256")
-        ):
-            skipped.append(f"{sel['qid']} {sel['title']!r}: plot text doesn't match its sha256")
+        try:
+            labeler_text_for(plot)
+            sources = ingest_sources(plot)
+        except (GateError, InputFormatError, NotAnnotatable) as e:
+            reason = "plot text doesn't match its sha256" if "sha256" in str(e) else str(e)
+            skipped.append(f"{sel['qid']} {sel['title']!r}: {reason}")
             continue
         cand = plot.get("candidate", {})
+        seasons = plot.get("via") == "season_articles"
+        links = [p["permalink"] for p in plot["sources"]] if seasons else [plot["permalink"]]
+
+        def joined(field: str, sources: list[dict[str, Any]] = sources) -> str:
+            return MULTI_SEP.join(str(src[field]) for src in sources)
+
         row = {c: "" for c in ALL_COLUMNS}
         row.update(
             qid=sel["qid"],
@@ -103,17 +141,20 @@ def template_rows(
             year=str(sel["year"]),
             type=sel["media_type"],
             summary_text_file=text_file_name(sel["qid"]),
-            wikipedia_revision_link=plot["permalink"],
-            plot_section=plot["section"]["heading"].capitalize(),
+            wikipedia_revision_link=MULTI_SEP.join(links),
+            plot_section=(
+                f"Season articles ({len(sources)})" if seasons
+                else plot["section"]["heading"].capitalize()
+            ),
             word_count=str(plot["word_count"]),
             series_status=effective_series_status(cand) or "",
             tmdb_id=str(sel["tmdb_id"]),
-            source_ref=src["ref"],
-            source_revision=src["revision"],
-            source_retrieved_at=src["retrieved_at"],
-            source_license=src["license"],
-            source_word_count=str(src["word_count"]),
-            source_sha256=src["content_sha256"],
+            source_ref=joined("ref"),
+            source_revision=joined("revision"),
+            source_retrieved_at=joined("retrieved_at"),
+            source_license=joined("license"),
+            source_word_count=joined("word_count"),
+            source_sha256=joined("content_sha256"),
             guide_version=GUIDE_VERSION,
             label_slot="1",
         )
@@ -162,7 +203,7 @@ def manifest_rows(
         qid = row["qid"]
         if qid in out:
             continue
-        data = plots[qid]["text"].encode("utf-8")
+        data = labeler_text_for(dict(plots[qid])).encode("utf-8")
         out[qid] = {
             "filename": text_file_name(qid).removeprefix(f"{TEXTS_DIR}/"),
             "qid": qid,
@@ -201,7 +242,7 @@ def write_template(
                 stale.unlink()
         for m in manifest:
             path = texts / m["filename"]
-            path.write_bytes(plots[m["qid"]]["text"].encode("utf-8"))
+            path.write_bytes(labeler_text_for(dict(plots[m["qid"]])).encode("utf-8"))
             written.append(path)
         path = texts / MANIFEST_NAME
         path.write_text(manifest_csv(manifest), encoding="utf-8")

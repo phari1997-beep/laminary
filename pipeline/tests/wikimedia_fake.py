@@ -50,6 +50,14 @@ class FakeWikimedia:
             return sparql.get(f"pool:{m.group(1)}", EMPTY_POOL)
         if "# laminary gold-seed lookup" in query:
             return sparql["seed"]
+        m = re.search(r"# laminary season check: (Q\d+)", query)
+        if m:
+            values = re.search(r"VALUES \?item \{([^}]*)\}", query)
+            wanted = set(re.findall(r"wd:(Q\d+)", values.group(1))) if values else set()
+            check = sparql.get(f"season_check:{m.group(1)}", {"results": {"bindings": []}})
+            bindings = [b for b in check["results"]["bindings"]
+                        if b["item"]["value"].rsplit("/", 1)[-1] in wanted]
+            return {"head": {"vars": ["item", "ordinal"]}, "results": {"bindings": bindings}}
         if "# laminary detail query" in query:
             values = re.search(r"VALUES \?item \{([^}]*)\}", query)
             wanted = set(re.findall(r"wd:(Q\d+)", values.group(1))) if values else set()
@@ -65,11 +73,27 @@ class FakeWikimedia:
         wiki = self.data["wikipedia"]
         if params["action"] == "query":
             key = f"query:{params['titles']}"
-            if key not in wiki:
-                return {"batchcomplete": True,
-                        "query": {"pages": [{"ns": 0, "title": params["titles"], "missing": True}]}}
-            return wiki[key]
+            if key in wiki:
+                return wiki[key]
+            # several titles (or one unknown): merge the single-title entries, like MediaWiki
+            pages: dict[str, Any] = {}
+            redirects: list[Any] = []
+            for title in params["titles"].split("|"):
+                entry = wiki.get(f"query:{title}")
+                if entry is None:
+                    pages.setdefault(title, {"ns": 0, "title": title, "missing": True})
+                    continue
+                redirects += [r for r in entry["query"].get("redirects", [])
+                              if r["from"] != r["to"]]
+                for page in entry["query"]["pages"]:
+                    pages[page["title"]] = page
+            out: dict[str, Any] = {"batchcomplete": True, "query": {"pages": list(pages.values())}}
+            if redirects:
+                out["query"]["redirects"] = redirects
+            return out
         assert params["action"] == "parse"
+        if params.get("prop") == "links":
+            return wiki.get(f"links:{params['oldid']}", {"parse": {"links": []}})
         if params.get("prop") == "sections":
             return wiki[f"sections:{params['oldid']}"]
         return wiki[f"text:{params['oldid']}:{params['section']}"]

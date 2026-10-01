@@ -17,6 +17,12 @@ Everything after step 2 is pinned to one revision id, so it is cached forever an
 Section choice: the first heading, in the priority order below for the title's type, whose text
 has at least ``MIN_WORDS`` words. Titles with no such section are skipped with a recorded reason
 and never annotated (DECISIONS 2026-09-26: 150-word minimum; never guess from a title).
+
+Series fallback (DECISIONS 2026-10-01): when a series' main article is too short or has no plot
+section, its verified per-season articles are tried (``seasons.py``). Such a record has
+``via: "season_articles"`` and a ``sources`` list (one entry per season article, each with its
+own schema-shaped ``source`` and ``text``) instead of the single ``source`` and ``text``; the
+main article's result is kept under ``main_article``.
 """
 
 from __future__ import annotations
@@ -30,9 +36,10 @@ from typing import Any
 
 from laminary_pipeline.annotation import require_wikipedia_sources
 from laminary_pipeline.ingest.http import HttpClient, HttpError
+from laminary_pipeline.ingest.seasons import SEASON_WORD_CAP, SeasonFinder, SeasonResult
 from laminary_pipeline.ingest.text import html_to_text, sha256_text, word_count
 
-FETCHER_VERSION = "1.0.0"
+FETCHER_VERSION = "1.1.0"  # 1.1.0: per-season articles for thin series
 MIN_WORDS = 150
 API_URL = "https://en.wikipedia.org/w/api.php"
 WIKIDATA_API_URL = "https://www.wikidata.org/w/api.php"
@@ -64,6 +71,7 @@ SKIP_QID_MISMATCH = "qid_mismatch"
 SKIP_NO_SECTION = "no_plot_section"
 SKIP_TOO_SHORT = "too_short"
 SKIP_FETCH_ERROR = "fetch_error"  # transient: retried on the next run
+VIA_SEASON_ARTICLES = "season_articles"
 
 
 def now_utc() -> str:
@@ -125,10 +133,14 @@ class PlotFetcher:
         *,
         min_words: int = MIN_WORDS,
         clock: Callable[[], str] = now_utc,
+        season_articles: bool = True,
+        season_word_cap: int = SEASON_WORD_CAP,
     ) -> None:
         self.client = client
         self.min_words = min_words
         self.clock = clock
+        self.season_articles = season_articles
+        self.season_word_cap = season_word_cap
 
     # ---------- API calls ----------
 
@@ -234,7 +246,7 @@ class PlotFetcher:
         ]
         candidates = plot_sections(all_sections, media_type, page_title)
         if not candidates:
-            return {**result, "skip_reason": SKIP_NO_SECTION}
+            return self._try_seasons({**result, "skip_reason": SKIP_NO_SECTION}, media_type)
 
         best: tuple[int, Section] | None = None
         for section in candidates:
@@ -246,12 +258,82 @@ class PlotFetcher:
                 best = (words, section)
         assert best is not None
         words, section = best
-        return {
+        skipped = {
             **result,
             "skip_reason": SKIP_TOO_SHORT,
             "skip_detail": f"longest plot-like section {section.heading!r} has {words} words",
             "section": {"heading": section.heading, "index": section.index},
             "word_count": words,
+        }
+        return self._try_seasons(skipped, media_type)
+
+    # ---------- series: per-season articles ----------
+
+    def _try_seasons(self, skipped: dict[str, Any], media_type: str) -> dict[str, Any]:
+        """The main article failed; for a series, try its verified season articles."""
+        if media_type != "tv_series" or not self.season_articles:
+            return skipped
+        found = SeasonFinder(self, cap=self.season_word_cap).find(
+            skipped["qid"], skipped["page_title"], int(skipped["page_id"]),
+            int(skipped["revision"]),
+        )
+        main = {k: skipped.get(k) for k in ("skip_reason", "skip_detail", "section",
+                                            "word_count", "revision", "permalink")}
+        report = {
+            "used": [t.page.title for t in found.texts],
+            "skipped": found.skipped,
+            "left_out_over_cap": found.left_out_over_cap,
+            "used_list_page": found.used_list_page,
+            "word_cap": self.season_word_cap,
+        }
+        if found.words < self.min_words:
+            detail = (
+                f"{skipped.get('skip_detail') or skipped['skip_reason']}; season articles: "
+                f"{len(found.texts)} usable with {found.words} words"
+            )
+            return {**skipped, "skip_detail": detail[:300], "season_articles": report}
+        return self._ok_seasons(skipped, main, found, report)
+
+    def _ok_seasons(
+        self,
+        result: dict[str, Any],
+        main: dict[str, Any],
+        found: SeasonResult,
+        report: dict[str, Any],
+    ) -> dict[str, Any]:
+        parts = []
+        for t in found.texts:
+            source: dict[str, Any] = {
+                "kind": "wikipedia_plot",
+                "ref": article_url(t.page.title),
+                "revision": str(t.page.revid),
+                "retrieved_at": result["retrieved_at"],
+                "license": license_for(t.page.timestamp),
+                "word_count": t.words,
+                "content_sha256": sha256_text(t.text),
+            }
+            if t.page.season is not None:
+                source["season"] = t.page.season
+            parts.append({
+                "page_title": t.page.title,
+                "permalink": permalink(t.page.title, t.page.revid),
+                "sections": t.headings,
+                "source": source,
+                "text": t.text,
+            })
+        require_wikipedia_sources([p["source"] for p in parts])  # fail closed, every page
+        out = {k: v for k, v in result.items() if k not in ("skip_detail", "word_count")}
+        return {
+            **out,
+            "status": "ok",
+            "skip_reason": None,
+            "skip_detail": None,
+            "via": VIA_SEASON_ARTICLES,
+            "main_article": main,
+            "section": {"heading": "season articles", "index": None},
+            "word_count": found.words,
+            "sources": parts,
+            "season_articles": report,
         }
 
     def _ok(

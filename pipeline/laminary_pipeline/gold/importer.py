@@ -54,6 +54,10 @@ REQUIRED_PREFILLED = [
     "source_retrieved_at", "source_license", "source_word_count", "source_sha256",
 ]
 QID_RE = re.compile(r"^Q[1-9][0-9]*$")
+SOURCE_COLS = [
+    "source_ref", "source_revision", "source_retrieved_at", "source_license",
+    "source_word_count", "source_sha256",
+]
 MAX_SECONDARY = 2
 
 
@@ -204,12 +208,20 @@ def row_to_record(
     media_type = row["type"].strip()
     if media_type not in ("movie", "tv_series"):
         errors.append(f"type {media_type!r} must be movie or tv_series")
-    year, tmdb_id, words = _int(row["year"]), _int(row["tmdb_id"]), _int(row["source_word_count"])
+    year, tmdb_id = _int(row["year"]), _int(row["tmdb_id"])
     if year is None:
         errors.append(f"year {row['year']!r} is not a number")
     if tmdb_id is None:
         errors.append(f"tmdb_id {row['tmdb_id']!r} is not a number")
-    if words is None:
+    # Series summarized from season articles carry one value per article, separated by '|'.
+    split = {c: [v.strip() for v in row[c].split("|")] for c in SOURCE_COLS}
+    n_sources = len(split["source_ref"])
+    if any(len(v) != n_sources for v in split.values()):
+        errors.append("the source_ columns must list the same number of values; "
+                      "don't edit prefilled columns")
+        n_sources = 0
+    word_counts = [_int(w) for w in split["source_word_count"][:n_sources]]
+    if any(w is None for w in word_counts):
         errors.append(f"source_word_count {row['source_word_count']!r} is not a number")
     series_status = row.get("series_status", "").strip()
     if media_type == "tv_series" and series_status not in ("ended", "ongoing", "unknown"):
@@ -231,16 +243,19 @@ def row_to_record(
             "labeler_id": labeler,
             "guide_version": row.get("guide_version", "").strip() or GUIDE_VERSION,
         },
-        "sources": [{
-            "kind": "wikipedia_plot",
-            "ref": row["source_ref"].strip(),
-            "revision": row["source_revision"].strip(),
-            "retrieved_at": row["source_retrieved_at"].strip(),
-            "license": row["source_license"].strip(),
-            "word_count": words,
-            "content_sha256": row["source_sha256"].strip(),
-        }],
-        "input_word_count": words,
+        "sources": [
+            {
+                "kind": "wikipedia_plot",
+                "ref": split["source_ref"][i],
+                "revision": split["source_revision"][i],
+                "retrieved_at": split["source_retrieved_at"][i],
+                "license": split["source_license"][i],
+                "word_count": word_counts[i],
+                "content_sha256": split["source_sha256"][i],
+            }
+            for i in range(n_sources)
+        ],
+        "input_word_count": sum(w or 0 for w in word_counts),
     }
     notes = row.get("notes", "").strip()
     if notes:

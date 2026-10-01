@@ -659,6 +659,12 @@
         "content_sha256": {
           "type": "string",
           "pattern": "^[0-9a-f]{64}$"
+        },
+        "season": {
+          "description": "Season number when the source is a per-season article of a series (sources are in season order). Absent for a main article.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
         }
       }
     },
@@ -713,7 +719,7 @@
           "items": {
             "$ref": "#/$defs/source"
           },
-          "maxItems": 5
+          "maxItems": 20
         },
         "input_word_count": {
           "description": "Total words of summary text sent to the annotator (0 when none).",

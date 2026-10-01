@@ -188,6 +188,20 @@ def _user_content(gated: GatedInput, prompt: Prompt) -> list[dict[str, Any]]:
     return blocks
 
 
+def labeler_text(gated: GatedInput) -> str:
+    """The summary gold labelers read, matching the request exactly (DECISIONS 2026-09-26 and
+    2026-10-01). One source: its text, byte for byte (so its SHA-256 is the source's
+    ``content_sha256``). Several sources (season articles): each summary block as the request
+    carries it, opening marker naming the article, text, closing marker, in request order,
+    joined by a blank line."""
+    sources = gated.plot.sources
+    if len(sources) == 1:
+        return sources[0].text
+    return "\n\n".join(
+        _open_marker(i, src.meta) + src.text + CLOSE_MARKER for i, src in enumerate(sources)
+    )
+
+
 def source_block_indices(n_sources: int) -> list[int]:
     """Positions of the source-text blocks in the user content built above."""
     return [2 + 3 * i for i in range(n_sources)]

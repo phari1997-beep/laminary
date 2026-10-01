@@ -14,7 +14,7 @@ from typing import Any
 
 from laminary_pipeline.ingest.candidates import BUCKETS, language_display
 from laminary_pipeline.ingest.paths import DataPaths, read_json, write_json_atomic
-from laminary_pipeline.ingest.wikipedia import SKIP_FETCH_ERROR, PlotFetcher
+from laminary_pipeline.ingest.wikipedia import SKIP_FETCH_ERROR, VIA_SEASON_ARTICLES, PlotFetcher
 
 
 def existing_status(paths: DataPaths, qid: str) -> dict[str, Any] | None:
@@ -156,6 +156,10 @@ def plots_report(paths: DataPaths, candidates: Sequence[dict[str, Any]]) -> dict
         for b in BUCKETS
     }
     eff_counts = Counter(r["bucket"] for r in eff)
+    via_seasons = Counter(
+        c["bucket"] for c, rec in fetched
+        if rec["status"] == "ok" and rec.get("via") == VIA_SEASON_ARTICLES
+    )
     return {
         "candidates": len(candidates),
         "fetched": len(fetched),
@@ -167,6 +171,10 @@ def plots_report(paths: DataPaths, candidates: Sequence[dict[str, Any]]) -> dict
         "by_decade": by(lambda c: c["decade"]),
         "by_bucket": by(lambda c: c["bucket"]),
         "by_role": by(lambda c: c["role"]),
+        "via_season_articles": {
+            "total": sum(via_seasons.values()),
+            "by_bucket": dict(sorted(via_seasons.items())),
+        },
         "sections_used": dict(sections.most_common()),
         "ok_word_count": (
             {"min": ok_words[0], "median": ok_words[len(ok_words) // 2], "max": ok_words[-1]}
@@ -193,6 +201,10 @@ def format_report(report: dict[str, Any]) -> str:
         lines.append(f"{title}:")
         for k, v in report[key].items():
             lines.append(f"  {k:<26} {v['ok']:>4}/{v['total']:<4} {_pct(v['pass_rate'])}")
+    via = report["via_season_articles"]
+    lines.append(f"Via season articles: {via['total']} passing titles")
+    for bucket, n in via["by_bucket"].items():
+        lines.append(f"  {bucket:<26} {n:>4}")
     eff = report["effective_pilot"]
     lines.append(f"Effective pilot (after backfill): {eff['total']}/{eff['slots']} slots filled")
     lines.append("  " + ", ".join(f"{b} {v}" for b, v in eff["by_bucket"].items()))

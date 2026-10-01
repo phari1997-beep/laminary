@@ -10,6 +10,9 @@ Interface with ingestion (files under ``pipeline/data/plots/``, one JSON object 
         "source": {<the schema's source object>}, "text": "<the exact plot text>", ...}
 
    Files with ``status`` other than ``ok`` are reported as unusable, with their skip reason.
+   A series whose main article was too thin may instead carry ``"via": "season_articles"`` and
+   ``"sources": [{"source": {...}, "text": "...", ...}, ...]``, one entry per season article in
+   season order (DECISIONS 2026-10-01); each becomes its own source and summary block.
 
 2. Generic: ``{"title": {<the schema's title object>}, "sources": [{<source>, "text": ...}]}``.
 
@@ -110,7 +113,18 @@ def _from_ingest_shape(obj: dict[str, Any], origin: str) -> dict[str, Any]:
     }
     if cand.get("media_type") == "tv_series":
         title["series_status"] = effective_series_status(cand)
-    return {"title": title, "sources": [{**(obj.get("source") or {}), "text": obj.get("text")}]}
+    return {"title": title, "sources": ingest_sources(obj)}
+
+
+def ingest_sources(obj: dict[str, Any]) -> list[dict[str, Any]]:
+    """An ok ingest plot file's sources, in order, as ``{<source fields>, "text": ...}``: the
+    season articles of a ``season_articles`` file, else its single source."""
+    if obj.get("via") == "season_articles" or "sources" in obj:
+        parts = obj.get("sources")
+        if not isinstance(parts, list) or not parts:
+            raise InputFormatError("season-article plot file without sources")
+        return [{**(p.get("source") or {}), "text": p.get("text")} for p in parts]
+    return [{**(obj.get("source") or {}), "text": obj.get("text")}]
 
 
 def parse_plot(obj: Any, origin: str) -> PlotInput:
