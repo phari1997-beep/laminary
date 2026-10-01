@@ -31,7 +31,7 @@ Current phase: **Phase 1 — Narrative data pilot** (started 2026-09-30)
 - **Pending small change (sre):** add `anthropic>=1.9,<2` to pipeline/pyproject.toml so the 2 skipped client tests run.
 - **Local setup (Hari):**
   - Python 3.12, then `cd pipeline && pip install -e ".[dev]" && pip install "anthropic>=1.9,<2"`.
-  - Export `ANTHROPIC_API_KEY` in your shell. Never commit it; .env is gitignored.
+  - Put `ANTHROPIC_API_KEY=...` in `.env` at the repo root (gitignored; check with `git check-ignore .env`). Do NOT export it globally: Claude Code itself would pick it up and bill its own usage to that key. Load it only for pipeline commands: `set -a; source .env; set +a` in the same command. Never print it.
   - Wikipedia and Wikidata need no setup locally.
 - **Next Phase 1 steps, in order:**
   1. Live ingestion smoke run: `python -m laminary_pipeline.ingest candidates --limit 20`, then `plots --limit 20`. Free: check class ids, query time and the 150-word pass rate.
