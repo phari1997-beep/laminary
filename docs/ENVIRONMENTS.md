@@ -156,14 +156,14 @@ When an item is done, enter the values **directly in the vendor dashboard or Git
 One script sets up a fresh Apple Silicon Mac: `scripts/bootstrap.sh` (packages in `scripts/Brewfile`). It is idempotent, so re-running it is safe.
 
 ```sh
-scripts/bootstrap.sh --check     # verify only; installs and writes nothing
+scripts/bootstrap.sh --check     # verify only; installs nothing, writes no config
 scripts/bootstrap.sh             # install and configure, then verify
 scripts/bootstrap.sh --android --eas --orbstack   # opt-ins; see --help
 ```
 
 What it does: checks Xcode and the licence (prints instructions, never automates the App Store), installs Homebrew and the Brewfile (Node 22, watchman, uv, gh, jq, direnv, libpq, Supabase CLI, gitleaks, shellcheck), trusts the taps named in the Brewfile (`brew trust --tap`; Homebrew 7 refuses untrusted taps), installs Docker Desktop, builds `pipeline/.venv` with uv on the Python version in `pipeline/pyproject.toml` (3.12) with the `dev` extra, runs the right install in `app/` once it has a `package.json` (npm, matching CI), copies `.env.example` to `.env` only if `.env` is missing and gitignored, and enables the pre-commit hook below (`git config core.hooksPath .githooks`, this checkout only). It writes no secrets and never edits your shell profile; it prints the `PATH` lines to add (libpq for `psql`, direnv hook). It ends with a PASS/MISSING table and the manual account and key steps (section 4).
 
-The first real run on a new laptop is **expected to exit non-zero**: the Docker daemon is not running until you open the Docker app once. Open it, accept its prompts, open a new terminal, then run `scripts/bootstrap.sh --check` (exit 0 when everything is present). `--check` itself always exits 0.
+The first real run on a new laptop is **expected to exit non-zero**: the Docker daemon is not running until you open the Docker app once. Open it, accept its prompts, open a new terminal, then run `scripts/bootstrap.sh --check` (exit 0 when everything is present). `--check` itself always exits 0. It is not strictly write-free on disk: its `supabase --version` call creates the gitignored `supabase/.temp/cli-latest`.
 
 The script also prints, but does not apply, the `eval "$(/opt/homebrew/bin/brew shellenv)"` line for `~/.zprofile` (so `brew` is on `PATH` in new terminals), the libpq `PATH` line for `psql`, and the direnv hook.
 
@@ -171,9 +171,9 @@ Docker choice: Docker Desktop is the default because section 4 item 5 already re
 
 ### Pre-commit hook
 
-`.githooks/pre-commit` is versioned in the repo (DECISIONS 2026-10-01). When a commit stages anything under `pipeline/` or `docs/` (added, changed, deleted or renamed), it runs `.venv/bin/ruff check .` and `.venv/bin/python -m pytest -q` in `pipeline/` (about 5 s, no network) and aborts the commit if either fails. Docs are included because a test checks that backticked identifiers in docs exist. Commits that touch neither skip the checks. If `pipeline/.venv` is missing, the hook fails and points to `scripts/bootstrap.sh`.
+`.githooks/pre-commit` is versioned in the repo (DECISIONS 2026-10-01). When a commit stages anything under `pipeline/` or `docs/` (added, changed, deleted or renamed), it runs `.venv/bin/ruff check .` and `.venv/bin/python -m pytest -q -p no:cacheprovider` in `pipeline/` (about 5 s, no network) and aborts the commit if either fails. Before the checks it unsets `PYTEST_ADDOPTS` (a shell-level `--co`, `--lf` or `-k` could narrow or skip the run; the `addopts` in `pipeline/pyproject.toml` still apply) and the `GIT_*` variables git exports to hooks (`GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE`, `GIT_PREFIX`, `GIT_OBJECT_DIRECTORY`, `GIT_ALTERNATE_OBJECT_DIRECTORIES`), so tests that shell out to git can't act on this repo's index. `-p no:cacheprovider` means no `.pytest_cache` reads or writes, so stale `--lf`/`--ff` state can't apply. Docs are included because a test checks that backticked identifiers in docs exist. Commits that touch neither skip the checks. If `pipeline/.venv` is missing, the hook fails and points to `scripts/bootstrap.sh`.
 
 - **Enable:** `scripts/bootstrap.sh` sets it, and `--check` shows a `git-hooks` row. By hand: `git config core.hooksPath .githooks` (local repo config; each clone or worktree's own `.githooks/` copy is used).
 - **Working tree, not index:** the checks run against files on disk, so unstaged edits can change the result. This is accepted; stashing to test the exact index is fragile.
-- **Not every commit runs it:** a `git merge` without conflicts, `git rebase` and `git cherry-pick` don't run pre-commit. CI on `main` and PRs (section 3) covers those.
+- **Not every commit runs it:** a `git merge` without conflicts, `git rebase`, `git cherry-pick`, `git revert` and `git am` don't run pre-commit. CI on `main` and PRs (section 3) covers those.
 - **Bypass:** `git commit --no-verify` skips it. Emergencies only, and say so in the commit message. CI still runs only on `main` and PRs (section 3), so a bypassed commit on a branch is unchecked until then.
