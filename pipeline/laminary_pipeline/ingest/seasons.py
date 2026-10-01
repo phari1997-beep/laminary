@@ -63,6 +63,7 @@ SEASON_PLOT_HEADINGS = frozenset(
 )
 SEASON_OVERVIEW_HEADINGS = frozenset({"overview", "season overview", "series overview"})
 
+QID_RE = re.compile(r"^Q[1-9][0-9]*$")  # checked before any id goes into SPARQL or int()
 _DISAMBIGUATOR = re.compile(r"\s+\([^()]*\)$")
 _SEASON_NUMBER = re.compile(r"\b(?:season|series)\s+(\d{1,2})\)?$", re.IGNORECASE)
 
@@ -97,6 +98,9 @@ def guessed_titles(base: str, page_title: str, max_seasons: int = MAX_SEASONS) -
 
 
 def season_check_sparql(series_qid: str, items: list[str]) -> str:
+    bad = [q for q in [series_qid, *items] if not QID_RE.match(q)]
+    if bad:
+        raise ValueError(f"not Wikidata item ids: {bad}")
     values = " ".join(f"wd:{q}" for q in sorted(set(items), key=lambda q: int(q[1:])))
     return f"""{PREFIXES}PREFIX p: <http://www.wikidata.org/prop/>
 PREFIX ps: <http://www.wikidata.org/prop/statement/>
@@ -213,6 +217,9 @@ class SeasonFinder:
 
     def find(self, series_qid: str, page_title: str, page_id: int, revid: int) -> SeasonResult:
         base = series_base(page_title)
+        if not QID_RE.match(series_qid):
+            return SeasonResult([], [{"title": page_title, "reason": f"series id {series_qid!r} "
+                                      "is not a Wikidata item id"}], [], False)
         titles = self.linked_titles(revid, base, page_title) + guessed_titles(base, page_title)
         skipped: list[dict[str, str]] = []
         raw_pages = [p for p in self.resolve(titles) if int(p["pageid"]) != page_id]
@@ -223,9 +230,13 @@ class SeasonFinder:
             if number is None and not is_episode_list(title, base, page_title):
                 skipped.append({"title": title, "reason": "not a season or episode-list page"})
                 continue
+            item = (p.get("pageprops") or {}).get("wikibase_item")
+            if item is not None and not (isinstance(item, str) and QID_RE.match(item)):
+                skipped.append({"title": title, "reason": f"malformed Wikidata item {item!r}"})
+                continue
             rev = p["revisions"][0]
             pages.append(Page(title, int(p["pageid"]), int(rev["revid"]), rev["timestamp"],
-                              (p.get("pageprops") or {}).get("wikibase_item"), number))
+                              item, number))
         evidence = self.verified_items(series_qid, [p.item for p in pages if p.item])
         verified: list[Page] = []
         for p in pages:
@@ -249,7 +260,11 @@ class SeasonFinder:
 
         result = self._join(seasons, skipped)
         if not result.texts and lists and result.too_long is None:
+            # keep what the season join left out (QA nit 3); with the season-1 exception a
+            # season join only ends empty when every season lacks text or season 1 is too long
+            left_out = result.left_out_over_cap
             result = self._join(lists[:1], skipped)
+            result.left_out_over_cap = left_out + result.left_out_over_cap
             result.used_list_page = True
         return result
 

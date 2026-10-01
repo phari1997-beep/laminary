@@ -277,8 +277,11 @@ class PlotFetcher:
 
     def _try_seasons(self, skipped: dict[str, Any], media_type: str) -> dict[str, Any]:
         """The main article failed; for a series, try its verified season articles."""
-        if media_type != "tv_series" or not self.season_articles:
+        if media_type != "tv_series":
             return skipped
+        if not self.season_articles:
+            # marked, so plots runs don't re-fetch it every time (QA nit 5); --refresh retries
+            return {**skipped, "season_articles": {"status": "disabled"}}
         found = SeasonFinder(self, cap=self.season_word_cap).find(
             skipped["qid"], skipped["page_title"], int(skipped["page_id"]),
             int(skipped["revision"]),

@@ -160,6 +160,9 @@ def run_lock(run: RunDir) -> Iterator[None]:
     message. The OS releases the lock when the process exits, however it exits (SIGKILL
     included), because closing the last descriptor releases a flock.
 
+    Deleting and recreating the run directory while it is locked is unsupported: the lock is
+    on the old directory, so a process opening the new one would not see it.
+
     Re-entrancy is per RunDir object: the CLI locks before reading the manifest, then calls
     run_batch with the same handle, and the inner call is a no-op. Any other handle, in this
     process or another, gets RunLockedError. A RunDir is not thread-safe: two threads sharing

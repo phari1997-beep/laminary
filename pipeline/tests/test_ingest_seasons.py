@@ -230,9 +230,18 @@ def test_films_and_passing_series_never_look_for_seasons() -> None:
     assert not any("links" in r.url or r.host == "query.wikidata.org" for r in fake.requests)
 
 
-def test_season_lookup_can_be_turned_off() -> None:
-    rec = fetch(season_fake(), season_articles=False)
-    assert rec["status"] == "skipped" and "season_articles" not in rec
+def test_season_lookup_can_be_turned_off(tmp_path: Path) -> None:
+    from laminary_pipeline.ingest.paths import DataPaths, write_json_atomic
+    from laminary_pipeline.ingest.plots import needs_fetch
+
+    fake = season_fake()
+    rec = fetch(fake, season_articles=False)
+    assert rec["status"] == "skipped" and rec["season_articles"] == {"status": "disabled"}
+    assert not any(r.host == "query.wikidata.org" for r in fake.requests)
+    # QA nit 5: marked, so later plots runs don't re-fetch it every time
+    paths = DataPaths.resolve(str(tmp_path))
+    write_json_atomic(paths.plot_file(SERIES), rec)
+    assert not needs_fetch(paths, SERIES, False) and needs_fetch(paths, SERIES, True)
 
 
 def test_season_pages_get_the_qid_check_and_stay_on_enwiki() -> None:
@@ -505,3 +514,34 @@ def test_gate_bounds_a_lone_season_by_the_ceiling() -> None:
     with pytest.raises(GateError, match="over the 6000-word ceiling"):
         gate(_plot_with([words(6001, "a")]))
     gate(_plot_with([words(6001, "a")], seasons=False))  # a main article has no upper limit
+
+
+# --- QA nits 2 and 3 -------------------------------------------------------------------------
+
+
+def test_malformed_wikidata_items_are_skipped_not_interpolated() -> None:
+    from laminary_pipeline.ingest.seasons import season_check_sparql
+
+    fake = season_fake()
+    for key in ("query:Tidewater season 1", "query:Tidewater (season 1)"):  # page + redirect
+        q = fake.data["wikipedia"][key]["query"]["pages"][0]
+        q["pageprops"]["wikibase_item"] = "Q1 } UNION { ?x ?y ?z"
+    rec = fetch(fake)
+    reasons = {s["title"]: s["reason"] for s in rec["season_articles"]["skipped"]}
+    assert reasons["Tidewater season 1"].startswith("malformed Wikidata item")
+    query = next(r for r in fake.requests if r.host == "query.wikidata.org").data.decode()
+    assert "UNION+%7B+%3Fx" not in query
+    with pytest.raises(ValueError, match="not Wikidata item ids"):
+        season_check_sparql(SERIES, ["Q1 } UNION {"])
+
+
+def test_list_fallback_keeps_what_the_season_join_left_out() -> None:
+    """Season 1 has no plot text and season 2 is over the cap (no exception for season 2), so
+    the season join is empty and the list page is used; the report still names the seasons
+    left out over the cap."""
+    fake = season_fake(season_words={2: 3500})
+    fake.data["wikipedia"]["sections:91010"] = sections("Tidewater season 1", ["Production"])
+    rec = fetch(fake)
+    report = rec["season_articles"]
+    assert rec["status"] == "ok" and report["used_list_page"]
+    assert report["left_out_over_cap"] == ["Tidewater (season 2)", "Tidewater season 4"]

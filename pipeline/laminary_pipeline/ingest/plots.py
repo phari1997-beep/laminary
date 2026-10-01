@@ -40,7 +40,8 @@ def needs_fetch(paths: DataPaths, qid: str, refresh: bool) -> bool:
 
 def _thin_series_before_seasons(rec: dict[str, Any]) -> bool:
     """A series skipped as thin by a fetcher older than the season-article fallback (1.1.0):
-    fetched again so the fallback can run."""
+    fetched again so the fallback can run. Any record with a ``season_articles`` entry
+    (attempted, or disabled for that run) is not re-fetched without --refresh."""
     return (
         rec.get("skip_reason") in (SKIP_TOO_SHORT, SKIP_NO_SECTION)
         and (rec.get("candidate") or {}).get("media_type") == "tv_series"
