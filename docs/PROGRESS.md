@@ -23,6 +23,7 @@ Current phase: **Phase 1 — Narrative data pilot** (started 2026-09-30)
   - Pending, blocked on permissions (Hari to allow edits): commit the 0.95 display threshold; two-part exit gate + double labeling; prompt annotate-1.1.0 with release year; schema 1.1.0 (series_status `unknown`, tighter ref); gold text files for Drive.
   - [x] 2026-10-01 — `anthropic` declared as the `annotate` extra; CI installs it [sre] (cf59f64, pending QA).
 - [x] 2026-10-01 — Live ingestion smoke run (free) [coordinator]: `candidates --limit 20` took 4m24s (WDQS); pool 1,735; 20 picked (15 films, 5 series, 13 buckets), 19 are gold seeds; all have TMDB and IMDb ids. Missing seeds: True Detective, Paatal Lok, Your Lie in April, Mushishi. `plots --limit 20`: 20/20 fetched, 20/20 pass the 150-word rule. Nit: two languages print as raw QIDs (Q188, Q7976) in the report.
+- [x] 2026-10-01 — Full ingestion run (free) [coordinator]: 654 candidates (500 pilot + reserves); 500 plots fetched, 445 pass the 150-word rule (89%). Films 344/350 (98%), series 101/150 (67%; tv:english 62/95, tv:korean 9/15). 49 too short, 6 with no plot section. `--backfill` not yet run. Non-narrative titles slipped the genre filter (e.g. MythBusters, Zoboomafoo).
 - [ ] Live smoke call: one structured-output request (needs Hari: API key + spend approval)
 - [ ] Gold set of ~100 titles labeled (Hari + friends)
 - [ ] 500-title pilot annotation (needs Hari's spend approval) → agreement vs gold, cost per title
