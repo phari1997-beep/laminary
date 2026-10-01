@@ -17,7 +17,16 @@ ROOT="$(git rev-parse --show-toplevel)" || exit 1
 # --no-renames lists both sides of a rename, so moving a file out of pipeline/ still counts.
 # Deletions count too (deleting a module can break tests). Respects GIT_INDEX_FILE, so
 # `git commit -a` and `git commit <paths>` see the right file list.
-if ! git diff --cached --name-only --no-renames -z | tr '\0' '\n' | grep -q -E '^(pipeline|docs)/'; then
+# Capture the list before matching: piped straight into grep, a failing `git diff` (e.g. a
+# corrupt index) would look like "nothing relevant staged" and skip the checks.
+# Names git has to quote start with `"`; the pipeline/ and docs/ prefixes are plain ASCII,
+# so an optional leading quote in the pattern covers them.
+if ! STAGED="$(git diff --cached --name-only --no-renames)"; then
+  echo "pre-commit: 'git diff --cached' failed; cannot tell what is staged. Commit aborted." >&2
+  echo "pre-commit: check the index (git status), fix it, then commit again." >&2
+  exit 1
+fi
+if ! printf '%s\n' "$STAGED" | grep -q -E '^"?(pipeline|docs)/'; then
   exit 0
 fi
 
@@ -31,6 +40,9 @@ fi
 # Git exports GIT_INDEX_FILE (and sometimes GIT_DIR/GIT_WORK_TREE) to hooks. Clear them for the
 # tools so any test that shells out to git, or builds a temp repo, can't act on this repo's index.
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
+# A shell-level PYTEST_ADDOPTS (e.g. --co, --lf, -k) would narrow or skip the run and let a
+# failing test through. The pyproject.toml [tool.pytest.ini_options] addopts still apply.
+unset PYTEST_ADDOPTS
 
 cd "$PIPE" || exit 1
 echo "pre-commit: ruff check (pipeline/)" >&2
@@ -39,7 +51,8 @@ if ! .venv/bin/ruff check .; then
   exit 1
 fi
 echo "pre-commit: pytest -q (pipeline/)" >&2
-if ! .venv/bin/python -m pytest -q; then
+# no:cacheprovider: no .pytest_cache reads (so a stale --lf/--ff state can't apply) or writes.
+if ! .venv/bin/python -m pytest -q -p no:cacheprovider; then
   echo "pre-commit: tests failed; commit aborted." >&2
   exit 1
 fi

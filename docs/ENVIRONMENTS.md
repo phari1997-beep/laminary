@@ -175,4 +175,5 @@ Docker choice: Docker Desktop is the default because section 4 item 5 already re
 
 - **Enable:** `scripts/bootstrap.sh` sets it, and `--check` shows a `git-hooks` row. By hand: `git config core.hooksPath .githooks` (local repo config; each clone or worktree's own `.githooks/` copy is used).
 - **Working tree, not index:** the checks run against files on disk, so unstaged edits can change the result. This is accepted; stashing to test the exact index is fragile.
+- **Not every commit runs it:** a `git merge` without conflicts, `git rebase` and `git cherry-pick` don't run pre-commit. CI on `main` and PRs (section 3) covers those.
 - **Bypass:** `git commit --no-verify` skips it. Emergencies only, and say so in the commit message. CI still runs only on `main` and PRs (section 3), so a bypassed commit on a branch is unchecked until then.

@@ -213,7 +213,14 @@ fi
 say "8b. git hooks (.githooks/pre-commit: ruff + pytest in pipeline/)"
 if ! git rev-parse --git-dir >/dev/null 2>&1; then note "not a git checkout; skipping"
 elif [ "$(git config --local --get core.hooksPath 2>/dev/null)" = .githooks ]; then note "core.hooksPath already .githooks"
-else act git config --local core.hooksPath .githooks; fi
+else
+  OLD_HOOKS="$(git config --local --get core.hooksPath 2>/dev/null || true)"
+  if [ -n "$OLD_HOOKS" ]; then
+    if [ "$CHECK_ONLY" = 1 ]; then note "core.hooksPath is currently '$OLD_HOOKS'; a full run would replace it"
+    else note "core.hooksPath was '$OLD_HOOKS'; replacing it. To restore: git config --local core.hooksPath '$OLD_HOOKS'"; fi
+  fi
+  act git config --local core.hooksPath .githooks
+fi
 
 # ---------------------------------------------------------------- 9. Verify
 say "9. Verification"
