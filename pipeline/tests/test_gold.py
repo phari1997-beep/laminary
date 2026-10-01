@@ -13,6 +13,7 @@ import pytest
 from wikimedia_fake import FakeWikimedia
 
 from laminary_pipeline.annotation import load_schema, validate_record
+from laminary_pipeline.evaluate.report import index_gold
 from laminary_pipeline.gold import columns as col
 from laminary_pipeline.gold.__main__ import main as gold_main
 from laminary_pipeline.gold.importer import import_csv_text
@@ -197,11 +198,36 @@ def test_row_errors_are_clear(change: dict[str, str], message: str) -> None:
 
 
 def test_duplicate_labeler_for_same_title_is_an_error_but_two_labelers_are_fine() -> None:
-    a = {**PREFILLED_MOVIE, **MOVIE_LABELS}
-    b = {**a, "labeler_id": "L02"}
-    assert len(import_csv_text(sheet(a, b), annotated_at=STAMP).records) == 2
-    dup = import_csv_text(sheet(a, a), annotated_at=STAMP)
+    a = {**PREFILLED_MOVIE, **MOVIE_LABELS, "label_slot": "1"}
+    b = {**a, "labeler_id": "L02", "label_slot": "2"}
+    # slot 2 on an earlier sheet row still comes out after slot 1 (the evaluation's reference)
+    result = import_csv_text(sheet(b, a), annotated_at=STAMP)
+    assert result.ok, "\n".join(map(str, result.errors))
+    labelers = [r["provenance"]["annotator"]["labeler_id"] for r in result.records]
+    assert labelers == ["L01", "L02"]
+    gold = index_gold(result.records)
+    assert gold.reference["movie:90001"]["provenance"]["annotator"]["labeler_id"] == "L01"
+    assert gold.second["movie:90001"]["provenance"]["annotator"]["labeler_id"] == "L02"
+    dup = import_csv_text(sheet(a, {**a, "label_slot": "2"}), annotated_at=STAMP)
     assert "already labeled Q9000001 on row 3" in str(dup.errors[0])
+
+
+@pytest.mark.parametrize(
+    "slots,message",
+    [(("1", "1"), "label_slot 1 of Q9000001 is already labeled on row 3"),
+     (("1", "3"), "label_slot '3' must be 1 or 2")],
+)
+def test_label_slot_errors(slots: tuple[str, str], message: str) -> None:
+    a = {**PREFILLED_MOVIE, **MOVIE_LABELS, "label_slot": slots[0]}
+    b = {**a, "labeler_id": "L02", "label_slot": slots[1]}
+    result = import_csv_text(sheet(a, b), annotated_at=STAMP)
+    assert len(result.records) == 1 and message in str(result.errors[0])
+
+
+def test_blank_label_slot_means_slot_one() -> None:
+    a = {**PREFILLED_MOVIE, **MOVIE_LABELS}
+    b = {**a, "labeler_id": "L02", "label_slot": "2"}
+    assert len(import_csv_text(sheet(a, b), annotated_at=STAMP).records) == 2
 
 
 def test_schema_check_catches_bad_prefilled_source() -> None:
@@ -224,7 +250,7 @@ def test_columns_cover_exactly_the_gold_label_fields() -> None:
     assert set(col.ARC_NAMES) == set(schema["emotional_arc"]["enum"])
     assert set(col.TAG_NAMES) == set(schema["beat_tag"]["enum"])
     assert set(col.SKIP_NAMES) == set(schema["abstain_reason"]["enum"])
-    assert len(col.ALL_COLUMNS) == len(set(col.ALL_COLUMNS)) == 66
+    assert len(col.ALL_COLUMNS) == len(set(col.ALL_COLUMNS)) == 67
     for c in col.LABELER_COLS:
         if c.startswith(("plot_", "stage_", "tag_")):
             assert col.dropdown_for_column(c) == "yes_no"
@@ -247,12 +273,15 @@ def test_template_from_plot_files_round_trips(tmp_path: Path) -> None:
         {"qid": "Q9000001", "title": "The Lantern Keeper", "year": 1994, "media_type": "movie",
          "tmdb_id": 90001, "guessed_plot": "rebirth"},
         {"qid": "Q9000003", "title": "Harbor Lights", "year": 2013, "media_type": "tv_series",
-         "tmdb_id": 90003, "guessed_plot": "mystery"},
+         "tmdb_id": 90003, "guessed_plot": "mystery", "double_label": True},
         {"qid": "Q9000002", "title": "Nizhal Veedu", "year": 2003, "media_type": "movie",
          "tmdb_id": 90002, "guessed_plot": "comedy"},
     ]
     rows, skipped = template_rows(selection, plots)
-    assert [r["qid"] for r in rows] == ["Q9000001", "Q9000003"]
+    assert [(r["qid"], r["label_slot"]) for r in rows] == [
+        ("Q9000001", "1"), ("Q9000003", "1"), ("Q9000003", "2")
+    ]
+    assert rows[1] == {**rows[2], "label_slot": "1"}  # the two slots differ only in the slot
     assert "Q9000002" in skipped[0]
     text = template_csv(rows)
     lines = list(csv.reader(io.StringIO(text)))
@@ -269,9 +298,10 @@ def test_template_from_plot_files_round_trips(tmp_path: Path) -> None:
     parsed = list(csv.DictReader(io.StringIO(text)))[1:]  # drop help row
     parsed[0].update(MOVIE_LABELS)
     parsed[1].update(TV_LABELS)
+    parsed[2].update(TV_LABELS, labeler_id="L03")
     result = import_csv_text(sheet(*parsed), annotated_at=STAMP)
     assert result.ok, "\n".join(map(str, result.errors))
-    assert [validate_record(r) for r in result.records] == [[], []]
+    assert [validate_record(r) for r in result.records] == [[], [], []]
     assert result.records[0]["provenance"]["sources"][0] == plots["Q9000001"]["source"]
 
 
@@ -314,6 +344,10 @@ def test_gold_selector_balances_type_region_and_plots() -> None:
     counts = s["by_guessed_plot"].values()
     assert len(s["by_guessed_plot"]) == 9 and max(counts) - min(counts) <= 3
     assert not {"Q999", "Q998"} & {r["qid"] for r in rows}
+    # double labeling: 25 titles spread through the pick order, both types represented
+    assert s["double_labeled"] == 25 and sum(r["double_label"] for r in rows) == 25
+    assert set(s["double_labeled_by_media_type"]) == {"movie", "tv_series"}
+    assert [i for i, r in enumerate(rows) if r["double_label"]] == list(range(0, 100, 4))
 
 
 def test_gold_selector_tops_up_with_famous_non_seeds() -> None:
@@ -321,6 +355,8 @@ def test_gold_selector_tops_up_with_famous_non_seeds() -> None:
     rows = select_gold(cands, [], n=5, tv_share=0)
     assert [r["qid"] for r in rows] == ["Q1", "Q2", "Q3", "Q4", "Q5"]
     assert all(r["guessed_plot"] == "unknown" for r in rows)
+    assert all(r["double_label"] for r in rows)  # fewer titles than DOUBLE_LABEL_N: all
+    assert not any(r["double_label"] for r in select_gold(cands, [], n=5, double_label_n=0))
 
 
 # ---------- pairs ----------

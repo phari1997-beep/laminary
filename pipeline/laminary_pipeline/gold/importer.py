@@ -6,6 +6,11 @@ the sheet. A row becomes a record only if it has no errors and the record passes
 
 Rows that are completely unlabeled (no labeler id and no labels) are skipped, not errors, so a
 partly filled sheet can be imported as work progresses.
+
+Double labeling: ``label_slot`` is 1 (or blank) for the reference labeler and 2 for the second
+labeler of a double-labeled title. Records are written with every slot-1 record before any
+slot-2 record, because the evaluation takes the first record for a title as the reference
+(``evaluate.report.index_gold``). Import the whole sheet into one file.
 """
 
 from __future__ import annotations
@@ -31,6 +36,7 @@ from laminary_pipeline.gold.columns import (
     FLAT_ARCS,
     GUIDE_VERSION,
     HELP_MARKER,
+    LABEL_SLOTS,
     LABELER_COLS,
     NO,
     PLOT_COLS,
@@ -341,17 +347,28 @@ def import_csv_text(text: str, *, annotated_at: str | None = None) -> ImportResu
     stamp = annotated_at or datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     result = ImportResult()
     seen: dict[tuple[str, str], int] = {}
-    for rownum, row in read_rows(text.lstrip("﻿")):
+    seen_slot: dict[tuple[str, str], int] = {}
+    slot_of: dict[int, str] = {}
+    for rownum, row in read_rows(text.lstrip("\ufeff")):
         title = row.get("title", "").strip()
         if not _labeled(row):
             result.skipped_unlabeled += 1
             continue
         record, errors, warnings = row_to_record(row, stamp)
-        key = (row.get("qid", "").strip(), row.get("labeler_id", "").strip())
+        qid = row.get("qid", "").strip()
+        key = (qid, row.get("labeler_id", "").strip())
         if key in seen:
             errors.append(f"labeler {key[1]!r} already labeled {key[0]} on row {seen[key]}")
         else:
             seen[key] = rownum
+        slot = row.get("label_slot", "").strip() or "1"
+        if slot not in LABEL_SLOTS:
+            errors.append(f"label_slot {slot!r} must be 1 or 2; don't edit prefilled columns")
+        elif (qid, slot) in seen_slot:
+            errors.append(f"label_slot {slot} of {qid} is already labeled on row "
+                          f"{seen_slot[(qid, slot)]}")
+        else:
+            seen_slot[(qid, slot)] = rownum
         if record is not None and not errors:
             problems = validate_record(record)
             if problems:
@@ -361,7 +378,9 @@ def import_csv_text(text: str, *, annotated_at: str | None = None) -> ImportResu
         if errors:
             result.errors.append(RowProblem(rownum, title, errors))
         elif record is not None:
+            slot_of[id(record)] = slot
             result.records.append(record)
+    result.records.sort(key=lambda r: slot_of[id(r)])  # stable: slot 1 first, then sheet order
     return result
 
 

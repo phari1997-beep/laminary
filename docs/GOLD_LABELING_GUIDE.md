@@ -1,12 +1,17 @@
 # Gold labeling guide
 
-**Version 1.1.0** (this number goes in the sheet's `guide_version` column). Owner: data-pipeline. Definitions come from `docs/NARRATIVE_SCHEMA.md` v1.0.0; if the two ever disagree, the schema wins and this guide gets fixed.
+**Version 1.2.0** (this number goes in the sheet's `guide_version` column). Owner: data-pipeline. Definitions come from `docs/NARRATIVE_SCHEMA.md` v1.0.0; if the two ever disagree, the schema wins and this guide gets fixed.
 
 ## What this is for
 
 Laminary uses an AI model to read each film's or series' plot summary and label its story shape. To know whether the model is any good, we need an answer key: about 100 titles labeled carefully by people. That's you.
 
-Your labels are compared with the model's. The main score is simple: does the model pick the same **primary plot** as you? Phase 1 passes when it matches on at least 80% of titles (DECISIONS 2026-09-29). Everything else you fill in is measured too, but only that score decides.
+Your labels are compared with the model's. The main score is simple: does the model pick the same **primary plot** as you? Phase 1 passes a two-part check (DECISIONS 2026-09-30, replacing the 80% target of 2026-09-29):
+
+- **Overall:** the model matches your primary plot on at least 85% of titles. If two people label at least 20 of the same titles, it is enough for the model to come within 5 points of how often those two people agree with each other.
+- **Labels the app would show:** when the model is at least 95% confident in a primary plot (the confidence it needs for the app to show it), it must match you at least 95% of the time, measured on at least 30 such titles.
+
+The check also needs at least 80 titles scored, and at least 90% of your labeled titles. Everything else you fill in is measured too, but only the primary plot decides.
 
 Labels are internal. Nobody sees them in the app, so spoilers are fine here.
 
@@ -16,7 +21,8 @@ Labels are internal. Nobody sees them in the app, so spoilers are fine here.
 2. **Forget what you know.** If you've seen the film and the summary leaves something out, label what the summary says. Don't fill gaps from memory, reviews, or other pages.
 3. **Judge every box.** Every Y/N column needs a Y or an N. N is a real answer ("I looked, it isn't there"), not a blank.
 4. **If you can't label it, skip it** with a `skip_reason` (below) rather than guessing.
-5. **One row per title per person.** Don't copy someone else's row. If Hari asks two people to label the same title, each fills their own row.
+5. **One row per title per person.** Don't copy someone else's row. About 25 titles have two rows (`label_slot` 1 and 2) so two people can label them; each person takes the slot Hari assigns.
+6. **Label independently; don't confer.** Don't discuss a title with other labelers, and don't look at anyone else's row, until Hari says labeling is finished. The two-person titles measure how often careful people agree on their own; comparing notes makes that number meaningless. Where the two of you disagree, Hari settles it afterwards.
 
 Expect about 15 to 25 minutes a title once you're used to it.
 
@@ -183,7 +189,7 @@ The importer checks every row and names the column. The usual ones:
 - More than two plots besides the primary marked Y.
 - A value typed that isn't in the dropdown (use the dropdowns).
 - Some but not all of the 11 arc points filled, or a point outside -1 to 1.
-- `labeler_id` left blank, or the same person labeling the same title twice.
+- `labeler_id` left blank, or the same person labeling the same title twice (both slots of a two-person title must be different people).
 - Edited grey columns (the importer needs them exactly as they were).
 
 ## For Hari: setting up the sheet
@@ -191,12 +197,14 @@ The importer checks every row and names the column. The usual ones:
 1. The coordinator runs `python -m laminary_pipeline.gold select` and `... gold template` and uploads three CSVs from `pipeline/data/gold/` to your Drive.
 2. In Google Sheets, import `gold_labels_template.csv` (File > Import > Replace spreadsheet), then import `gold_labels_lists.csv` and `gold_labels_readme.csv` with "Insert new sheet(s)". Rename the tabs Labels, Lists and README.
 3. On the Labels tab: View > Freeze > 2 rows (header plus the `#` help row). Select the `plot_`, `stage_` and `tag_` columns and add Data > Data validation > "Dropdown (from a range)" = `Lists!A2:A3` (the `yes_no` column). Do the same for `primary_plot`, `blueprint`, `arc_shape`, `skip_reason` and `confidence`, each pointing at its column on the Lists tab. Set invalid data to "Reject input".
-4. Shade the prefilled columns grey (`qid` to `word_count`, and `series_status` to `guide_version`) and protect them (Data > Protect sheets and ranges > "Show a warning").
-5. Give each labeler a code (`L01`, `L02`, ...) and assign rows. For an agreement check, have about 15 titles labeled by two people: duplicate those rows and give each copy a different `labeler_id`.
+4. Shade the prefilled columns grey (`qid` to `word_count`, including `label_slot`, and `series_status` to `guide_version`) and protect them (Data > Protect sheets and ranges > "Show a warning").
+5. Give each labeler a code (`L01`, `L02`, ...) and assign rows. The selector marks 25 titles for double labeling (DECISIONS 2026-09-30), and the template already has two rows for each, `label_slot` 1 and 2. Assign the two slots of a title to different people. Slot 1 is the reference the model is scored against; slot 2 measures human agreement. Tell labelers to work independently (golden rule 6). The evaluation lists every title where the two disagree, for you to adjudicate.
 6. When done: File > Download > CSV (Labels tab) and hand it to the coordinator, who runs `python -m laminary_pipeline.gold import <file>.csv`. Any problems come back as a list by row number and title.
 
 ## Versions
 
 - **1.0.0** (2026-09-30): first version, for schema v1.0.0.
+- **1.1.0** (2026-09-30): labelers read the exact model-input text file (`summary_text_file`), not the Wikipedia page.
+- **1.2.0** (2026-10-01): two-part Phase 1 exit check; `label_slot` and double labeling of 25 titles; label independently (rule 6). Label definitions unchanged.
 
 Changing a definition here changes what a label means. That needs a new guide version, and labels made under the old version stay tagged with it.

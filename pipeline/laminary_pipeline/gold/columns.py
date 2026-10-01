@@ -10,7 +10,7 @@ from __future__ import annotations
 from laminary_pipeline.annotation import load_schema
 
 # Version of docs/GOLD_LABELING_GUIDE.md. Stored as provenance.annotator.guide_version.
-GUIDE_VERSION = "1.1.0"
+GUIDE_VERSION = "1.2.0"
 
 
 def _enum(name: str) -> list[str]:
@@ -95,7 +95,7 @@ NO = frozenset({"n", "no", "false", "0", "absent"})
 # ---------- columns ----------
 
 PREFILLED_LEFT = [
-    "qid", "title", "year", "type", "summary_text_file", "wikipedia_revision_link",
+    "qid", "title", "year", "type", "label_slot", "summary_text_file", "wikipedia_revision_link",
     "plot_section", "word_count",
 ]
 PLOT_COLS = [f"plot_{k}" for k in BOOKER_PLOTS]
@@ -112,6 +112,9 @@ PREFILLED_RIGHT = [
 ]
 ALL_COLUMNS = [*PREFILLED_LEFT, *LABELER_COLS, *PREFILLED_RIGHT]
 HELP_MARKER = "#"
+# Double-labeled titles get two rows: slot 1 (the reference the model is scored against) and
+# slot 2 (the second labeler). Other titles have one row, slot 1.
+LABEL_SLOTS = ("1", "2")
 
 
 def help_row() -> dict[str, str]:
@@ -125,6 +128,9 @@ def help_row() -> dict[str, str]:
     h["wikipedia_revision_link"] = (
         "Attribution only (CC BY-SA source). Don't label from the web page: it has extra "
         "tables, captions and notes the model never sees"
+    )
+    h["label_slot"] = (
+        "1, or 2 for a title two people label. Take a slot Hari assigns; label on your own"
     )
     h["labeler_id"] = "Your labeler code, e.g. L01"
     h["skip_reason"] = "Leave blank unless you can't label: " + " / ".join(SKIP_NAMES.values())

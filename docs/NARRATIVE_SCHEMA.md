@@ -487,13 +487,18 @@ Run on the ~100-title gold set after each prompt iteration, reported per (schema
 
 If the leak metric misses its target, the fix is prompt work (tighter setup-only instructions, examples of leaks) or a separate cheap pass that rewrites `safe_text` from the setup portion of the Wikipedia plot. The second option costs an extra call per title and would be proposed with a cost estimate. TMDB overviews are not an option (section 1).
 
-**Phase 1 exit metric (decided 2026-09-29).** Measured against the gold set:
+**Phase 1 exit gate (decided 2026-09-30, replacing the 2026-09-29 target of 80%).** Measured against the gold set by `python -m laminary_pipeline.evaluate`. Phase 1 passes only if A, B and coverage all pass:
 
 - **Field:** "archetype" means `archetypal_plot.primary.label`.
-- **Matching rule (strict):** the model's primary equals the gold primary. Target: at least 80% over gold titles.
+- **Matching rule (strict):** the model's primary equals the gold primary. A model abstention, or a gold title with no model record, counts as a miss. Gold titles the labeler skipped have no primary and are not scored. Titles whose model record and gold label come from different summaries (source hashes differ) are excluded and listed.
+- **A, overall:** accuracy at least **85%**, or, when at least **20** double-labeled titles are scored, at least human–human agreement minus **5 points**. The report gives both numbers, plus human agreement and its N whenever double labels exist.
+- **B, shown labels:** among scored titles whose model primary confidence is at least the display threshold (0.95, section 4), accuracy at least **95%**. Fewer than **30** such titles is "insufficient data", and B does not pass.
+- **Coverage:** at least **80** scored titles and at least **90%** of the gold titles labeled `annotated` (DECISIONS 2026-09-30). The count and share of scored titles at or above the display threshold are always reported, since that is the share of titles that would show a primary plot.
+- **Double labeling:** 25 gold titles (DECISIONS 2026-09-30: 20 to 25) are labeled independently by two people. Slot 1 is the reference the model is scored against. Human–human agreement uses the same strict rule with slot 2 in the model's place, so a slot-2 skip is a miss and titles slot 1 skipped are not scored. Every disagreement is listed for Hari to adjudicate.
 - **Emotional arc reported separately, not gating:** exact-match accuracy of the derived `emotional_arc` label against gold, with fallback and reduced-shape titles broken out.
 - **Also reported, not gating:** the flat and reduced arc rates above, lenient plot agreement (the model's primary is judged present in the gold `plots`), and kappa.
-- **Abstentions:** the model abstaining on a gold-labeled title counts as a miss.
+
+Why two parts: a flat 95% overall likely exceeds how often two careful people agree on overlapping Booker plots, so the 95% bar is applied to the labels users actually see.
 
 ---
 
@@ -535,7 +540,7 @@ Re-check against the new rules:
 
 ## 16. Decisions and open questions
 
-Decided by Hari on 2026-09-26 and 2026-09-29 (logged in `docs/DECISIONS.md`) and reflected above:
+Decided by Hari on 2026-09-26, 2026-09-29 and 2026-09-30 (logged in `docs/DECISIONS.md`) and reflected above:
 
 - **Spoiler visibility:** story shapes and the arc line are visible by default, and plot spoilers are hidden (section 3).
 - **Spoiler levels:** the per-term levels are approved as drafted (section 3).
@@ -550,7 +555,7 @@ Decided by Hari on 2026-09-26 and 2026-09-29 (logged in `docs/DECISIONS.md`) and
 - **Gold protocol:** gold labelers use the same summary as the model (section 10).
 - **Browse rows:** keep all 15 until the pilot (section 15).
 - **TMDB interim rule:** Wikipedia plot sections are the only annotation input, and TMDB is used for IDs and display metadata only, until TMDB authorizes LLM use in writing (section 1).
-- **Phase 1 exit metric (2026-09-29):** exact match of `archetypal_plot.primary.label` against gold on at least 80% of gold titles, abstentions counted as misses; `emotional_arc` accuracy reported separately, not gating (section 14).
+- **Phase 1 exit gate (2026-09-30, replacing the 80% target of 2026-09-29):** A, `archetypal_plot.primary.label` exact match of at least 85%, or within 5 points of human–human agreement on at least 20 double-labeled titles (abstentions count as misses); B, at least 95% accuracy on labels at or above the 0.95 display threshold, with at least 30 such titles; coverage of at least 80 scored titles and 90% of the gold set. `emotional_arc` accuracy is reported separately, not gating (section 14).
 - **Mild beat tags and tones hidden by default (2026-09-29):** story shapes, the arc line and journey stages stay visible (section 3).
 - **Flat stories (2026-09-29):** a flagged net-change placeholder that is never shown or used in shape rows; a "Steady" shape is revisited after the pilot (section 8).
 

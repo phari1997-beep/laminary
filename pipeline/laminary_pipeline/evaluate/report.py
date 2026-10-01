@@ -1,17 +1,30 @@
 """Compare model annotations with gold labels (docs/NARRATIVE_SCHEMA.md section 14).
 
-Headline (Phase 1 exit metric, decided 2026-09-29): exact match of
-``archetypal_plot.primary.label`` against gold on at least 80% of gold titles. The denominator
-is every gold title with ``outcome: annotated`` that can be scored; a model abstention, or a
-title the model never annotated, counts as a miss. Gold titles the labeler abstained on have no
-primary and are reported separately.
+Phase 1 exit gate (DECISIONS 2026-09-30, replacing the 80% target of 2026-09-29). It passes
+only if A, B and coverage all pass:
 
-Titles whose model record was made from a different summary than the gold label (source
-content hashes differ) are excluded from every comparison and listed separately: neither a hit
-nor a miss is meaningful there. So that exclusions can't make a tiny sample pass, ``passes``
-also needs a minimum coverage: at least MIN_SCORED_TITLES scored titles and at least
-MIN_SCORED_FRACTION of the gold titles labeled ``annotated``. Both thresholds are PROPOSED and
-await Hari's decision.
+- **A, overall:** strict exact match of ``archetypal_plot.primary.label`` against gold. The
+  denominator is every scored gold title (labeled ``annotated``, source not mismatched); a model
+  abstention, or a title the model never annotated, counts as a miss. Passes at OVERALL_TARGET
+  or more, or, when at least MIN_DOUBLE_LABELED titles have two labelers, at human-human
+  agreement minus HUMAN_MARGIN or more.
+- **B, shown labels:** among scored titles whose model primary confidence is at least
+  ``DISPLAY_CONFIDENCE_THRESHOLD`` (the labels the app would show), accuracy is at least
+  SHOWN_TARGET. Fewer than MIN_SHOWN_TITLES such titles is "insufficient data" and fails.
+- **Coverage:** at least MIN_SCORED_TITLES scored titles and at least MIN_SCORED_FRACTION of
+  the gold titles labeled ``annotated`` (DECISIONS 2026-09-30). The count and share of scored
+  titles at or above the display threshold are always reported.
+
+Gold titles the labeler abstained on have no primary and are reported separately. Titles whose
+model record was made from a different summary than the gold label (source content hashes
+differ) are excluded from every comparison and listed separately: neither a hit nor a miss is
+meaningful there.
+
+Double labeling: a title may have two gold records from different labelers. The first one in
+load order is the reference the model is scored against (``gold import`` writes slot-1 rows
+before slot-2 rows). Human-human agreement uses the same rule with the second labeler in the
+model's place: titles the reference labeler abstained on are not scored, and a second-labeler
+abstention is a miss. Every title where the two disagree is listed for Hari to adjudicate.
 
 Also reported (not gating): kappa and lenient agreement on the primary plot; blueprint;
 emotional arc on unflagged titles with fallback and reduced-shape titles broken out; per-term
@@ -27,23 +40,28 @@ from __future__ import annotations
 import json
 from collections import Counter, defaultdict
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from fractions import Fraction
 from pathlib import Path
 from typing import Any
 
 from laminary_pipeline.annotate.client import Usage
 from laminary_pipeline.annotate.cost import price_usage
 from laminary_pipeline.annotate.inputs import title_key
-from laminary_pipeline.annotation import validate_record
+from laminary_pipeline.annotation import DISPLAY_CONFIDENCE_THRESHOLD, validate_record
 from laminary_pipeline.arc import derive_arc
 from laminary_pipeline.evaluate import metrics as m
 from laminary_pipeline.evaluate.pairs import PairReport
 from laminary_pipeline.evaluate.pairs import render_markdown as render_pairs
 
-EXIT_TARGET = 0.80
-# PROPOSED, pending Hari: the exit metric only counts when enough of the gold set is scored.
-MIN_SCORED_TITLES = 80
-MIN_SCORED_FRACTION = 0.90
+# Phase 1 exit gate (DECISIONS 2026-09-30). Thresholds are compared as exact fractions.
+OVERALL_TARGET = "0.85"  # A: overall primary-plot accuracy
+HUMAN_MARGIN = "0.05"  # A, alternative: within this of human-human agreement
+MIN_DOUBLE_LABELED = 20  # A, alternative: needs this many scored double-labeled titles
+SHOWN_TARGET = "0.95"  # B: accuracy of labels at or above the display threshold
+MIN_SHOWN_TITLES = 30  # B: fewer shown labels than this is insufficient data
+MIN_SCORED_TITLES = 80  # coverage
+MIN_SCORED_FRACTION = "0.90"  # coverage
 ABSTAINED = "(abstained)"
 MISSING = "(no model record)"
 
@@ -80,16 +98,33 @@ def load_records(paths: Iterable[Path]) -> list[dict[str, Any]]:
     return records
 
 
-def index_gold(records: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
-    gold: dict[str, dict[str, Any]] = {}
+@dataclass
+class GoldIndex:
+    """Gold records by title key: ``reference`` (the first labeler, scored against) and
+    ``second`` (the second labeler, for double-labeled titles only)."""
+
+    reference: dict[str, dict[str, Any]] = field(default_factory=dict)
+    second: dict[str, dict[str, Any]] = field(default_factory=dict)
+
+
+def index_gold(records: list[dict[str, Any]]) -> GoldIndex:
+    """At most two gold records per title, from different labelers; the first in load order is
+    the reference."""
+    out = GoldIndex()
     for rec in records:
         if rec["record_kind"] != "gold_label":
             raise EvaluationInputError(f"not a gold_label record: {title_key(rec['title'])}")
         key = title_key(rec["title"])
-        if key in gold:
-            raise EvaluationInputError(f"two gold records for {key}")
-        gold[key] = rec
-    return gold
+        if key not in out.reference:
+            out.reference[key] = rec
+            continue
+        if key in out.second:
+            raise EvaluationInputError(f"more than two gold records for {key}")
+        first = out.reference[key]["provenance"]["annotator"]["labeler_id"]
+        if rec["provenance"]["annotator"]["labeler_id"] == first:
+            raise EvaluationInputError(f"labeler {first!r} has two gold records for {key}")
+        out.second[key] = rec
+    return out
 
 
 @dataclass(frozen=True)
@@ -156,22 +191,131 @@ def _acc(correct: int, total: int) -> dict[str, Any]:
 # --- sections ------------------------------------------------------------------------------
 
 
+def _at_least(value: Fraction | None, bar: Fraction) -> bool:
+    return value is not None and value >= bar
+
+
+def _frac(num: int, den: int) -> Fraction | None:
+    return Fraction(num, den) if den else None
+
+
+def _primary_label(rec: dict[str, Any] | None) -> str:
+    if rec is None:
+        return MISSING
+    if rec["outcome"] == "abstained":
+        return ABSTAINED
+    return _primary(rec)
+
+
+def human_agreement(gold: GoldIndex) -> dict[str, Any]:
+    """Second labeler vs reference labeler, with the model's exact-match rule (module doc)."""
+    scored = agree = 0
+    pairs_a: list[str] = []
+    pairs_b: list[str] = []
+    disagreements: list[dict[str, Any]] = []
+    mismatched: list[str] = []
+    for key, second in sorted(gold.second.items()):
+        ref = gold.reference[key]
+        if _source_hashes(ref) != _source_hashes(second):
+            mismatched.append(key)
+            continue
+        a, b = _primary_label(ref), _primary_label(second)
+        if _annotated(ref):
+            scored += 1
+            agree += a == b
+            pairs_a.append(a)
+            pairs_b.append(b)
+        if a != b:
+            disagreements.append(
+                {
+                    "title_key": key,
+                    "name": ref["title"]["name"],
+                    "reference_labeler": ref["provenance"]["annotator"]["labeler_id"],
+                    "reference": a,
+                    "second_labeler": second["provenance"]["annotator"]["labeler_id"],
+                    "second": b,
+                    "scored": _annotated(ref),
+                }
+            )
+    return {
+        "double_labeled_titles": len(gold.second),
+        "rule": "second labeler scored against the reference labeler like the model; "
+        "reference abstentions not scored, second-labeler abstentions are misses",
+        **_acc(agree, scored),
+        "kappa": m.cohen_kappa(pairs_a, pairs_b),
+        "excluded_source_mismatch": mismatched,
+        "disagreements": disagreements,
+    }
+
+
+def _gate_overall(correct: int, total: int, human: dict[str, Any]) -> dict[str, Any]:
+    acc = _frac(correct, total)
+    via_target = _at_least(acc, Fraction(OVERALL_TARGET))
+    enough = human["total"] >= MIN_DOUBLE_LABELED
+    bar = (
+        Fraction(human["correct"], human["total"]) - Fraction(HUMAN_MARGIN)
+        if enough
+        else None
+    )
+    via_human = bar is not None and _at_least(acc, bar)
+    return {
+        "rule": f"accuracy >= {OVERALL_TARGET}, or >= human-human agreement - {HUMAN_MARGIN} "
+        f"when at least {MIN_DOUBLE_LABELED} double-labeled titles are scored",
+        **_acc(correct, total),
+        "target": float(Fraction(OVERALL_TARGET)),
+        "meets_target": via_target,
+        "human_agreement": human["accuracy"],
+        "human_n": human["total"],
+        "min_double_labeled": MIN_DOUBLE_LABELED,
+        "human_bar": float(bar) if bar is not None else None,
+        "meets_human_bar": via_human,
+        "passes": via_target or via_human,
+    }
+
+
+def _gate_shown(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    shown = [r for r in rows if r["shown"]]
+    correct = sum(r["correct"] for r in shown)
+    acc = _frac(correct, len(shown))
+    if len(shown) < MIN_SHOWN_TITLES:
+        status = "insufficient data"
+    elif _at_least(acc, Fraction(SHOWN_TARGET)):
+        status = "pass"
+    else:
+        status = "fail"
+    return {
+        "rule": f"among scored titles with model primary confidence >= "
+        f"{DISPLAY_CONFIDENCE_THRESHOLD}, accuracy >= {SHOWN_TARGET} "
+        f"(at least {MIN_SHOWN_TITLES} such titles)",
+        "display_threshold": DISPLAY_CONFIDENCE_THRESHOLD,
+        **_acc(correct, len(shown)),
+        "target": float(Fraction(SHOWN_TARGET)),
+        "min_titles": MIN_SHOWN_TITLES,
+        "status": status,
+        "passes": status == "pass",
+    }
+
+
 def _headline(
-    gold: dict, model: dict, *, gold_annotated_total: int, excluded: list[str]
+    gold: dict, model: dict, *, gold_annotated_total: int, excluded: list[str],
+    human: dict[str, Any],
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """``gold``/``model`` already exclude source-mismatched titles (listed in ``excluded``).
-    ``gold_annotated_total`` counts every gold title labeled annotated, mismatched or not."""
+    ``gold_annotated_total`` counts every reference gold title labeled annotated, mismatched or
+    not."""
     rows, correct, abstained, missing = [], 0, 0, 0
     for key, g in sorted(gold.items()):
         if not _annotated(g):
             continue
         rec = model.get(key)
+        confidence = None
         if rec is None:
-            got, missing = MISSING, missing + 1
+            missing += 1
         elif rec["outcome"] == "abstained":
-            got, abstained = ABSTAINED, abstained + 1
+            abstained += 1
         else:
-            got = _primary(rec)
+            confidence = rec["layers"]["archetypal_plot"]["primary"]["confidence"]
+        got = _primary_label(rec)
         hit = got == _primary(g)
         correct += hit
         rows.append(
@@ -180,30 +324,35 @@ def _headline(
                 "name": g["title"]["name"],
                 "gold": _primary(g),
                 "model": got,
+                "model_confidence": confidence,
+                "shown": confidence is not None and confidence >= DISPLAY_CONFIDENCE_THRESHOLD,
                 "correct": hit,
             }
         )
     total = len(rows)
-    acc = m.ratio(correct, total)
-    fraction = m.ratio(total, gold_annotated_total)
-    coverage_ok = total >= MIN_SCORED_TITLES and fraction is not None and (
-        fraction >= MIN_SCORED_FRACTION
+    fraction = _frac(total, gold_annotated_total)
+    coverage_ok = total >= MIN_SCORED_TITLES and _at_least(
+        fraction, Fraction(MIN_SCORED_FRACTION)
     )
+    shown = sum(r["shown"] for r in rows)
+    overall = _gate_overall(correct, total, human)
+    shown_gate = _gate_shown(rows)
     return {
         "metric": "archetypal_plot.primary.label exact match vs gold",
-        "target": EXIT_TARGET,
         **_acc(correct, total),
-        "meets_target": acc is not None and acc >= EXIT_TARGET,
+        "overall": overall,
+        "shown_labels": shown_gate,
         "coverage": {
             "scored": total,
             "gold_annotated": gold_annotated_total,
-            "fraction": fraction,
+            "fraction": m.ratio(total, gold_annotated_total),
             "min_scored_titles": MIN_SCORED_TITLES,
-            "min_scored_fraction": MIN_SCORED_FRACTION,
+            "min_scored_fraction": float(Fraction(MIN_SCORED_FRACTION)),
+            "at_display_threshold": shown,
+            "at_display_threshold_share": m.ratio(shown, total),
             "passes": coverage_ok,
-            "status": "PROPOSED thresholds, pending Hari",
         },
-        "passes": acc is not None and acc >= EXIT_TARGET and coverage_ok,
+        "passes": overall["passes"] and shown_gate["passes"] and coverage_ok,
         "excluded_source_mismatch": excluded,
         "model_abstained_counted_as_miss": abstained,
         "no_model_record_counted_as_miss": missing,
@@ -450,7 +599,9 @@ def evaluate(
     leak_flags: list[dict[str, Any]] | None = None,
     pair_report: PairReport | None = None,
 ) -> dict[str, Any]:
-    all_gold = index_gold(gold_records)
+    gold_index = index_gold(gold_records)
+    all_gold = gold_index.reference
+    human = human_agreement(gold_index)
     group, all_model = index_model(model_records)
     on_gold = {k: v for k, v in all_model.items() if k in all_gold}
     mismatched = sorted(
@@ -464,6 +615,7 @@ def evaluate(
         model,
         gold_annotated_total=sum(_annotated(g) for g in all_gold.values()),
         excluded=mismatched,
+        human=human,
     )
     pairs = _both_annotated(gold, model)
     presence, presence_calib = _presence(pairs)
@@ -476,6 +628,7 @@ def evaluate(
         },
         "counts": {
             "gold_titles": len(all_gold),
+            "double_labeled_titles": len(gold_index.second),
             "gold_annotated": sum(_annotated(g) for g in all_gold.values()),
             "gold_abstained": sum(not _annotated(g) for g in all_gold.values()),
             "model_records_on_gold_titles": len(on_gold),
@@ -483,6 +636,7 @@ def evaluate(
             "source_hash_mismatches": mismatched,
         },
         "headline": headline,
+        "human_agreement": human,
         "primary_plot": _primary_extras(gold, model, rows),
         "blueprint": _blueprint(pairs),
         "emotional_arc": _emotional_arc(pairs, gold, model),
@@ -512,8 +666,60 @@ def _num(x: float | None, digits: int = 3) -> str:
     return "n/a" if x is None else f"{x:.{digits}f}"
 
 
+_SHOWN_STATUS = {"pass": "PASS", "fail": "NOT MET", "insufficient data": "INSUFFICIENT DATA"}
+
+
+def _human_bar_text(a: dict[str, Any]) -> str:
+    if a["human_n"] == 0:
+        return "No double-labeled titles, so the human-agreement bar doesn't apply."
+    text = (
+        f"Human-human agreement {_pct(a['human_agreement'])} on {a['human_n']} "
+        "double-labeled titles"
+    )
+    if a["human_bar"] is None:
+        return text + f" (fewer than {a['min_double_labeled']}, so its bar doesn't apply)."
+    return text + (
+        f"; bar {_pct(a['human_bar'])}: {'met' if a['meets_human_bar'] else 'not met'}."
+    )
+
+
+def _human_lines(hh: dict[str, Any]) -> list[str]:
+    if not hh["double_labeled_titles"]:
+        return []
+    lines = [
+        "",
+        "## Human-human agreement (double-labeled titles)",
+        "",
+        f"Primary plot: {hh['correct']}/{hh['total']} = {_pct(hh['accuracy'])}, kappa "
+        f"{_num(hh['kappa'])} ({hh['double_labeled_titles']} double-labeled titles). "
+        f"Rule: {hh['rule']}.",
+    ]
+    if hh["excluded_source_mismatch"]:
+        lines.append(
+            "Excluded (the two labelers read different summaries): "
+            + ", ".join(hh["excluded_source_mismatch"])
+            + "."
+        )
+    if hh["disagreements"]:
+        lines += [
+            "",
+            "Disagreements for Hari to adjudicate:",
+            "",
+            "| Title | Reference labeler | Second labeler | Scored |",
+            "|---|---|---|---|",
+        ]
+        for d in hh["disagreements"]:
+            lines.append(
+                f"| {d['name']} ({d['title_key']}) | {d['reference_labeler']}: "
+                f"{d['reference']} | {d['second_labeler']}: {d['second']} | "
+                f"{'yes' if d['scored'] else 'no'} |"
+            )
+    return lines
+
+
 def render_markdown(report: dict[str, Any], pair_report: PairReport | None = None) -> str:
     g, c, h = report["group"], report["counts"], report["headline"]
+    a, sh, cov = h["overall"], h["shown_labels"], h["coverage"]
     arc = report["emotional_arc"]
     lines = [
         "# Narrative annotation evaluation",
@@ -521,21 +727,30 @@ def render_markdown(report: dict[str, Any], pair_report: PairReport | None = Non
         f"Schema {g['schema_version']} · prompt {g['prompt_version']} · model "
         f"{g['model_version']} · runs {', '.join(g['run_ids'])}",
         "",
-        "## Phase 1 exit metric",
+        "## Phase 1 exit gate (DECISIONS 2026-09-30)",
         "",
-        f"**Primary Booker plot exact match: {h['correct']}/{h['total']} = "
-        f"{_pct(h['accuracy'])}** (target {_pct(h['target'])}): "
-        f"**{'PASS' if h['passes'] else 'NOT MET'}**.",
-        f"Coverage: {h['coverage']['scored']} of {h['coverage']['gold_annotated']} gold titles "
-        f"scored ({_pct(h['coverage']['fraction'])}); needs at least "
-        f"{h['coverage']['min_scored_titles']} and {_pct(h['coverage']['min_scored_fraction'])} "
-        f"({h['coverage']['status']}): "
-        f"{'met' if h['coverage']['passes'] else 'NOT MET'}.",
+        f"**{'PASS' if h['passes'] else 'NOT MET'}**: passes only if A, B and coverage all pass.",
+        "",
+        f"- **A, overall primary-plot exact match: {h['correct']}/{h['total']} = "
+        f"{_pct(h['accuracy'])}**: {'PASS' if a['passes'] else 'NOT MET'}. Target "
+        f"{_pct(a['target'])}: {'met' if a['meets_target'] else 'not met'}. "
+        + _human_bar_text(a),
+        f"- **B, shown labels (model confidence >= {sh['display_threshold']}): "
+        f"{sh['correct']}/{sh['total']} = {_pct(sh['accuracy'])}**: "
+        f"{_SHOWN_STATUS[sh['status']]}. Target {_pct(sh['target'])} on at least "
+        f"{sh['min_titles']} titles.",
+        f"- **Coverage:** {cov['scored']} of {cov['gold_annotated']} gold titles scored "
+        f"({_pct(cov['fraction'])}); needs at least {cov['min_scored_titles']} and "
+        f"{_pct(cov['min_scored_fraction'])}: {'met' if cov['passes'] else 'NOT MET'}. "
+        f"At or above the display threshold: {cov['at_display_threshold']} titles "
+        f"({_pct(cov['at_display_threshold_share'])} of scored).",
+        "",
         f"Misses include {h['model_abstained_counted_as_miss']} model abstentions and "
         f"{h['no_model_record_counted_as_miss']} titles with no model record.",
         "",
         f"Gold titles: {c['gold_titles']} ({c['gold_annotated']} annotated, "
-        f"{c['gold_abstained']} abstained by the labeler). Both annotated: {c['both_annotated']}.",
+        f"{c['gold_abstained']} abstained by the labeler; {c['double_labeled_titles']} "
+        f"double-labeled). Both annotated: {c['both_annotated']}.",
     ]
     if c["source_hash_mismatches"]:
         lines.append(
@@ -543,6 +758,7 @@ def render_markdown(report: dict[str, Any], pair_report: PairReport | None = Non
             f"different summary than the model saw and are excluded from every score: "
             f"{', '.join(c['source_hash_mismatches'])}."
         )
+    lines += _human_lines(report["human_agreement"])
     pp = report["primary_plot"]
     lines += [
         "",
@@ -646,12 +862,13 @@ def render_markdown(report: dict[str, Any], pair_report: PairReport | None = Non
         "",
         "## Per title",
         "",
-        "| Title | Gold primary | Model primary | Match |",
-        "|---|---|---|---|",
+        "| Title | Gold primary | Model primary | Model confidence | Shown | Match |",
+        "|---|---|---|---|---|---|",
     ]
     for r in report["per_title"]:
         lines.append(
             f"| {r['name']} ({r['title_key']}) | {r['gold']} | {r['model']} | "
+            f"{_num(r['model_confidence'], 2)} | {'yes' if r['shown'] else 'no'} | "
             f"{'yes' if r['correct'] else 'no'} |"
         )
     lines += [

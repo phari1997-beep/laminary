@@ -15,7 +15,9 @@ Three files (one per tab; File > Import > "Insert new sheet(s)" for each):
   series' episode tables are dropped. The revision link stays in the sheet for attribution.
   These files hold CC BY-SA text and live under the gitignored data directory.
 
-The model's guessed plot/arc from the selector are never written to the sheet.
+Titles the selector flagged ``double_label`` get two rows, ``label_slot`` 1 and 2, for two
+different labelers working independently. The model's guessed plot/arc from the selector are
+never written to the sheet.
 """
 
 from __future__ import annotations
@@ -49,7 +51,9 @@ README_LINES = [
     f"Laminary gold labeling sheet (guide version {GUIDE_VERSION})",
     "Full guide: docs/GOLD_LABELING_GUIDE.md (Hari will share it as a Google Doc).",
     "",
-    "1. Pick a row assigned to you. Put your labeler code in labeler_id.",
+    "1. Pick a row assigned to you. Put your labeler code in labeler_id. Some titles have",
+    "   two rows (label_slot 1 and 2) for two different people: label on your own and",
+    "   don't discuss the title or look at the other row until Hari says labeling is done.",
     "2. Open the file named in summary_text_file and read ONLY that text. It is exactly",
     "   what the model reads. Don't label from the Wikipedia page (wikipedia_revision_link",
     "   is there for attribution) and don't use anything you know about the film or show.",
@@ -103,8 +107,11 @@ def template_rows(
             source_word_count=str(src["word_count"]),
             source_sha256=src["content_sha256"],
             guide_version=GUIDE_VERSION,
+            label_slot="1",
         )
         rows.append(row)
+        if sel.get("double_label"):
+            rows.append({**row, "label_slot": "2"})
     return rows, skipped
 
 
@@ -153,6 +160,8 @@ def write_template(
         written.append(path)
     if plots is not None:
         for row in rows:
+            if row.get("label_slot") == "2":
+                continue  # same text file as slot 1
             qid = row["qid"]
             path = out_dir / text_file_name(qid)
             path.parent.mkdir(parents=True, exist_ok=True)

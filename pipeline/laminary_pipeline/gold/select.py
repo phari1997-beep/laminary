@@ -12,6 +12,10 @@ Rules, in priority order:
    titles (at least 20 non-English), then the least-covered guessed plot, then the
    least-covered guessed arc (including "flat" stories, to test the fallback rule), then fame.
 4. **Top up** from the most famous eligible non-seed titles if seeds run out.
+5. **Double labeling:** DOUBLE_LABEL_N titles, evenly spaced through the pick order (so they
+   mix types, regions and plots), get ``double_label: true``. Two labelers label those
+   independently; the evaluation measures human-human agreement on them (DECISIONS 2026-09-30:
+   20 to 25 titles; 25 leaves room for skips while keeping the 20 the exit gate needs).
 """
 
 from __future__ import annotations
@@ -23,6 +27,7 @@ from typing import Any
 DEFAULT_N = 100
 TV_SHARE = 0.3
 REGIONAL_MIN = 20
+DOUBLE_LABEL_N = 25
 
 
 def select_gold(
@@ -33,6 +38,7 @@ def select_gold(
     n: int = DEFAULT_N,
     tv_share: float = TV_SHARE,
     regional_min: int = REGIONAL_MIN,
+    double_label_n: int = DOUBLE_LABEL_N,
 ) -> list[dict[str, Any]]:
     """``plot_ok(qid)`` is True/False once a plot file exists, None if not fetched yet."""
     guesses = {s["title"]: s for s in seeds}
@@ -82,6 +88,10 @@ def select_gold(
         if best["seed"]:
             plots[best["guessed_plot"]] += 1
             arcs[best["guessed_arc"]] += 1
+    k = min(double_label_n, len(chosen))
+    double = {i * len(chosen) // k for i in range(k)} if k else set()
+    for i, row in enumerate(chosen):
+        row["double_label"] = i in double
     return chosen
 
 
@@ -92,6 +102,10 @@ def summarize_gold(rows: Sequence[dict[str, Any]]) -> dict[str, Any]:
     return {
         "total": len(rows),
         "seeds": sum(1 for r in rows if r["seed"]),
+        "double_labeled": sum(1 for r in rows if r.get("double_label")),
+        "double_labeled_by_media_type": dict(
+            sorted(Counter(r["media_type"] for r in rows if r.get("double_label")).items())
+        ),
         "by_media_type": count("media_type"),
         "by_region": count("region"),
         "by_guessed_plot": count("guessed_plot"),
