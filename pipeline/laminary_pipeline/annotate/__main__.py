@@ -71,10 +71,12 @@ from laminary_pipeline.annotate.runner import (
     Prepared,
     RunConfig,
     RunDir,
+    RunLockedError,
     custom_id,
     existing_done_keys,
     plan_run,
     run_batch,
+    run_lock,
     run_smoke,
     run_sync,
     start_run,
@@ -95,6 +97,17 @@ def budget_usd(value: str) -> float:
         raise argparse.ArgumentTypeError(f"not a number: {value!r}") from e
     if not math.isfinite(x) or x <= 0:
         raise argparse.ArgumentTypeError(f"must be a finite amount above 0, got {value!r}")
+    return x
+
+
+def poll_seconds(value: str) -> float:
+    """Seconds between batch status polls: finite and at least 1."""
+    try:
+        x = float(value)
+    except ValueError as e:
+        raise argparse.ArgumentTypeError(f"not a number: {value!r}") from e
+    if not math.isfinite(x) or x < 1:
+        raise argparse.ArgumentTypeError(f"must be a finite number of seconds >= 1, got {value!r}")
     return x
 
 
@@ -128,14 +141,18 @@ def _parser() -> argparse.ArgumentParser:
             help=f"permit a model other than {PHASE1_MODEL} (prints a warning)",
         )
         sp.add_argument("--prompt-version", default=DEFAULT_PROMPT_VERSION)
+        # Defaults are applied in _config, so a resume can tell which flags were given.
         sp.add_argument(
-            "--effort", default=DEFAULT_EFFORT, choices=["low", "medium", "high", "xhigh", "max"]
+            "--effort",
+            default=None,
+            choices=["low", "medium", "high", "xhigh", "max"],
+            help=f"default {DEFAULT_EFFORT}",
         )
         sp.add_argument(
             "--max-tokens",
             type=bounded_int(1, MAX_TOKENS_CAP),
-            default=DEFAULT_MAX_TOKENS,
-            help=f"output cap per request, at most {MAX_TOKENS_CAP}",
+            default=None,
+            help=f"output cap per request, at most {MAX_TOKENS_CAP} (default {DEFAULT_MAX_TOKENS})",
         )
         sp.add_argument("--plots-dir", type=Path, default=PLOTS_DIR)
         sp.add_argument("--out-dir", type=Path, default=ANNOTATIONS_DIR)
@@ -195,7 +212,12 @@ def _parser() -> argparse.ArgumentParser:
         action="store_true",
         help=f"allow more than {PILOT_TITLE_CAP} titles (after the pilot only)",
     )
-    batch.add_argument("--poll-seconds", type=float, default=BATCH_POLL_SECONDS)
+    batch.add_argument(
+        "--poll-seconds",
+        type=poll_seconds,
+        default=BATCH_POLL_SECONDS,
+        help=f"seconds between batch status polls, at least 1 (default {BATCH_POLL_SECONDS})",
+    )
 
     est = sub.add_parser("estimate", help="offline cost projections (smoke, 100, 500 titles)")
     est.add_argument("--models", nargs="+", choices=sorted(MODELS), default=sorted(MODELS))
@@ -222,8 +244,8 @@ def _config(args: argparse.Namespace) -> RunConfig:
     return RunConfig(
         model=args.model,
         prompt_version=args.prompt_version,
-        effort=args.effort,
-        max_tokens=args.max_tokens,
+        effort=args.effort if args.effort is not None else DEFAULT_EFFORT,
+        max_tokens=args.max_tokens if args.max_tokens is not None else DEFAULT_MAX_TOKENS,
         max_attempts=getattr(args, "max_attempts", 1) if args.command != "smoke" else 1,
         out_root=args.out_dir,
         prompts_dir=args.prompts_dir,
@@ -301,15 +323,18 @@ def _exact_counts(api: AnnotationAPI, plan: Plan) -> dict[str, int]:
 
 def _live_estimate(
     args: argparse.Namespace, api: AnnotationAPI, plan: Plan, cfg: RunConfig, *, batch: bool
-) -> CostEstimate:
+) -> tuple[CostEstimate, dict[str, int] | None]:
     """Guard on the offline estimate FIRST (no call before the budget check), then optionally
-    refine with exact counts and guard again."""
+    refine with exact counts and guard again. Returns the estimate and the exact counts (if
+    any), which are saved in the manifest so the runner's per-request bound uses them."""
     est = _plan_estimate(plan, cfg, batch=batch, exact=None)
     _guard_spend(est, args.budget_usd)
+    exact = None
     if args.count_tokens:
-        est = _plan_estimate(plan, cfg, batch=batch, exact=_exact_counts(api, plan))
+        exact = _exact_counts(api, plan)
+        est = _plan_estimate(plan, cfg, batch=batch, exact=exact)
         _guard_spend(est, args.budget_usd)
-    return est
+    return est, exact
 
 
 def _finish(out: Out, status: str, run: RunDir) -> int:
@@ -350,10 +375,16 @@ def cmd_single_or_smoke(
         return 0
     _guard_spend(_plan_estimate(plan, cfg, batch=False, exact=None), args.budget_usd)
     api = api_factory()
-    est = _live_estimate(args, api, plan, cfg, batch=False)
+    est, exact = _live_estimate(args, api, plan, cfg, batch=False)
     _print_plan(out, args.command, cfg, prompt.sha256, plan, est)
     run = start_run(
-        args.command, cfg, prompt, plan, budget_usd=args.budget_usd, cost_estimate=est.as_dict()
+        args.command,
+        cfg,
+        prompt,
+        plan,
+        budget_usd=args.budget_usd,
+        cost_estimate=est.as_dict(),
+        **({"exact_input_tokens": exact} if exact else {}),
     )
     if args.command == "smoke":
         report = run_smoke(api, run, plan.todo[0], cfg)
@@ -384,15 +415,42 @@ def _resume_budget(args: argparse.Namespace, saved: float | None, out: Out) -> f
     return given
 
 
+def _warn_ignored_flags(args: argparse.Namespace, manifest: dict, out: Out) -> None:
+    """Resume always uses the run's saved settings; say so when a flag asked for others."""
+    for flag, given, saved in (
+        ("--model", args.model, manifest["model"]),
+        ("--effort", args.effort, manifest["effort"]),
+        ("--max-tokens", args.max_tokens, manifest["max_tokens"]),
+        ("--prompt-version", args.prompt_version, manifest["prompt_version"]),
+    ):
+        if given is not None and given != saved:
+            out(
+                f"WARNING: {flag} {given} ignored: resume uses the run's saved setting "
+                f"({saved})."
+            )
+
+
 def _resume(args: argparse.Namespace, api_factory: Callable[[], AnnotationAPI], out: Out) -> int:
     run = RunDir(args.out_dir, args.resume)
+    if not run.file("manifest.json").exists():
+        raise SystemExit(f"Resume refused: no run {args.resume!r} under {args.out_dir}")
+    # Hold the run lock from before the manifest is read until the run returns, so no other
+    # process can collect or submit rounds for this run meanwhile.
+    with run_lock(run):
+        return _resume_locked(args, api_factory, out, run)
+
+
+def _resume_locked(
+    args: argparse.Namespace, api_factory: Callable[[], AnnotationAPI], out: Out, run: RunDir
+) -> int:
     manifest = run.read_json("manifest.json")
+    if manifest.get("mode") != "batch":
+        raise SystemExit(
+            f"Resume refused: run {run.run_id} is a {manifest.get('mode')!r} run; only batch "
+            "runs can be resumed (its earlier requests were billed at the standard price)."
+        )
     budget = _resume_budget(args, manifest.get("budget_usd"), out)
-    if budget != manifest.get("budget_usd"):
-        history = manifest.get("budget_history", [])
-        history.append({"at": now_rfc3339(), "from": manifest.get("budget_usd"), "to": budget})
-        manifest.update(budget_usd=budget, budget_history=history)
-        run.write_json("manifest.json", manifest)
+    _warn_ignored_flags(args, manifest, out)
     cfg = RunConfig(
         model=manifest["model"],
         prompt_version=manifest["prompt_version"],
@@ -436,6 +494,13 @@ def _resume(args: argparse.Namespace, api_factory: Callable[[], AnnotationAPI], 
                 )
             continue
         prepared.append(Prepared(gated, params))
+    # Every check passed: only now persist a changed budget.
+    if budget != manifest.get("budget_usd"):
+        manifest = run.read_json("manifest.json")
+        history = manifest.get("budget_history", [])
+        history.append({"at": now_rfc3339(), "from": manifest.get("budget_usd"), "to": budget})
+        manifest.update(budget_usd=budget, budget_history=history)
+        run.write_json("manifest.json", manifest)
     out(f"Resuming {run.run_id} with budget ${budget:.4f}.")
     status = run_batch(
         api_factory(), run, prepared, cfg, poll_seconds=args.poll_seconds, log=out
@@ -521,7 +586,7 @@ def cmd_batch(args: argparse.Namespace, api_factory: Callable[[], AnnotationAPI]
         return 0
     _guard_spend(_plan_estimate(plan, cfg, batch=True, exact=None), args.budget_usd)
     api = api_factory()
-    est = _live_estimate(args, api, plan, cfg, batch=True)
+    est, exact = _live_estimate(args, api, plan, cfg, batch=True)
     _print_plan(out, "batch", cfg, prompt.sha256, plan, est)
     run = start_run(
         "batch",
@@ -531,6 +596,7 @@ def cmd_batch(args: argparse.Namespace, api_factory: Callable[[], AnnotationAPI]
         budget_usd=args.budget_usd,
         cost_estimate=est.as_dict(),
         titles_file=str(args.titles_file),
+        **({"exact_input_tokens": exact} if exact else {}),
     )
     status = run_batch(api, run, plan.todo, cfg, poll_seconds=args.poll_seconds, log=out)
     return _finish(out, status, run)
@@ -558,6 +624,9 @@ def main(
             return cmd_batch(args, api_factory, out)
         return cmd_single_or_smoke(args, api_factory, out)
     except MissingApiKeyError as e:
+        out(f"Not run: {e}")
+        return 2
+    except RunLockedError as e:
         out(f"Not run: {e}")
         return 2
 

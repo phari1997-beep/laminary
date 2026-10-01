@@ -20,6 +20,13 @@ reserves) plus the worst case of what it is about to send would exceed the budge
 cleanly: manifest ``status`` starts with ``stopped:`` and lists the unfinished titles, and
 cost.json is written. Fatal API errors stop the run the same way.
 
+Locking: run_batch, run_sync and run_smoke hold an exclusive ``fcntl.flock`` on
+``<run>/run.lock`` for their whole duration (the CLI's resume holds it from before it reads the
+manifest). A second process on the same run refuses to start (RunLockedError) instead of
+building its own spend tracker from a stale view of the run. The OS releases the lock when the
+holder exits or dies. Per-title state, the manifest and attempts.jsonl are read only after the
+lock is held.
+
 Idempotency: a title is skipped when any run under the annotations directory already holds a
 record with the same title, model, prompt version and set of source content hashes. Failures
 are not treated as done, so they are retried by the next run.
@@ -27,11 +34,15 @@ are not treated as done, so they are retried by the next run.
 
 from __future__ import annotations
 
+import errno
+import fcntl
 import json
 import math
+import os
 import secrets
 import time
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -99,10 +110,15 @@ def custom_id(key: str, round_no: int) -> str:
 # --- run directory -------------------------------------------------------------------------
 
 
+class RunLockedError(RuntimeError):
+    """Another process holds this run's lock."""
+
+
 class RunDir:
     def __init__(self, root: Path, run_id: str) -> None:
         self.run_id = run_id
         self.path = root / run_id
+        self._lock_fd: int | None = None  # set while this handle holds run.lock
 
     def file(self, name: str) -> Path:
         return self.path / name
@@ -127,6 +143,40 @@ class RunDir:
         if not path.exists():
             return []
         return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line]
+
+
+@contextmanager
+def run_lock(run: RunDir) -> Iterator[None]:
+    """Hold an exclusive, non-blocking flock on ``<run>/run.lock``. Re-entrant for the same
+    RunDir object (the CLI locks before reading the manifest, then calls run_batch with the
+    same handle); any other handle, in this process or another, gets RunLockedError."""
+    if run._lock_fd is not None:
+        yield
+        return
+    if not run.path.is_dir():
+        raise FileNotFoundError(f"run directory {run.path} does not exist")
+    fd = os.open(run.file("run.lock"), os.O_RDWR | os.O_CREAT, 0o644)
+    try:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as e:
+            if e.errno not in (errno.EWOULDBLOCK, errno.EAGAIN, errno.EACCES):
+                raise
+            holder = os.pread(fd, 200, 0).decode("utf-8", "replace").strip() or "unknown"
+            raise RunLockedError(
+                f"run {run.run_id} is in use by another process ({holder}). Wait for it to "
+                "finish or stop it before resuming; two processes on one run would each "
+                "enforce the budget separately."
+            ) from e
+        os.ftruncate(fd, 0)
+        os.pwrite(fd, f"pid {os.getpid()} since {now_rfc3339()}\n".encode(), 0)
+        run._lock_fd = fd
+        try:
+            yield
+        finally:
+            run._lock_fd = None
+    finally:
+        os.close(fd)  # closing the descriptor releases the flock
 
 
 # --- idempotency ---------------------------------------------------------------------------
@@ -251,8 +301,25 @@ def _set_manifest(run: RunDir, **changes: Any) -> dict[str, Any]:
 # --- spend tracking ------------------------------------------------------------------------
 
 
-def request_worst_usd(prepared: Prepared, cfg: RunConfig, *, batch: bool) -> float:
-    """Upper bound on one request for this title (see cost.py)."""
+def request_worst_usd(
+    prepared: Prepared,
+    cfg: RunConfig,
+    *,
+    batch: bool,
+    exact_input_tokens: int | None = None,
+) -> float:
+    """Upper bound on one request for this title (see cost.py). With an exact input count
+    (count_tokens endpoint), every input token is priced at the cache-write rate, the most
+    expensive input rate, with no estimate margin."""
+    if exact_input_tokens is not None:
+        return worst_case_request_usd(
+            cfg.model,
+            static_tokens=exact_input_tokens,
+            variable_tokens=0,
+            max_tokens=cfg.max_tokens,
+            batch=batch,
+            input_margin=1.0,
+        )
     static, variable = request_token_split(prepared.params)
     return worst_case_request_usd(
         cfg.model,
@@ -261,6 +328,17 @@ def request_worst_usd(prepared: Prepared, cfg: RunConfig, *, batch: bool) -> flo
         max_tokens=cfg.max_tokens,
         batch=batch,
     )
+
+
+def _worst_by_title(
+    run: RunDir, prepared: Iterable[Prepared], cfg: RunConfig, *, batch: bool
+) -> dict[str, float]:
+    """Per-title worst case, using exact input counts saved in the manifest when present."""
+    exact = run.read_json("manifest.json").get("exact_input_tokens") or {}
+    return {
+        p.key: request_worst_usd(p, cfg, batch=batch, exact_input_tokens=exact.get(p.key))
+        for p in prepared
+    }
 
 
 @dataclass
@@ -455,17 +533,30 @@ def run_sync(
     prepared: list[Prepared],
     cfg: RunConfig,
     *,
-    sleep: Callable[[float], None] = time.sleep,
+    sleep: Callable[[float], None] | None = None,
 ) -> str:
     """Annotate titles one request at a time (full price). Retries invalid output and
-    transient API errors, within max_attempts and the run's budget. Returns the final status
-    ("complete" or "stopped: ...")."""
+    transient API errors, within max_attempts and the run's budget. Holds the run lock.
+    Returns the final status ("complete" or "stopped: ...")."""
+    with run_lock(run):
+        return _run_sync(api, run, prepared, cfg, sleep=sleep or time.sleep)
+
+
+def _run_sync(
+    api: AnnotationAPI,
+    run: RunDir,
+    prepared: list[Prepared],
+    cfg: RunConfig,
+    *,
+    sleep: Callable[[float], None],
+) -> str:
     ctx = _context(run, cfg, batch=False)
     tracker = SpendTracker.from_run(run, cfg.model, batch=False)
+    worst_by_title = _worst_by_title(run, prepared, cfg, batch=False)
     consecutive_transient = 0
     for i, p in enumerate(prepared):
         state = TitleState(p)
-        worst = request_worst_usd(p, cfg, batch=False)
+        worst = worst_by_title[p.key]
         unfinished = [q.key for q in prepared[i:]]
         while not state.finished:
             if not tracker.allows(worst):
@@ -496,11 +587,17 @@ def run_sync(
 
 
 def run_smoke(api: AnnotationAPI, run: RunDir, prepared: Prepared, cfg: RunConfig) -> dict:
-    """Exactly one request for one title; no retry. Records latency, usage, outcome."""
+    """Exactly one request for one title; no retry. Records latency, usage, outcome. Holds
+    the run lock."""
+    with run_lock(run):
+        return _run_smoke(api, run, prepared, cfg)
+
+
+def _run_smoke(api: AnnotationAPI, run: RunDir, prepared: Prepared, cfg: RunConfig) -> dict:
     ctx = _context(run, cfg, batch=False)
     tracker = SpendTracker.from_run(run, cfg.model, batch=False)
     state = TitleState(prepared)
-    worst = request_worst_usd(prepared, cfg, batch=False)
+    worst = _worst_by_title(run, [prepared], cfg, batch=False)[prepared.key]
     if not tracker.allows(worst):
         status = _stop(run, cfg, tracker.refusal(worst, prepared.key), [prepared.key])
         return {"title_key": prepared.key, "status": status}
@@ -580,6 +677,13 @@ def _collect_round(
             log(f"ignoring unexpected batch result {res.custom_id!r}")
             continue
         seen.add(res.custom_id)
+        if key not in states:
+            # The title was dropped on resume (plot input changed or removed while this round
+            # was in flight). The result may have been billed: log its usage, store no record.
+            if res.custom_id not in logged:
+                _log_discarded(run, key, round_info["round"], res, tracker)
+                logged.add(res.custom_id)
+            continue
         if res.custom_id in logged or states[key].finished:
             continue  # already collected before an interruption
         state = states[key]
@@ -613,6 +717,8 @@ def _collect_round(
         logged.add(res.custom_id)
         _settle(run, state, ctx, outcome, cfg.max_attempts)
     for cid, key in ids.items():
+        if key not in states:
+            continue  # dropped on resume; no result means nothing to log or bill
         if cid not in seen and cid not in logged and not states[key].finished:
             outcome = Invalid("no result returned for this request", retryable=True)
             _log_attempt(
@@ -626,6 +732,35 @@ def _collect_round(
             )
             logged.add(cid)
             _settle(run, states[key], ctx, outcome, cfg.max_attempts)
+
+
+DISCARDED_REASON = "source changed since this round was submitted; result discarded"
+
+
+def _log_discarded(
+    run: RunDir, key: str, round_no: int, res: Any, tracker: SpendTracker
+) -> None:
+    """Log a batch result for a title no longer in the run as a priced attempt, so its cost
+    is counted, without interpreting it or writing a record."""
+    response = res.response
+    previous = sum(1 for e in run.read_jsonl("attempts.jsonl") if e["title_key"] == key)
+    entry = {
+        "title_key": key,
+        "attempt": previous + 1,
+        "round": round_no,
+        "at": now_rfc3339(),
+        "usage": response.usage.as_dict() if response else Usage().as_dict(),
+        "stop_reason": response.stop_reason if response else None,
+        "request_id": response.request_id if response else None,
+        "ok": False,
+        "reason": f"{DISCARDED_REASON} (batch result {res.kind})",
+        "retryable": True,
+        "raw_output_excerpt": None,
+        "custom_id": res.custom_id,
+        "discarded": True,
+    }
+    run.append("attempts.jsonl", entry)
+    tracker.add(entry)
 
 
 def _restore_states(run: RunDir, prepared: list[Prepared]) -> tuple[dict[str, TitleState], set]:
@@ -659,18 +794,43 @@ def run_batch(
     cfg: RunConfig,
     *,
     poll_seconds: float,
-    sleep: Callable[[float], None] = time.sleep,
+    sleep: Callable[[float], None] | None = None,
     log: Log = print,
     max_polls: int | None = None,
 ) -> str:
     """Submit, poll, collect; resubmit retryable failures as a new batch, up to max_attempts
     rounds. Safe to call again on the same run after an interruption (resume). Before each
     submission, measured spend + the round's worst case must fit the manifest's budget_usd.
+    Holds the run lock for its whole duration; run state is read after the lock is held.
     Returns the final status ("complete" or "stopped: ...")."""
+    with run_lock(run):
+        return _run_batch(
+            api,
+            run,
+            prepared,
+            cfg,
+            poll_seconds=poll_seconds,
+            sleep=sleep or time.sleep,
+            log=log,
+            max_polls=max_polls,
+        )
+
+
+def _run_batch(
+    api: AnnotationAPI,
+    run: RunDir,
+    prepared: list[Prepared],
+    cfg: RunConfig,
+    *,
+    poll_seconds: float,
+    sleep: Callable[[float], None],
+    log: Log,
+    max_polls: int | None,
+) -> str:
     ctx = _context(run, cfg, batch=True)
     tracker = SpendTracker.from_run(run, cfg.model, batch=True)
     states, logged = _restore_states(run, prepared)
-    worst = {p.key: request_worst_usd(p, cfg, batch=True) for p in prepared}
+    worst = _worst_by_title(run, prepared, cfg, batch=True)
     manifest = run.read_json("manifest.json")
     rounds: list[dict[str, Any]] = manifest["rounds"]
 
@@ -717,7 +877,15 @@ def run_batch(
             return _stop(run, cfg, status, unfinished())
         ids = {custom_id(s.prepared.key, round_no): s.prepared.key for s in pending}
         requests = [(cid, states[key].prepared.params) for cid, key in ids.items()]
-        rounds.append({"round": round_no, "batch_id": None, "custom_ids": ids, "collected": False})
+        rounds.append(
+            {
+                "round": round_no,
+                "batch_id": None,
+                "custom_ids": ids,
+                "collected": False,
+                "worst_usd": round(round_worst, 6),
+            }
+        )
         _set_manifest(run, rounds=rounds, status=f"round {round_no} submitting")
         try:
             batch_id = api.submit_batch(requests)
@@ -753,6 +921,13 @@ def write_cost_report(run: RunDir, model: str) -> dict[str, Any]:
     total = sum(per_title.values(), Usage())
     annotated = len(run.read_jsonl("annotations.jsonl"))
     total_usd = price_usage(model, total, batch=batch)
+    # Rounds submitted (or possibly submitted) but not collected: their results are not in
+    # attempts.jsonl yet, so count each at the worst case saved when it was submitted.
+    in_flight = sum(
+        float(r.get("worst_usd") or 0.0)
+        for r in manifest.get("rounds", [])
+        if not r.get("collected")
+    )
     report = {
         "run_id": run.run_id,
         "model": model,
@@ -766,13 +941,16 @@ def write_cost_report(run: RunDir, model: str) -> dict[str, Any]:
         "budget_usd": manifest.get("budget_usd"),
         "usd_total": round(total_usd, 5),
         "usd_reserved_possibly_billed": round(reserved, 5),
-        "usd_total_with_reserve": round(total_usd + reserved, 5),
+        "in_flight_worst_usd": round(in_flight, 5),
+        "usd_total_with_reserve": round(total_usd + reserved + in_flight, 5),
         "usd_per_title_attempted": round(total_usd / len(per_title), 5) if per_title else None,
         "usd_per_record_stored": round(total_usd / annotated, 5) if annotated else None,
         "per_title_usd": {
             k: round(price_usage(model, u, batch=batch), 6) for k, u in sorted(per_title.items())
         },
-        "pricing": "measured tokens x the UNCONFIRMED price table in annotate/config.py",
+        "pricing": "measured tokens x the UNCONFIRMED price table in annotate/config.py; "
+        "usd_total_with_reserve adds reserves for possibly-billed failures and the worst case "
+        "of submitted rounds not yet collected (in_flight_worst_usd)",
     }
     run.write_json("cost.json", report)
     return report

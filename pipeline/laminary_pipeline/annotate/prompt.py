@@ -105,6 +105,20 @@ def load_prompt(version: str, prompts_dir: Path = PROMPTS_DIR) -> Prompt:
 ARTICLE_PREFIX = "https://en.wikipedia.org/wiki/"
 FORBIDDEN_TITLE_CHARS = frozenset('<>[]{}|#"')
 MAX_TITLE_CHARS = 255
+# Non-article namespaces (and common aliases) on English Wikipedia. Compared case-insensitively
+# with the text before the first ':'; film titles like "Alien: Covenant" are not affected.
+NON_ARTICLE_NAMESPACES = frozenset(
+    ns.casefold()
+    for base in (
+        "User", "Wikipedia", "File", "MediaWiki", "Template", "Help", "Category", "Portal",
+        "Draft", "TimedText", "Module", "Gadget", "Gadget definition",
+    )
+    for ns in (base, f"{base} talk")
+) | frozenset(
+    ns.casefold()
+    for ns in ("Talk", "Special", "Media", "Image", "Image talk", "Project", "Project talk",
+               "WP", "WT")
+)
 
 
 def wikipedia_article_title(ref: str) -> str:
@@ -127,6 +141,9 @@ def wikipedia_article_title(ref: str) -> str:
     )
     if bad or not title.strip() or len(title) > MAX_TITLE_CHARS:
         raise GateError(f"ref {ref!r}: unsafe or invalid article title {title!r}")
+    prefix, sep, _ = title.partition(":")
+    if sep and prefix.strip().casefold() in NON_ARTICLE_NAMESPACES:
+        raise GateError(f"ref {ref!r}: {prefix.strip()!r} pages are not articles")
     return title
 
 

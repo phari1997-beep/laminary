@@ -17,6 +17,14 @@ Two numbers per plan:
   output can't exceed it. Character-based input counts are multiplied by
   INPUT_ESTIMATE_MARGIN because they are estimates.
 
+Token ratios: prose uses CHARS_PER_TOKEN; the minified schema JSON (about 5K of the ~7K
+per-title variable tokens) uses the denser SCHEMA_CHARS_PER_TOKEN, because punctuation-heavy
+JSON tokenizes at far fewer characters per token than prose and the Opus 5.5 tokenizer produces
+roughly 1-1.35x more tokens than older ones. When exact counts exist (``--count-tokens``),
+the runner's per-request guard uses them instead (runner.request_worst_usd). CALIBRATION TODO
+before the pilot: compare the smoke call's measured ``input_tokens`` (smoke.json) with these
+estimates and tighten or loosen both ratios and INPUT_ESTIMATE_MARGIN accordingly.
+
 Prices are the unconfirmed table in ``config.py``; every report says so.
 """
 
@@ -42,7 +50,12 @@ from laminary_pipeline.model_output import from_record, model_output_schema
 # Conservative for English prose on current Claude tokenizers (more tokens than the common
 # 4-chars rule of thumb), so estimates lean high.
 CHARS_PER_TOKEN = 3.5
-ESTIMATE_METHOD = f"ESTIMATE: characters / {CHARS_PER_TOKEN} (not a tokenizer count)"
+# Minified JSON schema: dense punctuation, short keys, enum strings. Deliberately low.
+SCHEMA_CHARS_PER_TOKEN = 2.0
+ESTIMATE_METHOD = (
+    f"ESTIMATE: characters / {CHARS_PER_TOKEN} for prose, / {SCHEMA_CHARS_PER_TOKEN} for the "
+    "schema JSON (not a tokenizer count; to be calibrated from the smoke call)"
+)
 # Projections when no plot files exist yet: Wikipedia plot sections (words).
 SUMMARY_WORDS_RANGE = (400, 1200)
 CHARS_PER_WORD = 6.0  # including the following space
@@ -54,13 +67,15 @@ INPUT_ESTIMATE_MARGIN = 1.25
 EXAMPLES_DIR = Path(__file__).resolve().parents[2] / "tests" / "examples"
 
 
-def estimate_tokens(text: str) -> int:
-    return math.ceil(len(text) / CHARS_PER_TOKEN)
+def estimate_tokens(text: str, chars_per_token: float = CHARS_PER_TOKEN) -> int:
+    return math.ceil(len(text) / chars_per_token)
 
 
 @cache
 def schema_tokens() -> int:
-    return estimate_tokens(json.dumps(model_output_schema(), separators=(",", ":")))
+    return estimate_tokens(
+        json.dumps(model_output_schema(), separators=(",", ":")), SCHEMA_CHARS_PER_TOKEN
+    )
 
 
 @cache

@@ -20,6 +20,7 @@ from annotate_support import (
 )
 
 from laminary_pipeline.annotate import __main__ as cli_mod
+from laminary_pipeline.annotate import runner as runner_mod
 from laminary_pipeline.annotate.__main__ import main
 from laminary_pipeline.annotate.client import (
     BatchResult,
@@ -63,6 +64,14 @@ HUGE = Usage(0, 200_000, 0, 0)  # 200K output tokens: $4 at full price, more tha
 
 def jsonl(path: Path) -> list[dict]:
     return [json.loads(x) for x in path.read_text().splitlines()] if path.exists() else []
+
+
+@pytest.fixture(autouse=True)
+def no_real_sleep(monkeypatch: pytest.MonkeyPatch) -> list[float]:
+    """CLI runs poll with --poll-seconds >= 1; never actually sleep in tests."""
+    slept: list[float] = []
+    monkeypatch.setattr(runner_mod.time, "sleep", slept.append)
+    return slept
 
 
 @pytest.fixture
@@ -271,7 +280,7 @@ def test_resume_without_budget_flag_uses_the_saved_budget_and_checks_it(env) -> 
     saved = run.read_json("manifest.json")["budget_usd"]
     code, text = cli(
         ["batch", "--resume", run.run_id, "--plots-dir", str(plots), "--out-dir",
-         str(cfg.out_root), "--poll-seconds", "0"],
+         str(cfg.out_root), "--poll-seconds", "1"],
         api_factory=lambda: api,
     )
     assert f"budget ${saved:.4f}" in text
@@ -287,7 +296,7 @@ def test_resume_never_raises_the_budget_silently(env) -> None:
     plots, cfg = env
     run, api = _resume_setup(plots, cfg)
     args = ["batch", "--resume", run.run_id, "--plots-dir", str(plots), "--out-dir",
-            str(cfg.out_root), "--poll-seconds", "0"]
+            str(cfg.out_root), "--poll-seconds", "1"]
     with pytest.raises(SystemExit, match="above the run's saved budget"):
         cli([*args, "--budget-usd", "1000"], api_factory=lambda: api)
     code, text = cli([*args, "--budget-usd", "1000", "--allow-budget-increase"],
@@ -301,7 +310,7 @@ def test_resume_with_a_lower_budget_uses_it(env) -> None:
     plots, cfg = env
     run, api = _resume_setup(plots, cfg)
     cli(["batch", "--resume", run.run_id, "--plots-dir", str(plots), "--out-dir",
-         str(cfg.out_root), "--poll-seconds", "0", "--budget-usd", "0.01"],
+         str(cfg.out_root), "--poll-seconds", "1", "--budget-usd", "0.01"],
         api_factory=lambda: api)
     assert run.read_json("manifest.json")["budget_usd"] == 0.01
 
@@ -517,7 +526,7 @@ def test_batch_scoped_by_titles_file(env, tmp_path) -> None:
         polls_before_end=0,
     )
     code, text = cli(base("batch", plots, cfg, "--titles-file", str(sel), "--budget-usd", "100",
-                          "--poll-seconds", "0"), api_factory=lambda: api)
+                          "--poll-seconds", "1"), api_factory=lambda: api)
     assert code == 0, text
     assert [cid for cid, _ in api.submitted[0]] == ["movie-13-r1"]
     assert "Q404: listed in --titles-file but no usable plot input" in text

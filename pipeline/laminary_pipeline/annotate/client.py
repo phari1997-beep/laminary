@@ -143,7 +143,9 @@ def classify_sdk_error(e: Exception) -> AnnotationAPIError:
         if code == 409:
             return TransientAPIError(f"HTTP {code}: {e.message}", possibly_billed=False)
         return RequestRejectedError(f"HTTP {code}: {e.message}")
-    return FatalAPIError(f"{type(e).__name__}: {e}")
+    # Anything else (e.g. APIResponseValidationError after a 200 that was billed) may have
+    # reached the model: retryable, with the request's worst case reserved.
+    return TransientAPIError(f"{type(e).__name__}: {e}", possibly_billed=True)
 
 
 def _usage(sdk_usage: Any) -> Usage:
