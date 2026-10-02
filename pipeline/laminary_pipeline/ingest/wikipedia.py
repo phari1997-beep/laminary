@@ -27,7 +27,17 @@ section, its verified per-season articles are tried (``seasons.py``). Such a rec
 ``via: "season_articles"`` and a ``sources`` list (one entry per season article, each with its
 own schema-shaped ``source`` and ``text``) instead of the single ``source`` and ``text``; the
 main article's result is kept under ``main_article``.
+
+Episode-table fallback (fetcher 1.5.0, DECISIONS 2026-10-02): when the season-article prose
+join also yields no usable text (under the 150-word minimum, or nothing), the per-episode
+summaries in the episode tables of the same verified season pages (else the verified episode-list
+page) are joined instead (``episodes.py``). Such a record also has ``via: "season_articles"``,
+plus ``via_detail: "episode_table"`` (on the record and on each entry of ``sources``) and an
+``episode_tables`` report: pages used and their Wikidata evidence, episodes used per season, the
+partly included season, and what was left out over the cap. ``season_articles`` keeps the
+prose attempt.
 """
+
 
 from __future__ import annotations
 
@@ -38,23 +48,38 @@ from datetime import UTC, datetime
 from typing import Any
 
 from laminary_pipeline.annotation import require_wikipedia_sources
+from laminary_pipeline.ingest.episodes import (
+    VIA_DETAIL_EPISODE_TABLE,
+    EpisodeJoin,
+    SeasonEpisodes,
+    join_episodes,
+    list_page_seasons,
+    parse_tables,
+    season_episodes,
+    season_page_tables,
+    season_text,
+)
 from laminary_pipeline.ingest.http import HttpClient, HttpError
 from laminary_pipeline.ingest.seasons import (
     LEAD_BLOCK_CEILING,
+    MAX_SEASON_NUMBER,
+    MAX_SEASON_SOURCES,
     SEASON_WORD_CAP,
     STUB_SEASON_WORDS,
+    Page,
     SeasonFinder,
     SeasonResult,
     season_coverage,
 )
 from laminary_pipeline.ingest.sections import SectionFilter, filter_section, normalize_heading
-from laminary_pipeline.ingest.text import html_to_text, sha256_text
+from laminary_pipeline.ingest.text import html_to_text, sha256_text, word_count
 
-FETCHER_VERSION = "1.4.0"  # 1.1.0: per-season articles for thin series; 1.2.0: lead block
+FETCHER_VERSION = "1.5.0"  # 1.1.0: per-season articles for thin series; 1.2.0: lead block
 # of stub seasons (under STUB_SEASON_WORDS, 500) before the first full season; 1.3.0: stubs
 # alone when the lead block is over the 6,000-word ceiling; 1.4.0 (DECISIONS 2026-10-02):
 # non-plot subsections dropped (sections.py), MediaWiki "Cite error" text stripped, Wikidata
-# P179/P361 evidence per season page, season coverage, lead_block_ceiling key
+# P179/P361 evidence per season page, season coverage, lead_block_ceiling key; 1.5.0
+# (DECISIONS 2026-10-02): episode-table fallback for series (episodes.py)
 MIN_WORDS = 150
 API_URL = "https://en.wikipedia.org/w/api.php"
 WIKIDATA_API_URL = "https://www.wikidata.org/w/api.php"
@@ -193,6 +218,17 @@ class PlotFetcher:
         data = self._api(
             {
                 "action": "parse", "oldid": str(revid), "section": index, "prop": "text",
+                "disableeditsection": "1", "disablelimitreport": "1", "disabletoc": "1",
+            },
+            cache_ttl=None,
+        )
+        return str(data["parse"]["text"])
+
+    def page_html(self, revid: int) -> str:
+        """The whole rendered page of one revision (for its episode tables)."""
+        data = self._api(
+            {
+                "action": "parse", "oldid": str(revid), "prop": "text",
                 "disableeditsection": "1", "disablelimitreport": "1", "disabletoc": "1",
             },
             cache_ttl=None,
@@ -341,12 +377,170 @@ class PlotFetcher:
                 f"{skipped.get('skip_detail') or skipped['skip_reason']}; season articles: "
                 f"{len(found.texts)} usable with {found.words} words"
             )
-            return {**skipped, "skip_detail": detail[:300], "season_articles": report}
+            return self._try_episode_tables(
+                {**skipped, "skip_detail": detail, "season_articles": report}, main, found
+            )
         coverage = season_coverage(
             [t.page.season for t in found.texts], found.verified_seasons,
             (skipped.get("candidate") or {}).get("number_of_seasons"),
         )
         return self._ok_seasons(skipped, main, found, report, coverage)
+
+    # ---------- series: episode tables (fetcher 1.5.0) ----------
+
+    def _collect_episode_seasons(
+        self, found: SeasonResult, report: dict[str, Any]
+    ) -> tuple[list[tuple[Page, SeasonEpisodes]], list[int]]:
+        """Seasons with episode summaries, in season order, each with its page; plus the season
+        numbers an episode-list page names (for the season total). Season pages are fetched one
+        at a time and only until their episodes pass the cap (later pages could not be used);
+        the episode-list page only when no season page has any summary."""
+        cap = self.season_word_cap
+        collected: list[tuple[Page, SeasonEpisodes]] = []
+        words = 0
+        for i, page in enumerate(found.season_pages):
+            if words > cap or len(collected) >= MAX_SEASON_SOURCES:
+                report["pages_not_fetched"] = [p.title for p in found.season_pages[i:]]
+                break
+            assert page.season is not None
+            tables = parse_tables(self.page_html(page.revid))
+            used, skipped_tables = season_page_tables(tables)
+            report["tables_skipped"] += [{"title": page.title, **t} for t in skipped_tables]
+            se = season_episodes(page.season, used)
+            report["episodes_without_summary"] += se.without_summary
+            if not se.episodes:
+                report["pages_skipped"].append({
+                    "title": page.title,
+                    "reason": "no episode summaries in its episode tables" if used
+                    else "no episode table"})
+                continue
+            collected.append((page, se))
+            words += sum(e.words for e in se.episodes)
+        if collected or not found.list_pages:
+            report["page_kind"] = "season_pages" if collected else None
+            return collected, []
+        page = found.list_pages[0]
+        seasons, skipped_tables = list_page_seasons(parse_tables(self.page_html(page.revid)))
+        report["tables_skipped"] += [{"title": page.title, **t} for t in skipped_tables]
+        listed = [n for n, _ in seasons if n <= MAX_SEASON_NUMBER]
+        for n, tables in seasons:
+            if n > MAX_SEASON_NUMBER:
+                report["tables_skipped"].append({"title": page.title, "heading": f"season {n}",
+                                                 "reason": "season number over 100"})
+                continue
+            se = season_episodes(n, tables)
+            report["episodes_without_summary"] += se.without_summary
+            if se.episodes:
+                collected.append((page, se))
+        if collected:
+            report["page_kind"] = "episode_list_page"
+        else:
+            report["pages_skipped"].append({"title": page.title,
+                                            "reason": "no episode summaries under a season "
+                                            "heading"})
+        return collected, listed
+
+    def _try_episode_tables(
+        self, skipped: dict[str, Any], main: dict[str, Any], found: SeasonResult
+    ) -> dict[str, Any]:
+        """The season-article prose failed too; join the per-episode summaries from the episode
+        tables of the same verified pages (``episodes.py``), else stay skipped."""
+        report: dict[str, Any] = {
+            "page_kind": None,
+            "pages_used": [],
+            "evidence": [],
+            "episodes_used": 0,
+            "by_season": [],
+            "partial_season": None,
+            "left_out_over_cap": {"episodes": 0, "seasons": []},
+            "pages_not_fetched": [],
+            "stopped_by": None,
+            "episodes_without_summary": 0,
+            "pages_skipped": [],
+            "tables_skipped": [],
+            "word_cap": self.season_word_cap,
+        }
+        collected, listed = self._collect_episode_seasons(found, report)
+        joined = join_episodes([se for _, se in collected], self.season_word_cap,
+                               MAX_SEASON_SOURCES)
+        page_for = {se.season: page for page, se in collected}
+        available = {se.season: len(se.episodes) for _, se in collected}
+        used_pages: list[Page] = []
+        for s in joined.seasons:
+            if page_for[s.season] not in used_pages:
+                used_pages.append(page_for[s.season])
+        report.update(
+            pages_used=[p.title for p in used_pages],
+            evidence=[{"title": p.title, **p.evidence.record()}
+                      for p in used_pages if p.evidence is not None],
+            episodes_used=sum(len(s.episodes) for s in joined.seasons),
+            by_season=[{"season": s.season, "episodes": len(s.episodes),
+                        "with_summary": available[s.season]} for s in joined.seasons],
+            partial_season=joined.partial_season,
+            left_out_over_cap={"episodes": joined.left_out_episodes,
+                               "seasons": joined.left_out_seasons},
+            stopped_by=joined.stopped_by,
+        )
+        if joined.words < self.min_words:
+            detail = (f"{skipped['skip_detail']}; episode tables: "
+                      f"{report['episodes_used']} episodes with {joined.words} words")
+            return {**skipped, "skip_detail": detail[:300], "episode_tables": report}
+        coverage = season_coverage(
+            [s.season for s in joined.seasons], sorted({*found.verified_seasons, *listed}),
+            (skipped.get("candidate") or {}).get("number_of_seasons"),
+        )
+        assert coverage is not None  # every episode-table source has a season number
+        if joined.partial_season is not None:
+            coverage.update(partial_season=joined.partial_season, partial=True)
+        return self._ok_episodes(skipped, main, joined, page_for, report, coverage)
+
+    def _ok_episodes(
+        self,
+        result: dict[str, Any],
+        main: dict[str, Any],
+        joined: EpisodeJoin,
+        page_for: dict[int, Page],
+        report: dict[str, Any],
+        coverage: dict[str, Any],
+    ) -> dict[str, Any]:
+        parts = []
+        for s in joined.seasons:
+            page = page_for[s.season]
+            text = season_text(s)
+            parts.append({
+                "page_title": page.title,
+                "permalink": permalink(page.title, page.revid),
+                "via_detail": VIA_DETAIL_EPISODE_TABLE,
+                "episodes": [f"S{e.season}E{e.number}" for e in s.episodes],
+                "source": {
+                    "kind": "wikipedia_plot",
+                    "ref": article_url(page.title),
+                    "revision": str(page.revid),
+                    "retrieved_at": result["retrieved_at"],
+                    "license": license_for(page.timestamp),
+                    "word_count": word_count(text),
+                    "content_sha256": sha256_text(text),
+                    "season": s.season,
+                },
+                "text": text,
+            })
+        require_wikipedia_sources([p["source"] for p in parts])  # fail closed, every page
+        out = {k: v for k, v in result.items()
+               if k not in ("skip_detail", "word_count", "section_checks")}
+        return {
+            **out,
+            "status": "ok",
+            "skip_reason": None,
+            "skip_detail": None,
+            "via": VIA_SEASON_ARTICLES,
+            "via_detail": VIA_DETAIL_EPISODE_TABLE,
+            "main_article": main,
+            "section": {"heading": "episode tables", "index": None},
+            "word_count": sum(p["source"]["word_count"] for p in parts),
+            "sources": parts,
+            "episode_tables": report,
+            "coverage": coverage,
+        }
 
     def _ok_seasons(
         self,

@@ -23,7 +23,10 @@ story there; the main article holds only a premise.
    synopsis sections and a prose season overview, through the same ``html_to_text`` (tables,
    so episode tables, are dropped) and the same non-plot filter as main articles
    (``sections.py``: production, broadcast and reception subsections dropped). A "List of <X>
-   episodes" page is used only when no season page yields text.
+   episodes" page is used only when no season page yields text. When this prose join yields
+   no usable text either, the fetcher falls back to the episode tables of the same verified
+   pages (fetcher 1.5.0, ``episodes.py``), using ``SeasonResult.season_pages`` and
+   ``list_pages``.
 4. **Cap:** seasons are added in order while the total stays within SEASON_WORD_CAP words and
    MAX_SEASON_SOURCES pages. The first season that would cross the cap stops the join, and it
    and later seasons are left out; a season is never cut mid-way. Lead block (DECISIONS
@@ -250,6 +253,10 @@ class SeasonResult:
     used_list_page: bool
     too_long: str | None = None  # lone full season over the ceiling: "<title> (<n> words)"
     verified_seasons: list[int] = field(default_factory=list)  # every verified season page
+    # the verified pages found (fetcher 1.5.0: the episode-table fallback reuses them): season
+    # pages with a unique season number, in season order, and episode-list pages
+    season_pages: list[Page] = field(default_factory=list)
+    list_pages: list[Page] = field(default_factory=list)
 
     @property
     def words(self) -> int:
@@ -389,6 +396,8 @@ class SeasonFinder:
             result.left_out_over_cap = left_out + result.left_out_over_cap
             result.used_list_page = True
         result.verified_seasons = verified_seasons
+        result.season_pages = seasons
+        result.list_pages = lists
         return result
 
     def _season_text(self, page: Page) -> SeasonText | None:

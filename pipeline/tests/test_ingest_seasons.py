@@ -485,8 +485,15 @@ def test_thin_series_from_an_older_fetcher_are_fetched_again(tmp_path: Path) -> 
            "candidate": {"media_type": "tv_series"}}
     write_json_atomic(paths.plot_file("Q1"), old)
     assert needs_fetch(paths, "Q1", False)
-    write_json_atomic(paths.plot_file("Q1"), {**old, "season_articles": {"used": []}})
-    assert not needs_fetch(paths, "Q1", False)  # already tried with the fallback
+    write_json_atomic(paths.plot_file("Q1"), {**old, "season_articles": {"used": []},
+                                               "fetcher_version": "1.5.0"})
+    assert not needs_fetch(paths, "Q1", False)  # already tried with both fallbacks
+    write_json_atomic(paths.plot_file("Q1"), {**old, "season_articles": {"used": []},
+                                               "fetcher_version": "1.4.0"})
+    assert needs_fetch(paths, "Q1", False)  # before the episode-table fallback (1.5.0)
+    write_json_atomic(paths.plot_file("Q1"), {**old, "season_articles": {"status": "disabled"},
+                                               "fetcher_version": "1.4.0"})
+    assert not needs_fetch(paths, "Q1", False)  # season lookup was off for that run
     write_json_atomic(paths.plot_file("Q1"), {**old, "candidate": {"media_type": "movie"}})
     assert not needs_fetch(paths, "Q1", False)
 

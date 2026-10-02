@@ -12,7 +12,11 @@ Interface with ingestion (files under ``pipeline/data/plots/``, one JSON object 
    Files with ``status`` other than ``ok`` are reported as unusable, with their skip reason.
    A series whose main article was too thin may instead carry ``"via": "season_articles"`` and
    ``"sources": [{"source": {...}, "text": "...", ...}, ...]``, one entry per season article in
-   season order (DECISIONS 2026-10-01); each becomes its own source and summary block.
+   season order (DECISIONS 2026-10-01); each becomes its own source and summary block. From
+   fetcher 1.5.0 such a file may also carry ``"via_detail": "episode_table"`` (DECISIONS
+   2026-10-02): the sources are per-episode summaries from episode tables, one per season,
+   and ``coverage.partial_season`` may name the last season when only some of its episodes
+   fit under the cap.
 
 2. Generic: ``{"title": {<the schema's title object>}, "sources": [{<source>, "text": ...}]}``.
 
@@ -30,8 +34,9 @@ is built and again on the built request (``prompt.verify_request``):
 - each text's word count equals its ``word_count``, and the total is at least 150;
 - at most the schema's ``provenance.sources.maxItems`` sources, and season-article input
   (``via: "season_articles"``, several sources, or one with a season) at most the 6,000-word
-  ceiling, or the ~3,000-word cap for a lone episode-list page (``check_source_limits``), so
-  a record that could not be stored, or that ingest could not have produced, is never paid for.
+  ceiling, or the ~3,000-word cap for a lone episode-list page or for episode-table input
+  (``check_source_limits``), so a record that could not be stored, or that ingest could not
+  have produced, is never paid for.
 """
 
 from __future__ import annotations
@@ -46,6 +51,7 @@ from typing import Any
 from jsonschema import Draft202012Validator
 
 from laminary_pipeline.annotation import format_checker, load_schema, require_wikipedia_sources
+from laminary_pipeline.ingest.episodes import VIA_DETAIL_EPISODE_TABLE
 from laminary_pipeline.ingest.seasons import (
     COVERAGE_BASES,
     LEAD_BLOCK_CEILING,
@@ -102,6 +108,11 @@ class PlotInput:
     # ingest's fetcher_version for an ingest plot file ("0" when the file has none); None for
     # the generic shape. annotate-1.2.0 refuses files from before fetcher 1.4.0.
     fetcher_version: str | None = None
+    # "episode_table" for per-episode summaries from episode tables (fetcher 1.5.0), else None
+    via_detail: str | None = None
+    # episode-table input: the last season, when only some of its episodes fit under the cap
+    # (validated in parse_plot: a plain int equal to the last source's season)
+    partial_season: int | None = None
 
     @property
     def key(self) -> str:
@@ -134,6 +145,8 @@ def _from_ingest_shape(obj: dict[str, Any], origin: str) -> dict[str, Any]:
         title["series_status"] = effective_series_status(cand)
     out = {"title": title, "sources": ingest_sources(obj), "via": ingest_via(obj),
            "fetcher_version": str(obj.get("fetcher_version") or "0")}
+    if "via_detail" in obj:
+        out["via_detail"] = obj["via_detail"]
     if "coverage" in obj:
         out["coverage"] = obj["coverage"]
     return out
@@ -163,6 +176,49 @@ def parse_coverage(
         raise InputFormatError(f"{origin}: coverage.seasons {listed!r} doesn't match the "
                                "sources' season numbers")
     return total, basis
+
+
+MIN_FETCHER_FOR_EPISODE_TABLES = (1, 5, 0)
+
+
+def parse_via_detail(obj: dict[str, Any], via: Any, origin: str) -> str | None:
+    """The plot file's ``via_detail``: None, or ``"episode_table"`` on season-article input
+    from fetcher 1.5.0 or later (an ingest file) or the generic shape. Anything else raises
+    InputFormatError."""
+    detail = obj.get("via_detail")
+    if detail is None:
+        return None
+    if detail != VIA_DETAIL_EPISODE_TABLE:
+        raise InputFormatError(f"{origin}: via_detail {detail!r} is not "
+                               f"{VIA_DETAIL_EPISODE_TABLE!r}")
+    if via != VIA_SEASON_ARTICLES:
+        raise InputFormatError(f"{origin}: via_detail {detail!r} without via "
+                               f"{VIA_SEASON_ARTICLES!r}")
+    fetcher = obj.get("fetcher_version")
+    if isinstance(fetcher, str):
+        parts = fetcher.split(".")
+        got = tuple(int(p) for p in parts) if all(p.isdigit() for p in parts) else None
+        if got is None or got < MIN_FETCHER_FOR_EPISODE_TABLES:
+            raise InputFormatError(f"{origin}: episode-table input from fetcher {fetcher!r}, "
+                                   "which can't produce it")
+    return detail
+
+
+def parse_partial_season(
+    coverage: Any, sources: list[PlotSource], via_detail: str | None, origin: str
+) -> int | None:
+    """``coverage.partial_season``: None, or (episode-table input only) a plain int equal to
+    the last source's season number. Anything else raises InputFormatError."""
+    if not isinstance(coverage, dict) or coverage.get("partial_season") is None:
+        return None
+    value = coverage["partial_season"]
+    if via_detail != VIA_DETAIL_EPISODE_TABLE:
+        raise InputFormatError(f"{origin}: coverage.partial_season without episode-table "
+                               "input")
+    if type(value) is not int or not sources or value != sources[-1].meta.get("season"):
+        raise InputFormatError(f"{origin}: coverage.partial_season {value!r} is not the last "
+                               "source's season number")
+    return value
 
 
 def ingest_via(obj: dict[str, Any]) -> str | None:
@@ -217,10 +273,13 @@ def parse_plot(obj: Any, origin: str) -> PlotInput:
     via = obj.get("via")
     total, basis = parse_coverage(obj.get("coverage"), parsed, origin)
     fetcher = obj.get("fetcher_version")
+    via_detail = parse_via_detail(obj, via, origin)
+    partial = parse_partial_season(obj.get("coverage"), parsed, via_detail, origin)
     return PlotInput(title=title, sources=tuple(parsed), origin=origin,
                      via=via if isinstance(via, str) else None,
                      season_total=total, season_total_basis=basis,
-                     fetcher_version=fetcher if isinstance(fetcher, str) else None)
+                     fetcher_version=fetcher if isinstance(fetcher, str) else None,
+                     via_detail=via_detail, partial_season=partial)
 
 
 def iter_plot_files(plots_dir: Path) -> Iterator[tuple[Any, str]]:
@@ -327,16 +386,23 @@ def check_source_limits(plot: PlotInput, total: int) -> None:
     one with a season. Its limit is the 6,000-word ceiling (a lead block of stub seasons plus
     the first full season may be several sources up to it, so the ~3,000-word cap is a joining
     rule, not an input limit), except a lone episode-list page (no season) from season
-    articles: ingest joins that only under the cap, so the tighter cap applies. A single main
-    article has no upper word limit (unchanged)."""
+    articles: ingest joins that only under the cap, so the tighter cap applies. Episode-table
+    input (``via_detail: "episode_table"``, fetcher 1.5.0) is joined at episode boundaries
+    under the cap and never uses a lead block, so the cap applies to it too, and every source
+    must carry a season. A single main article has no upper word limit (unchanged)."""
     n = len(plot.sources)
     if n > max_sources():
         raise GateError(f"{plot.key}: {n} sources, a record holds at most {max_sources()}")
     has_season = any("season" in s.meta for s in plot.sources)
     via_seasons = plot.via == VIA_SEASON_ARTICLES
-    if not (via_seasons or n > 1 or has_season):
+    if plot.via_detail == VIA_DETAIL_EPISODE_TABLE:
+        if not via_seasons or not all("season" in s.meta for s in plot.sources):
+            raise GateError(f"{plot.key}: episode-table input must be season-article input "
+                            "with a season on every source")
+        limit, what = SEASON_WORD_CAP, "episode-table cap"
+    elif not (via_seasons or n > 1 or has_season):
         return  # a single main article
-    if via_seasons and n == 1 and not has_season:
+    elif via_seasons and n == 1 and not has_season:
         limit, what = SEASON_WORD_CAP, "episode-list page"
     else:
         limit, what = LEAD_BLOCK_CEILING, "ceiling"

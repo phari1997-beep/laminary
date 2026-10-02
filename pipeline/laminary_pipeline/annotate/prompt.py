@@ -34,7 +34,11 @@ filter and the coverage data, and would get a wrong or missing line. annotate-1.
 are unaffected. A summary that covers every season, a main article, or an episode-list page
 gets no line. The record stores the same
 coverage in ``provenance.coverage`` and gold labelers see the line in the sheet's
-``summary_coverage`` column.
+``summary_coverage`` column. Episode-table input (fetcher 1.5.0, DECISIONS 2026-10-02) whose
+last season fit only in part says so: "Summary covers seasons 1–3 of 9 (season 3 only in
+part)." The partial season is the plot file's validated ``coverage.partial_season``, which must
+equal the last source's season; such a summary always gets the line, even when it touches every
+season.
 
 ``verify_request`` re-checks the built request block by block: the system prompt is the pinned
 body, every non-source block equals its expected constant, the header rebuilt from the
@@ -260,12 +264,19 @@ def prompt_coverage(plot: PlotInput) -> dict[str, Any] | None:
     if not (_plain_int(total) and max(seasons) <= total <= MAX_SEASON_NUMBER):
         raise GateError(f"{plot.key}: total seasons {total!r} is not a whole number from "
                         f"{max(seasons)} to {MAX_SEASON_NUMBER}")
-    if seasons == list(range(1, total + 1)):
-        return None  # every season is covered
+    partial = plot.partial_season
+    if partial is not None and not (_plain_int(partial) and partial == seasons[-1]):
+        raise GateError(f"{plot.key}: partial season {partial!r} is not the last season "
+                        f"{seasons[-1]}")
+    if partial is None and seasons == list(range(1, total + 1)):
+        return None  # every season is covered, in full
     out: dict[str, Any] = {"seasons": seasons, "total_seasons": total}
     if plot.season_total_basis is not None:
         out["total_seasons_basis"] = plot.season_total_basis
-    out["statement"] = f"Summary covers {format_seasons(seasons)} of {total}."
+    statement = f"Summary covers {format_seasons(seasons)} of {total}"
+    if partial is not None:
+        statement += f" (season {partial} only in part)"
+    out["statement"] = statement + "."
     return out
 
 

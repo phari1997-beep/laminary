@@ -1,0 +1,18 @@
+{
+ "twin_peaks_season_3_episodes": {
+  "title": "Twin Peaks season 3",
+  "section": "episodes",
+  "revision": "1372781969",
+  "permalink": "https://en.wikipedia.org/w/index.php?title=Twin_Peaks_season_3&oldid=1372781969",
+  "license": "CC-BY-SA-4.0",
+  "note": "section 20 (Episodes) of the cached parse; episode table cut to the first 3 episodes, each summary cut to its first 2 sentences; styles removed, reference list cut to its first entry; markup otherwise as served"
+ },
+ "shrinking_seasons_episodes": {
+  "title": "Shrinking",
+  "section": "episodes",
+  "revision": "1376646576",
+  "permalink": "https://en.wikipedia.org/w/index.php?title=Shrinking&oldid=1376646576",
+  "license": "CC-BY-SA-4.0",
+  "note": "section 6 (Episodes) of the cached parse; series overview table removed, seasons 1 and 2 cut to their first 2 episodes, season 3 kept whole (a rowspan continuation row, 9 episodes without a summary); each summary cut to its first 2 sentences; styles removed; markup otherwise as served"
+ }
+}

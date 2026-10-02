@@ -16,6 +16,7 @@ from typing import Any
 from laminary_pipeline.ingest.http import Request, Response
 
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "ingest" / "wikimedia_responses.json"
+NO_TABLES_PAGE = '<div class="mw-parser-output"><p>No episode table here.</p></div>'
 EMPTY_POOL = {"head": {"vars": ["item", "sitelinks", "year"]}, "results": {"bindings": []}}
 
 
@@ -103,4 +104,8 @@ class FakeWikimedia:
             return wiki.get(f"links:{params['oldid']}", {"parse": {"links": []}})
         if params.get("prop") == "sections":
             return wiki[f"sections:{params['oldid']}"]
+        if "section" not in params:
+            # the whole page (fetcher 1.5.0, episode tables); a page a fixture doesn't render
+            # has no episode table
+            return wiki.get(f"page:{params['oldid']}", {"parse": {"text": NO_TABLES_PAGE}})
         return wiki[f"text:{params['oldid']}:{params['section']}"]

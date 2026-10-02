@@ -10,7 +10,8 @@ from __future__ import annotations
 from laminary_pipeline.annotation import load_schema
 
 # Version of docs/GOLD_LABELING_GUIDE.md. Stored as provenance.annotator.guide_version.
-GUIDE_VERSION = "1.4.0"  # 1.4.0: summary_coverage column, partial-coverage rule
+GUIDE_VERSION = "1.5.0"  # 1.4.0: summary_coverage column, partial-coverage rule; 1.5.0:
+# series files may be episode-table summaries, "(season N only in part)" (DECISIONS 2026-10-02)
 
 
 def _enum(name: str) -> list[str]:

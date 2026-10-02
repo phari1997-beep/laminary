@@ -53,6 +53,8 @@ from laminary_pipeline.annotate.inputs import (
     ingest_sources,
     ingest_via,
     parse_coverage,
+    parse_partial_season,
+    parse_via_detail,
 )
 from laminary_pipeline.annotate.prompt import labeler_coverage, labeler_text
 from laminary_pipeline.gold.columns import (
@@ -90,6 +92,8 @@ README_LINES = [
     "   If summary_coverage is filled (e.g. 'Summary covers seasons 1–4 of 7.'), the text",
     "   stops before the series does: label only what it covers and never judge an ending",
     "   you can't see (guide rule on partial coverage). The model gets the same line.",
+    "   Some series files are episode summaries, one per paragraph ('S2E5 \"Title\": ...');",
+    "   '(season 3 only in part)' in summary_coverage means that season stops early.",
     "3. Fill every white column: primary_plot, the 9 plot_ columns (Y/N), blueprint,",
     "   the 12 stage_ columns (Y/N), arc_shape (or all 11 arc_t points), the 10 tag_",
     "   columns (Y/N) and confidence. notes is optional.",
@@ -119,8 +123,12 @@ def _gated(plot: dict[str, Any]) -> GatedInput:
     title = {"media_type": cand.get("media_type"), "tmdb_id": cand.get("tmdb_id")}
     origin = plot.get("qid", "plot file")
     total, basis = parse_coverage(plot.get("coverage"), sources, origin)
-    return gate(PlotInput(title, tuple(sources), origin, via=ingest_via(plot),
-                          season_total=total, season_total_basis=basis))
+    via = ingest_via(plot)
+    via_detail = parse_via_detail(plot, via, origin)
+    partial = parse_partial_season(plot.get("coverage"), sources, via_detail, origin)
+    return gate(PlotInput(title, tuple(sources), origin, via=via,
+                          season_total=total, season_total_basis=basis,
+                          via_detail=via_detail, partial_season=partial))
 
 
 def labeler_text_for(plot: dict[str, Any]) -> str:
@@ -154,6 +162,7 @@ def template_rows(
             continue
         cand = plot.get("candidate", {})
         seasons = plot.get("via") == "season_articles"
+        episodes = plot.get("via_detail") == "episode_table"
         links = [p["permalink"] for p in plot["sources"]] if seasons else [plot["permalink"]]
 
         def joined(field: str, sources: list[dict[str, Any]] = sources) -> str:
@@ -168,7 +177,8 @@ def template_rows(
             summary_text_file=text_file_name(sel["qid"]),
             wikipedia_revision_link=MULTI_SEP.join(links),
             plot_section=(
-                f"Season articles ({len(sources)})" if seasons
+                f"Episode tables ({len(sources)} seasons)" if episodes
+                else f"Season articles ({len(sources)})" if seasons
                 else plot["section"]["heading"].capitalize()
             ),
             word_count=str(plot["word_count"]),

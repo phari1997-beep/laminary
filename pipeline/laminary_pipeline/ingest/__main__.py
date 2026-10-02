@@ -8,7 +8,9 @@
     plots [--limit N] [--dry-run] [--refresh] [--backfill] [--qid Q...]
         Fetch Wikipedia plot sections into data/plots/<QID>.json. Resumable: titles with a file
         are skipped (fetch errors are retried). --backfill fetches ranked reserves for buckets
-        that lost titles to the 150-word rule.
+        that lost titles to the 150-word rule, except for a skipped priority series
+        (plots.PRIORITY_SERIES): its slot is held and a warning printed. The report that
+        follows lists any priority series that ended skipped, with the reason.
     report
         Print and write reports/plots_summary.json: pass rates by type, region, language and
         decade.

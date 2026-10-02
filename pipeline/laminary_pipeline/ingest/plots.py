@@ -3,7 +3,13 @@
 One file per title: ``data/plots/<QID>.json`` with ``status`` "ok" (text + a schema-shaped
 ``source``) or "skipped" (with ``skip_reason``). A title with a file is not fetched again unless
 ``--refresh`` is given; ``fetch_error`` files (transient network problems) are always retried,
-and so are series skipped as too thin before the season-article fallback existed.
+and so are series skipped as too thin before the season-article fallback (fetcher 1.1.0) or the
+episode-table fallback (fetcher 1.5.0) existed.
+
+**Priority series** (DECISIONS 2026-10-02): ten big shows Hari named must not drop out of the
+pilot (``PRIORITY_SERIES``). The report lists any that ended skipped, with the reason, and
+backfill never replaces one: its pilot slot is held (left empty in the effective pilot) and a
+warning for Hari is printed instead.
 """
 
 from __future__ import annotations
@@ -14,6 +20,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from laminary_pipeline.ingest.candidates import BUCKETS, language_display
+from laminary_pipeline.ingest.episodes import VIA_DETAIL_EPISODE_TABLE
 from laminary_pipeline.ingest.paths import DataPaths, read_json, write_json_atomic
 from laminary_pipeline.ingest.wikipedia import (
     SKIP_FETCH_ERROR,
@@ -22,6 +29,22 @@ from laminary_pipeline.ingest.wikipedia import (
     VIA_SEASON_ARTICLES,
     PlotFetcher,
 )
+
+# DECISIONS 2026-10-02: big series that must not drop out of the pilot. QIDs from the cached
+# candidate data (pipeline/data/pilot_candidates.jsonl).
+PRIORITY_SERIES: dict[str, str] = {
+    "Q23733": "Seinfeld",
+    "Q16290": "Star Trek: The Next Generation",
+    "Q494244": "M*A*S*H",
+    "Q751917": "Midsomer Murders",
+    "Q23572": "Game of Thrones",
+    "Q192837": "Sherlock",
+    "Q4525": "NCIS",
+    "Q485668": "Scrubs",
+    "Q252118": "CID",
+    "Q34316": "Doctor Who",
+}
+EPISODE_TABLE_FETCHER = (1, 5, 0)
 
 
 def existing_status(paths: DataPaths, qid: str) -> dict[str, Any] | None:
@@ -34,7 +57,25 @@ def needs_fetch(paths: DataPaths, qid: str, refresh: bool) -> bool:
         return True
     current = existing_status(paths, qid)
     return current is None or current.get("skip_reason") == SKIP_FETCH_ERROR or (
-        _thin_series_before_seasons(current)
+        _thin_series_before_seasons(current) or _thin_series_before_episode_tables(current)
+    )
+
+
+def _version(value: Any) -> tuple[int, ...]:
+    parts = str(value or "0").split(".")
+    return tuple(int(p) for p in parts) if all(p.isdigit() for p in parts) else (0,)
+
+
+def _thin_series_before_episode_tables(rec: dict[str, Any]) -> bool:
+    """A series skipped as thin after trying season articles, by a fetcher older than the
+    episode-table fallback (1.5.0): fetched again so the fallback can run. Not when the
+    season-article lookup was disabled for that run."""
+    return (
+        rec.get("skip_reason") in (SKIP_TOO_SHORT, SKIP_NO_SECTION)
+        and (rec.get("candidate") or {}).get("media_type") == "tv_series"
+        and "season_articles" in rec
+        and (rec.get("season_articles") or {}).get("status") != "disabled"
+        and _version(rec.get("fetcher_version")) < EPISODE_TABLE_FETCHER
     )
 
 
@@ -110,7 +151,13 @@ def _backfill(
     for c in candidates:
         by_bucket[c["bucket"]].append(c)
     for bucket, rows in by_bucket.items():
-        slots = sum(1 for r in rows if r["role"] == "pilot")
+        held = held_priority(paths, rows)
+        for r in held:
+            rec = existing_status(paths, r["qid"]) or {}
+            log(f"WARNING for Hari: priority series {r['qid']} {r.get('title')!r} ({bucket}) "
+                f"is skipped ({rec.get('skip_reason')}: {(rec.get('skip_detail') or '')[:160]}). "
+                "Its pilot slot is held, not backfilled.")
+        slots = sum(1 for r in rows if r["role"] == "pilot") - len(held)
         ok = sum(1 for r in rows if _is_ok(paths, r["qid"]))
         reserves = sorted(
             (r for r in rows if r["role"] == "reserve"), key=lambda r: r["bucket_rank"]
@@ -134,6 +181,44 @@ def _is_ok(paths: DataPaths, qid: str) -> bool:
     return bool(current and current.get("status") == "ok")
 
 
+def held_priority(paths: DataPaths, rows: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Pilot rows of priority series whose plot file is not ok: their slots are held, never
+    filled by a reserve (DECISIONS 2026-10-02). A title not fetched yet holds nothing."""
+    return [
+        r for r in rows
+        if r["role"] == "pilot" and r["qid"] in PRIORITY_SERIES
+        and existing_status(paths, r["qid"]) is not None and not _is_ok(paths, r["qid"])
+    ]
+
+
+def priority_report(
+    paths: DataPaths, candidates: Sequence[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Every priority series, in PRIORITY_SERIES order: its status (ok, skipped, not_fetched,
+    or not_a_candidate), the skip reason and detail, and how an ok text was built."""
+    by_qid = {c["qid"]: c for c in candidates}
+    out = []
+    for qid, name in PRIORITY_SERIES.items():
+        cand = by_qid.get(qid)
+        rec = existing_status(paths, qid) if cand else None
+        entry: dict[str, Any] = {"qid": qid, "title": name,
+                                 "bucket": cand.get("bucket") if cand else None,
+                                 "role": cand.get("role") if cand else None}
+        if cand is None:
+            entry["status"] = "not_a_candidate"
+        elif rec is None:
+            entry["status"] = "not_fetched"
+        elif rec.get("status") == "ok":
+            entry.update(status="ok", via=rec.get("via"), via_detail=rec.get("via_detail"),
+                         word_count=rec.get("word_count"),
+                         coverage=(rec.get("coverage") or {}).get("seasons"))
+        else:
+            entry.update(status="skipped", skip_reason=rec.get("skip_reason"),
+                         skip_detail=rec.get("skip_detail"))
+        out.append(entry)
+    return out
+
+
 # ---------- report ----------
 
 
@@ -147,7 +232,8 @@ def effective_pilot(paths: DataPaths, candidates: Sequence[dict[str, Any]]) -> l
     out: list[dict[str, Any]] = []
     for bucket in BUCKETS:
         rows = [c for c in candidates if c["bucket"] == bucket.name]
-        slots = sum(1 for r in rows if r["role"] == "pilot")
+        # a skipped priority series keeps its slot: no reserve takes it (DECISIONS 2026-10-02)
+        slots = sum(1 for r in rows if r["role"] == "pilot") - len(held_priority(paths, rows))
         ordered = sorted(rows, key=lambda r: (r["role"] != "pilot", r["bucket_rank"]))
         out += [r for r in ordered if _is_ok(paths, r["qid"])][:slots]
     return out
@@ -190,6 +276,13 @@ def plots_report(paths: DataPaths, candidates: Sequence[dict[str, Any]]) -> dict
         c["bucket"] for c, rec in fetched
         if rec["status"] == "ok" and rec.get("via") == VIA_SEASON_ARTICLES
     )
+    via_episodes = Counter(
+        c["bucket"] for c, rec in fetched
+        if rec["status"] == "ok" and rec.get("via_detail") == VIA_DETAIL_EPISODE_TABLE
+    )
+    priority = priority_report(paths, candidates)
+    held = [r["qid"] for b in BUCKETS
+            for r in held_priority(paths, [c for c in candidates if c["bucket"] == b.name])]
     checks = [(rec, section_checks(rec)) for _, rec in fetched]
     return {
         "candidates": len(candidates),
@@ -206,6 +299,12 @@ def plots_report(paths: DataPaths, candidates: Sequence[dict[str, Any]]) -> dict
             "total": sum(via_seasons.values()),
             "by_bucket": dict(sorted(via_seasons.items())),
         },
+        # fetcher 1.5.0: the subset built from episode-table summaries
+        "via_episode_tables": {
+            "total": sum(via_episodes.values()),
+            "by_bucket": dict(sorted(via_episodes.items())),
+        },
+        "priority_series": priority,
         # fetcher 1.4.0 (DECISIONS 2026-10-02): series sections with non-plot parts dropped
         "non_plot_filter": {
             "titles_with_parts_dropped": sum(
@@ -225,6 +324,7 @@ def plots_report(paths: DataPaths, candidates: Sequence[dict[str, Any]]) -> dict
             "total": len(eff),
             "slots": sum(pilot_slots.values()),
             "by_bucket": {b: f"{eff_counts.get(b, 0)}/{n}" for b, n in pilot_slots.items() if n},
+            "held_for_priority_series": held,
         },
     }
 
@@ -246,6 +346,11 @@ def format_report(report: dict[str, Any]) -> str:
     lines.append(f"Via season articles: {via['total']} passing titles")
     for bucket, n in via["by_bucket"].items():
         lines.append(f"  {bucket:<26} {n:>4}")
+    episodes = report.get("via_episode_tables")
+    if episodes is not None:
+        lines.append(f"Via episode tables (of those): {episodes['total']} passing titles")
+        for bucket, n in episodes["by_bucket"].items():
+            lines.append(f"  {bucket:<26} {n:>4}")
     npf = report.get("non_plot_filter")
     if npf:
         lines.append(
@@ -255,7 +360,28 @@ def format_report(report: dict[str, Any]) -> str:
     eff = report["effective_pilot"]
     lines.append(f"Effective pilot (after backfill): {eff['total']}/{eff['slots']} slots filled")
     lines.append("  " + ", ".join(f"{b} {v}" for b, v in eff["by_bucket"].items()))
+    if eff.get("held_for_priority_series"):
+        lines.append("  slots held for skipped priority series (not backfilled): "
+                     + ", ".join(eff["held_for_priority_series"]))
+    if "priority_series" in report:
+        lines += format_priority(report["priority_series"])
     return "\n".join(lines)
+
+
+def format_priority(entries: list[dict[str, Any]]) -> list[str]:
+    """The priority-series check: a count, then one WARNING line per series that is not ok."""
+    ok = sum(1 for e in entries if e["status"] == "ok")
+    lines = [f"Priority series (DECISIONS 2026-10-02): {ok}/{len(entries)} pass"]
+    for e in entries:
+        if e["status"] == "skipped":
+            lines.append(f"  WARNING for Hari: {e['qid']} {e['title']!r} ({e['bucket']}, "
+                         f"{e['role']}) skipped: {e['skip_reason']}: "
+                         f"{(e.get('skip_detail') or '')[:200]}")
+        elif e["status"] != "ok":
+            lines.append(f"  WARNING for Hari: {e['qid']} {e['title']!r} is "
+                         f"{e['status'].replace('_', ' ')}"
+                         + (f" ({e['bucket']}, {e['role']})" if e["bucket"] else ""))
+    return lines
 
 
 def _pct(rate: float | None) -> str:
@@ -263,9 +389,11 @@ def _pct(rate: float | None) -> str:
 
 
 __all__ = [
+    "PRIORITY_SERIES",
     "PlotRun",
     "effective_pilot",
     "format_report",
     "plots_report",
+    "priority_report",
     "run_plots",
 ]
