@@ -156,8 +156,9 @@ def test_title_helpers() -> None:
     titles = guessed_titles("Tidewater", MAIN, max_seasons=2)
     assert titles[:4] == ["Tidewater season 1", "Tidewater (season 1)", "Tidewater series 1",
                           "Tidewater (series 1)"]
-    assert titles[-2:] == ["List of Tidewater episodes",
-                           "List of Tidewater (TV series) episodes"]
+    assert titles[-6:] == ["List of Tidewater episodes",
+                           "List of Tidewater (TV series) episodes",
+                           *(f"List of Tidewater episodes (part {n})" for n in range(1, 5))]
 
 
 # --- joined text, order, cap, verification -------------------------------------------------

@@ -7,7 +7,9 @@ story there; the main article holds only a premise.
 1. **Find** candidate pages (all on en.wikipedia.org, main namespace only):
    - links in the main article (pinned revision) whose title starts with the series name and
      ends in "season N" / "series N" (with or without parentheses), or is
-     "List of <series> episodes";
+     "List of <series> episodes", or (fetcher 1.5.0) such a page split by a year range, season
+     range or part (": 1998–2009", " (1998–2009)", " (seasons 1–5)", " (part 1)"; see
+     ``episode_list_order``), ordered by its year, season or part;
    - guessed titles "<X> season N", "<X> (season N)", "<X> series N", "<X> (series N)" for
      N = 1..MAX_SEASONS, and "List of <X> episodes", where <X> is the main page title without
      its "(TV series)"-style disambiguator.
@@ -113,9 +115,40 @@ def season_number(title: str, base: str) -> int | None:
     return int(m.group(1)) if m and int(m.group(1)) >= 1 else None
 
 
-def is_episode_list(title: str, base: str, page_title: str) -> bool:
+# Episode-list pages split by a year range or a numbered part (fetcher 1.5.0): the suffix after
+# "List of <X> episodes". Each kind maps to its order rank and the number that orders it.
+_DASH = r"\s*[-–—]\s*"
+_LIST_SPLITS: tuple[tuple[int, re.Pattern[str]], ...] = (
+    (1, re.compile(rf"^:\s*(\d{{4}}){_DASH}(?:\d{{4}}|present)$")),  # ": 1998–2009"
+    (1, re.compile(rf"^\s*\((\d{{4}}){_DASH}(?:\d{{4}}|present)\)$")),  # " (1998–2009)"
+    (2, re.compile(rf"^\s*\((?:seasons|series)\s+(\d{{1,3}}){_DASH}\d{{1,3}}\)$")),
+    (3, re.compile(r"^\s*\(part\s+(\d{1,2})\)$")),  # " (part 1)"
+)
+MAX_LIST_PARTS = 4  # "List of <X> episodes (part N)" titles guessed
+
+
+def episode_list_order(title: str, base: str, page_title: str) -> tuple[int, int] | None:
+    """For an episode-list page of this series, its sort key: (0, 0) for the plain "List of
+    <X> episodes", else (kind, start) for a page split by a year range (": 1998–2009",
+    " (1998–2009)", "–present" too), a season range (" (seasons 1–5)") or a part (" (part 1)"),
+    so split pages sort by their year, season or part. None for any other title."""
     t = title.casefold()
-    return t in (f"list of {base} episodes".casefold(), f"list of {page_title} episodes".casefold())
+    for name in (base, page_title):
+        prefix = f"list of {name} episodes".casefold()
+        if not t.startswith(prefix):
+            continue
+        rest = t[len(prefix):]
+        if rest == "":
+            return (0, 0)
+        for kind, pattern in _LIST_SPLITS:
+            m = pattern.match(rest)
+            if m:
+                return (kind, int(m.group(1)))
+    return None
+
+
+def is_episode_list(title: str, base: str, page_title: str) -> bool:
+    return episode_list_order(title, base, page_title) is not None
 
 
 def guessed_titles(base: str, page_title: str, max_seasons: int = MAX_SEASONS) -> list[str]:
@@ -126,6 +159,9 @@ def guessed_titles(base: str, page_title: str, max_seasons: int = MAX_SEASONS) -
     titles.append(f"List of {base} episodes")
     if page_title != base:
         titles.append(f"List of {page_title} episodes")
+    # year- and season-range splits can't be guessed; they are found through the main
+    # article's links
+    titles += [f"List of {base} episodes (part {n})" for n in range(1, MAX_LIST_PARTS + 1)]
     return titles
 
 
@@ -382,7 +418,11 @@ class SeasonFinder:
         seasons = sorted(
             (p for p in seasons if counts[p.season] == 1), key=lambda p: p.season or 0
         )
-        lists = [p for p in verified if p.season is None]
+        # episode-list pages, the plain one first, then split pages by year, season or part
+        lists = sorted(
+            (p for p in verified if p.season is None),
+            key=lambda p: (episode_list_order(p.title, base, page_title) or (9, 0), p.title),
+        )
         verified_seasons = sorted({p.season for p in verified if p.season is not None})
 
         result = self._join(seasons, skipped)

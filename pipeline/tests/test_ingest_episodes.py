@@ -816,3 +816,100 @@ def test_priority_series_skipped_by_an_older_fetcher_are_fetched_again(tmp_path:
     assert needs_fetch(paths, "Q23733", False)
     write_json_atomic(paths.plot_file("Q23733"), _skipped("Q23733"))
     assert not needs_fetch(paths, "Q23733", False)
+
+
+# --- episode-list pages split by year range, season range or part ---------------------------
+
+
+@pytest.mark.parametrize(
+    ("title", "key"),
+    [
+        ("List of CID episodes", (0, 0)),
+        ("List of CID episodes: 1998–2009", (1, 1998)),
+        ("List of CID episodes: 2024–present", (1, 2024)),
+        ("List of CID episodes: 2010-2014", (1, 2010)),
+        ("List of CID episodes (1998–2009)", (1, 1998)),
+        ("List of CID episodes (seasons 1–5)", (2, 1)),
+        ("List of CID episodes (series 6–10)", (2, 6)),
+        ("List of CID episodes (part 2)", (3, 2)),
+        ("List of CID (Indian TV series) episodes: 1998–2009", (1, 1998)),
+        ("list of cid episodes: 1998–2009", (1, 1998)),
+    ],
+)
+def test_split_episode_list_names_are_recognised(title: str, key: tuple[int, int]) -> None:
+    from laminary_pipeline.ingest.seasons import episode_list_order, is_episode_list
+
+    assert episode_list_order(title, "CID", "CID (Indian TV series)") == key
+    assert is_episode_list(title, "CID", "CID (Indian TV series)")
+
+
+@pytest.mark.parametrize("title", [
+    "List of CID episodes: highlights", "List of CID episodes (1998)",
+    "List of CID characters", "List of CID Special Bureau episodes",
+    "List of CID episodes (seasons 1–5) extra", "List of CID episodes: 98–09",
+    "CID episodes: 1998–2009",
+])
+def test_other_titles_are_not_episode_lists(title: str) -> None:
+    from laminary_pipeline.ingest.seasons import is_episode_list
+
+    assert not is_episode_list(title, "CID", "CID (Indian TV series)")
+
+
+SPLIT_LISTS = {  # title -> (pageid, revid, Wikidata item, seasons on the page)
+    "List of Tidewater episodes: 2010–present": (9230, 92300, "Q9200031", {3: (2, 40)}),
+    "List of Tidewater episodes: 1998–2009": (9220, 92200, "Q9200030", {1: (2, 40),
+                                                                         2: (2, 40)}),
+}
+
+
+def split_list_fake(*, verified: tuple[str, ...] = ("Q9200030", "Q9200031")) -> FakeWikimedia:
+    """No season pages; the main article links two year-range list pages (newest first)."""
+    fake = episode_fake()
+    w = fake.data["wikipedia"]
+    w["links:92000"] = {"parse": {"links": [
+        {"ns": 0, "title": t, "exists": True} for t in SPLIT_LISTS]}}
+    for title, (pid, rev, item, seasons) in SPLIT_LISTS.items():
+        w[f"query:{title}"] = page(title, pid, rev, item)
+        w[f"sections:{rev}"] = sections(title, ["Series overview"])
+        w[f"text:{rev}:1"] = {"parse": {"text": "<div><table><tr><td>1</td></tr></table></div>"}}
+        w[f"page:{rev}"] = {"parse": {"text": list_page_html(seasons)}}
+    fake.data["sparql"]["season_check:" + SERIES] = {"results": {"bindings": [
+        {"item": {"value": f"http://www.wikidata.org/entity/{q}"}} for q in verified]}}
+    return fake
+
+
+def test_split_list_pages_are_verified_ordered_by_year_and_joined() -> None:
+    fake = split_list_fake()
+    rec = fetch(fake, seasons_total=None)
+    assert rec["status"] == "ok" and rec["via_detail"] == "episode_table"
+    assert [(p["page_title"], p["source"]["season"]) for p in rec["sources"]] == [
+        ("List of Tidewater episodes: 1998–2009", 1),
+        ("List of Tidewater episodes: 1998–2009", 2),
+        ("List of Tidewater episodes: 2010–present", 3)]
+    report = rec["episode_tables"]
+    assert report["page_kind"] == "episode_list_page"
+    assert report["pages_used"] == ["List of Tidewater episodes: 1998–2009",
+                                    "List of Tidewater episodes: 2010–present"]
+    assert [e["item"] for e in report["evidence"]] == ["Q9200030", "Q9200031"]
+    assert page_requests(fake) == ["92200", "92300"]  # earlier years first
+    assert rec["coverage"]["total_seasons"] == 3
+
+
+def test_unverified_split_list_page_is_skipped() -> None:
+    """Verification is unchanged: a split page without the P179/P361 statement is not used."""
+    rec = fetch(split_list_fake(verified=("Q9200030",)), seasons_total=None)
+    assert [p["source"]["season"] for p in rec["sources"]] == [1, 2]
+    reasons = {s["title"]: s["reason"] for s in rec["season_articles"]["skipped"]}
+    assert reasons["List of Tidewater episodes: 2010–present"].startswith("unverified")
+
+
+def test_split_list_pages_must_keep_seasons_rising() -> None:
+    fake = split_list_fake()
+    rev = SPLIT_LISTS["List of Tidewater episodes: 2010–present"][1]
+    fake.data["wikipedia"][f"page:{rev}"] = {"parse": {"text": list_page_html(
+        {2: (2, 40), 3: (2, 40)})}}
+    rec = fetch(fake, seasons_total=None)
+    assert [p["source"]["season"] for p in rec["sources"]] == [1, 2, 3]
+    skipped = rec["episode_tables"]["tables_skipped"]
+    assert {"title": "List of Tidewater episodes: 2010–present", "heading": "season 2",
+            "reason": "season 2 after season 2 on an earlier page"} in skipped

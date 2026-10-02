@@ -419,25 +419,41 @@ class PlotFetcher:
         if collected or not found.list_pages:
             report["page_kind"] = "season_pages" if collected else None
             return collected, []
-        page = found.list_pages[0]
-        seasons, skipped_tables = list_page_seasons(parse_tables(self.page_html(page.revid)))
-        report["tables_skipped"] += [{"title": page.title, **t} for t in skipped_tables]
-        listed = [n for n, _ in seasons if n <= MAX_SEASON_NUMBER]
-        for n, tables in seasons:
-            if n > MAX_SEASON_NUMBER:
-                report["tables_skipped"].append({"title": page.title, "heading": f"season {n}",
-                                                 "reason": "season number over 100"})
-                continue
-            se = season_episodes(n, tables)
-            report["episodes_without_summary"] += se.without_summary
-            if se.episodes:
-                collected.append((page, se))
+        # Episode-list pages in order (the plain page, then pages split by year, season range
+        # or part); seasons must keep rising across pages. Fetched one at a time, until the
+        # summaries pass the cap.
+        listed: list[int] = []
+        for i, page in enumerate(found.list_pages):
+            if words > cap or len(collected) >= MAX_SEASON_SOURCES:
+                report["pages_not_fetched"] = [p.title for p in found.list_pages[i:]]
+                break
+            seasons, skipped_tables = list_page_seasons(parse_tables(self.page_html(page.revid)))
+            report["tables_skipped"] += [{"title": page.title, **t} for t in skipped_tables]
+            used_here = 0
+            for n, tables in seasons:
+                if n > MAX_SEASON_NUMBER:
+                    report["tables_skipped"].append({"title": page.title,
+                                                     "heading": f"season {n}",
+                                                     "reason": "season number over 100"})
+                    continue
+                if listed and n <= listed[-1]:
+                    report["tables_skipped"].append({
+                        "title": page.title, "heading": f"season {n}",
+                        "reason": f"season {n} after season {listed[-1]} on an earlier page"})
+                    continue
+                listed.append(n)
+                se = season_episodes(n, tables)
+                report["episodes_without_summary"] += se.without_summary
+                if se.episodes:
+                    collected.append((page, se))
+                    words += sum(e.words for e in se.episodes)
+                    used_here += 1
+            if not used_here:
+                report["pages_skipped"].append({"title": page.title,
+                                                "reason": "no episode summaries under a season "
+                                                "heading"})
         if collected:
             report["page_kind"] = "episode_list_page"
-        else:
-            report["pages_skipped"].append({"title": page.title,
-                                            "reason": "no episode summaries under a season "
-                                            "heading"})
         return collected, listed
 
     def _try_episode_tables(
