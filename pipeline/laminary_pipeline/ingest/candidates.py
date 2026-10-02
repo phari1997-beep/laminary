@@ -35,6 +35,12 @@ Rationale (also in the Phase 1 report and data/README.md):
 
   Series: Japanese goes to anime only for anime classes/genres (else world); the Indian
   languages go to tv:indian. Each row records the step as ``bucket_basis``.
+- **Bucket overrides** (selector 1.3.0, DECISIONS 2026-10-02): a small hand-kept QID -> bucket
+  table (``BUCKET_OVERRIDES``) for titles the language rule gets wrong, applied after the rule
+  with ``bucket_basis: "override"``. ``classify`` and ``select`` both apply it, and ``select``
+  puts every title in exactly one bucket, so an overridden title can't land in two pools.
+  ``gather`` always fetches the listed QIDs, so a title reaches its bucket whichever pool query
+  finds it (or none).
 - **Within each cell** half the quota is taken purely by fame (sitelinks = number of Wikipedia
   language editions), and the rest round-robins across coarse genres, so every cell has
   well-known titles (gold-set material) and genre spread.
@@ -75,9 +81,10 @@ from laminary_pipeline.ingest.wikidata import (
     Wikidata,
 )
 
-SELECTOR_VERSION = "1.2.0"  # 1.1.0: non-narrative series filter (DECISIONS 2026-10-01);
+SELECTOR_VERSION = "1.3.0"  # 1.1.0: non-narrative series filter (DECISIONS 2026-10-01);
 # 1.2.0: original language decides the bucket, English varieties count as English, English
-# pools include the varieties (DECISIONS 2026-10-02)
+# pools include the varieties (DECISIONS 2026-10-02); 1.3.0: bucket override table
+# (DECISIONS 2026-10-02)
 RESERVE_RATIO = 0.3
 FAME_SHARE = 0.5  # share of each cell taken purely by sitelinks before genre round-robin
 
@@ -288,10 +295,49 @@ def bucket_for(item: dict[str, Any], language: str | None) -> str:
     return "tv:anime" if anime else "tv:world"
 
 
+# Hand-kept bucket overrides (selector 1.3.0, DECISIONS 2026-10-02): QID -> bucket, for titles
+# the language rule gets wrong. QIDs looked up in the cached candidate data
+# (pipeline/data/pilot_candidates.jsonl, selector 1.1.0 run); the comment gives the title, year
+# and the Wikidata original languages (P364) that misled the rule. Shogun (2024), Minari
+# (Q65679599) and Letters from Iwo Jima (Q275187) are US productions and stay English: they
+# are deliberately not listed.
+BUCKET_OVERRIDES: dict[str, str] = {
+    "Q13897247": "film:telugu",  # Baahubali: The Beginning (2015); Tamil + Telugu
+    "Q21001674": "film:telugu",  # Baahubali 2: The Conclusion (2017); Telugu
+    "Q3234794": "film:telugu",  # Eega (2012); Tamil + Telugu
+    "Q65057760": "film:telugu",  # Ala Vaikunthapurramuloo (2020); Malayalam + Telugu
+    "Q2962658": "film:hindi",  # Chennai Express (2013); Hindi + Tamil
+    "Q330663": "film:hindi",  # My Name Is Khan (2010); Hindi + English, US/India/UAE
+    "Q13409848": "tv:korean",  # The Heirs (2013); English + Korean, US/South Korea
+    "Q718524": "film:world",  # Lust, Caution (2007); Hindi + English + Standard Chinese
+}
+BUCKET_BASIS_OVERRIDE = "override"
+
+
+def override_for(item: dict[str, Any]) -> str | None:
+    """The hand-kept bucket for this item, or None. An override for the wrong media type (a
+    data error) is ignored rather than moving a film into a series bucket."""
+    bucket = BUCKET_OVERRIDES.get(item.get("qid") or "")
+    if bucket is None or BUCKET_BY_NAME[bucket].media_type != item.get("media_type"):
+        return None
+    return bucket
+
+
 def classify(item: dict[str, Any]) -> str:
     """Bucket name for an item, from its type, original languages (P364) and, to break ties,
-    its countries of origin (P495). See the module docstring, "Bucket rule"."""
-    return bucket_for(item, classify_language(item)[0])
+    its countries of origin (P495), unless ``BUCKET_OVERRIDES`` lists it. See the module
+    docstring, "Bucket rule"."""
+    return override_for(item) or bucket_for(item, classify_language(item)[0])
+
+
+def classify_with_basis(item: dict[str, Any]) -> tuple[str, str]:
+    """(bucket, bucket_basis): the override with basis "override", else the language rule
+    and the step that decided it."""
+    override = override_for(item)
+    if override is not None:
+        return override, BUCKET_BASIS_OVERRIDE
+    language, basis = classify_language(item)
+    return bucket_for(item, language), basis
 
 
 def language_display(candidate: dict[str, Any]) -> str:
@@ -304,8 +350,15 @@ def language_display(candidate: dict[str, Any]) -> str:
 
 def primary_language(item: dict[str, Any]) -> str:
     """The language that decided the bucket ("english", "korean", ...); for a world title its
-    first original language QID (sorted), else "unknown"."""
-    language = classify_language(item)[0]
+    first original language QID (sorted), else "unknown". For an overridden title, the
+    override bucket's language (Telugu for film:telugu; the first other language for a world
+    bucket)."""
+    override = override_for(item)
+    if override is not None:
+        region = BUCKET_BY_NAME[override].region
+        language = region if region in HOME_COUNTRIES else None
+    else:
+        language = classify_language(item)[0]
     if language is not None:
         return language
     labels = item.get("language_labels") or {}
@@ -494,9 +547,8 @@ def select(
             continue
         it = dict(it)
         it["genre"] = coarse_genre(it["genres"])
-        language, basis = classify_language(it)
-        it["bucket"] = bucket_for(it, language)
-        it["bucket_basis"] = basis
+        # one bucket per title (overrides included), so no title is in two pools
+        it["bucket"], it["bucket_basis"] = classify_with_basis(it)
         it["language"] = primary_language(it)
         eligible.append(it)
 
@@ -590,7 +642,7 @@ def interleave_limit(rows: Sequence[dict[str, Any]], limit: int) -> list[dict[st
 
 def gather(wd: Wikidata, seeds: Sequence[dict[str, str]]) -> dict[str, dict[str, Any]]:
     """Run pool and seed queries, then fetch details for every QID found."""
-    qids: set[str] = set()
+    qids: set[str] = set(BUCKET_OVERRIDES)  # always fetched, whichever pool finds them
     for q in pool_queries():
         qids.update(r["qid"] for r in wd.pool(q))
     seed_labels: dict[str, list[str]] = defaultdict(list)

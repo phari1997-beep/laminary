@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import itertools
+import urllib.parse
 from collections import Counter
 from typing import Any
 
@@ -200,7 +201,7 @@ def test_listed_non_narrative_titles_are_excluded() -> None:
     zobo = item("tv_series", "english", 1999, 90, "children's television series")
     zobo["qid"] = "Q3109770"
     assert c.excluded_reason(zobo) == "non_narrative:listed"
-    assert c.SELECTOR_VERSION == "1.2.0"
+    assert c.SELECTOR_VERSION == "1.3.0"
 
 
 @pytest.mark.parametrize(
@@ -343,7 +344,7 @@ def test_rows_record_the_bucket_basis_and_season_count() -> None:
     sel = c.select({it["qid"]: it}, reserve_ratio=0)
     row = sel.rows[0]
     assert row["bucket"] == "tv:english" and row["bucket_basis"] == "only_language"
-    assert row["number_of_seasons"] == 5 and row["selector_version"] == "1.2.0"
+    assert row["number_of_seasons"] == 5 and row["selector_version"] == "1.3.0"
 
 
 def test_world_pools_exclude_english_varieties() -> None:
@@ -467,3 +468,110 @@ def test_language_labels_come_from_wikidata() -> None:
     assert c.language_display({"language": "english", "language_labels": {}}) == "english"
     assert c.language_display({"language": "Q7979"}) == "Q7979"  # older files: no labels
     assert c.language_display({"language": None}) == "unknown"
+
+
+# --- bucket overrides (selector 1.3.0, DECISIONS 2026-10-02) -------------------------------
+
+MALAYALAM, STANDARD_CHINESE = LANG["malayalam"], "Q727694"
+# QID, title, media type, Wikidata original languages and countries as in the cached candidate
+# data, the bucket the language rule gives, and the override bucket
+OVERRIDE_CASES = [
+    ("Q13897247", "Baahubali: The Beginning", "movie", [TA, TE], [IN], "film:tamil",
+     "film:telugu"),
+    ("Q21001674", "Baahubali 2: The Conclusion", "movie", [TE], [IN], "film:telugu",
+     "film:telugu"),
+    ("Q3234794", "Eega", "movie", [TA, TE], [IN], "film:tamil", "film:telugu"),
+    ("Q65057760", "Ala Vaikunthapurramuloo", "movie", [MALAYALAM, TE], [IN], "film:malayalam",
+     "film:telugu"),
+    ("Q2962658", "Chennai Express", "movie", [HI, TA], [IN], "film:tamil", "film:hindi"),
+    ("Q330663", "My Name Is Khan", "movie", [HI, EN], [US, IN, "Q878"], "film:english",
+     "film:hindi"),
+    ("Q13409848", "The Heirs", "tv_series", [EN, KO], [US, KR], "tv:english", "tv:korean"),
+    ("Q718524", "Lust, Caution", "movie", [HI, EN, STANDARD_CHINESE], ["Q148", US, "Q865"],
+     "film:english", "film:world"),
+]
+
+
+def _as(qid: str, media_type: str, languages: list[str], countries: list[str]) -> dict[str, Any]:
+    it = real(media_type, languages, countries)
+    it["qid"] = qid
+    return it
+
+
+@pytest.mark.parametrize(("qid", "name", "media_type", "languages", "countries", "rule", "want"),
+                         OVERRIDE_CASES)
+def test_each_override_applies(qid: str, name: str, media_type: str, languages: list[str],
+                               countries: list[str], rule: str, want: str) -> None:
+    it = _as(qid, media_type, languages, countries)
+    assert c.bucket_for(it, c.classify_language(it)[0]) == rule, name  # the rule alone
+    assert c.BUCKET_OVERRIDES[qid] == want
+    assert c.classify(it) == want, name
+    assert c.classify_with_basis(it) == (want, "override")
+    row = c.select({qid: it}, reserve_ratio=0).rows[0]
+    assert (row["bucket"], row["bucket_basis"], row["role"]) == (want, "override", "pilot")
+    assert row["selector_version"] == "1.3.0"
+
+
+def test_override_table_is_exactly_hari_s_list() -> None:
+    assert sorted(c.BUCKET_OVERRIDES.items()) == sorted((q, w) for q, *_, w in OVERRIDE_CASES)
+
+
+def test_overridden_titles_report_the_override_language() -> None:
+    langs = {q: c.primary_language(_as(q, m, ls, cs)) for q, _, m, ls, cs, _, _ in OVERRIDE_CASES}
+    assert langs["Q13897247"] == langs["Q65057760"] == "telugu"
+    assert langs["Q2962658"] == langs["Q330663"] == "hindi"
+    assert langs["Q13409848"] == "korean"
+    assert langs["Q718524"] == STANDARD_CHINESE  # world: its first non-named language
+
+
+@pytest.mark.parametrize(
+    ("qid", "name", "media_type", "languages"),
+    [
+        ("Q65679599", "Minari", "movie", [EN, KO]),
+        ("Q275187", "Letters from Iwo Jima", "movie", [EN, JA]),
+        ("Q99000001", "Shogun (not in the cached data; stand-in QID)", "tv_series", [EN, JA]),
+    ],
+)
+def test_us_productions_stay_english(qid: str, name: str, media_type: str,
+                                     languages: list[str]) -> None:
+    it = _as(qid, media_type, languages, [US])
+    assert qid not in c.BUCKET_OVERRIDES
+    bucket, basis = c.classify_with_basis(it)
+    assert bucket.endswith(":english") and basis != "override", name
+
+
+def test_non_overridden_titles_are_unchanged() -> None:
+    """Every title in the synthetic pool gets the language rule's bucket and basis."""
+    pool = big_pool()
+    for it in pool.values():
+        language, basis = c.classify_language(it)
+        assert c.classify_with_basis(it) == (c.bucket_for(it, language), basis)
+    rows = c.select(pool, reserve_ratio=0).rows
+    assert rows and all(r["bucket_basis"] != "override" for r in rows)
+
+
+def test_override_with_the_wrong_media_type_is_ignored() -> None:
+    it = _as("Q13409848", "movie", [EN, KO], [US, KR])  # The Heirs' QID on a film: data error
+    assert c.classify_with_basis(it) == ("film:english", "co_production_english")
+
+
+def test_an_overridden_title_is_in_one_pool_only() -> None:
+    """Pulled in by two pool queries (the Tamil and Telugu pools both list Eega), it is
+    selected once, in its override bucket."""
+    pool = big_pool()
+    eega = _as("Q3234794", "movie", [TA, TE], [IN])
+    eega["sitelinks"] = 999  # top of any pool
+    pool[eega["qid"]] = eega
+    rows = [r for r in c.select(pool).rows if r["qid"] == "Q3234794"]
+    assert [(r["bucket"], r["role"]) for r in rows] == [("film:telugu", "pilot")]
+
+
+def test_gather_always_fetches_override_qids() -> None:
+    fake = FakeWikimedia()
+    wd = Wikidata(HttpClient(fake, None, sleep=lambda s: None, min_interval={}))
+    c.gather(wd, [])
+    sent = " ".join(
+        urllib.parse.unquote_plus((r.data or b"").decode()) for r in fake.requests
+    )
+    assert "# laminary detail query" in sent
+    assert all(f"wd:{q}" in sent for q in c.BUCKET_OVERRIDES)
