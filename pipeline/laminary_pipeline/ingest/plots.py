@@ -26,6 +26,7 @@ from laminary_pipeline.ingest.priority import PRIORITY_SERIES
 from laminary_pipeline.ingest.wikipedia import (
     SKIP_FETCH_ERROR,
     SKIP_NO_SECTION,
+    SKIP_SEASON_TOO_LONG,
     SKIP_TOO_SHORT,
     VIA_SEASON_ARTICLES,
     PlotFetcher,
@@ -54,11 +55,11 @@ def _version(value: Any) -> tuple[int, ...]:
 
 
 def _thin_series_before_episode_tables(rec: dict[str, Any]) -> bool:
-    """A series skipped as thin after trying season articles, by a fetcher older than the
-    episode-table fallback (1.5.0): fetched again so the fallback can run. Not when the
-    season-article lookup was disabled for that run."""
+    """A series skipped as thin (or with a season article over the ceiling) after trying season
+    articles, by a fetcher older than the episode-table fallback (1.5.0): fetched again so the
+    fallback can run. Not when the season-article lookup was disabled for that run."""
     return (
-        rec.get("skip_reason") in (SKIP_TOO_SHORT, SKIP_NO_SECTION)
+        rec.get("skip_reason") in (SKIP_TOO_SHORT, SKIP_NO_SECTION, SKIP_SEASON_TOO_LONG)
         and (rec.get("candidate") or {}).get("media_type") == "tv_series"
         and "season_articles" in rec
         and (rec.get("season_articles") or {}).get("status") != "disabled"

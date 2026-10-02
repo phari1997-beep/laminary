@@ -35,10 +35,10 @@ are unaffected. A summary that covers every season, a main article, or an episod
 gets no line. The record stores the same
 coverage in ``provenance.coverage`` and gold labelers see the line in the sheet's
 ``summary_coverage`` column. Episode-table input (fetcher 1.5.0, DECISIONS 2026-10-02) whose
-last season fit only in part says so: "Summary covers seasons 1–3 of 9 (season 3 only in
-part)." The partial season is the plot file's validated ``coverage.partial_season``, which must
-equal the last source's season; such a summary always gets the line, even when it touches every
-season.
+last season is included only in part says so: "Summary covers seasons 1–3 of 9 (season 3 only
+in part; the summary stops before that season ends)." The partial season is the plot file's
+validated ``coverage.partial_season``, which must equal the last source's season; such a
+summary always gets the line, even when it touches every season.
 
 ``verify_request`` re-checks the built request block by block: the system prompt is the pinned
 body, every non-source block equals its expected constant, the header rebuilt from the
@@ -275,7 +275,8 @@ def prompt_coverage(plot: PlotInput) -> dict[str, Any] | None:
         out["total_seasons_basis"] = plot.season_total_basis
     statement = f"Summary covers {format_seasons(seasons)} of {total}"
     if partial is not None:
-        statement += f" (season {partial} only in part)"
+        statement += (f" (season {partial} only in part; the summary stops before that "
+                      "season ends)")
     out["statement"] = statement + "."
     return out
 

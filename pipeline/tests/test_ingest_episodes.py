@@ -66,6 +66,7 @@ from laminary_pipeline.ingest.plots import (
 from laminary_pipeline.ingest.text import sha256_text, word_count
 from laminary_pipeline.ingest.wikipedia import FETCHER_VERSION, PlotFetcher
 
+TAIL = "; the summary stops before that season ends)."  # the partial-season line's ending
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "ingest" / "episodes"
 SERIES = "Q9200000"
 MAIN = "Tidewater (TV series)"
@@ -321,7 +322,8 @@ def test_list_page_seasons_rise_and_a_restart_stops_the_page() -> None:
 def _season(n: int, sizes: list[int]) -> SeasonEpisodes:
     from laminary_pipeline.ingest.episodes import Episode
 
-    eps = [Episode(n, i + 1, f'"E{i + 1}"', words(s, f"s{n}e{i}w")) for i, s in enumerate(sizes)]
+    eps = [Episode(n, i + 1, f'"E{i + 1}"', words(s, f"s{n}e{i}w"), i + 1)
+           for i, s in enumerate(sizes)]
     return SeasonEpisodes(n, eps, len(eps))
 
 
@@ -455,11 +457,22 @@ def test_episode_tables_are_not_tried_when_season_prose_works() -> None:
     assert page_requests(fake) == []
 
 
-def test_episode_tables_are_not_tried_after_season_too_long() -> None:
+def test_episode_tables_are_tried_after_season_too_long() -> None:
+    """QA S2 (DECISIONS 2026-10-02): a season article over the 6,000-word ceiling no longer
+    ends the series: its episode tables are tried."""
     fake = episode_fake(season_pages=TWO_SEASONS, prose_words=6001)
     rec = fetch(fake)
-    assert rec["skip_reason"] == "season_too_long" and "episode_tables" not in rec
-    assert page_requests(fake) == []
+    assert rec["status"] == "ok" and rec["via_detail"] == "episode_table"
+    assert rec["season_articles"]["used"] == []
+    assert page_requests(fake) == ["92010", "92020", "92040"]
+
+
+def test_season_too_long_stays_when_episode_tables_fail() -> None:
+    fake = episode_fake(season_pages={1: season_page_html(1, 2, 30)}, prose_words=6001)
+    rec = fetch(fake)
+    assert rec["skip_reason"] == "season_too_long"
+    assert "episode tables: 2 episodes with" in rec["skip_detail"]
+    assert rec["episode_tables"]["episodes_used"] == 2
 
 
 def test_episode_tables_are_not_tried_when_season_lookup_is_off() -> None:
@@ -516,7 +529,7 @@ def test_partial_season_line_is_built_from_validated_ints(partial_plot) -> None:
     assert partial_plot["coverage"]["partial_season"] == 2
     gated, params = _request(partial_plot)
     line = params["messages"][0]["content"][0]["text"].splitlines()[2]
-    assert line == "Summary covers seasons 1–2 of 9 (season 2 only in part)."
+    assert line == f"Summary covers seasons 1–2 of 9 (season 2 only in part{TAIL}"
     assert prompt_coverage(gated.plot) == {
         "seasons": [1, 2], "total_seasons": 9, "total_seasons_basis": "wikidata_P2437",
         "statement": line}
@@ -525,9 +538,9 @@ def test_partial_season_line_is_built_from_validated_ints(partial_plot) -> None:
 @pytest.mark.parametrize(
     ("seasons", "total", "partial", "line"),
     [
-        ([1], 9, 1, "Summary covers season 1 of 9 (season 1 only in part)."),
-        ([1, 2], 2, 2, "Summary covers seasons 1–2 of 2 (season 2 only in part)."),
-        ([2, 3], 5, 3, "Summary covers seasons 2–3 of 5 (season 3 only in part)."),
+        ([1], 9, 1, f"Summary covers season 1 of 9 (season 1 only in part{TAIL}"),
+        ([1, 2], 2, 2, f"Summary covers seasons 1–2 of 2 (season 2 only in part{TAIL}"),
+        ([2, 3], 5, 3, f"Summary covers seasons 2–3 of 5 (season 3 only in part{TAIL}"),
         ([1, 2], 2, None, None),  # every season, in full: no line
     ],
 )
@@ -544,7 +557,9 @@ def test_coverage_line_for_partial_seasons(seasons: list[int], total: int,
 def test_changed_partial_line_is_caught_by_verify_request(partial_plot) -> None:
     prompt = load_prompt(DEFAULT_PROMPT_VERSION)
     gated, params = _request(partial_plot)
-    for old, new in ((" (season 2 only in part)", ""), ("season 2 only", "season 1 only"),
+    for old, new in ((" (season 2 only in part; the summary stops before that season ends)",
+                      ""), ("; the summary stops before that season ends", ""),
+                     ("season 2 only", "season 1 only"),
                      ("of 9", "of 2")):
         bad = copy.deepcopy(params)
         bad["messages"][0]["content"][0]["text"] = (
@@ -673,7 +688,7 @@ def test_record_stores_the_partial_coverage_statement(partial_plot) -> None:
                     usage_so_far=Usage(1000, 2000, 5000, 0), attempts=1)
     assert not isinstance(rec, Invalid), rec
     assert rec["provenance"]["coverage"]["statement"] == (
-        "Summary covers seasons 1–2 of 9 (season 2 only in part).")
+        f"Summary covers seasons 1–2 of 9 (season 2 only in part{TAIL}")
     assert [s["season"] for s in rec["provenance"]["sources"]] == [1, 2]
     assert validate_record(rec) == []
 
@@ -685,7 +700,8 @@ def test_gold_text_equals_the_joined_model_input(partial_plot) -> None:
     n = len(partial_plot["sources"])
     joined = "\n\n".join("".join(blocks[1 + 3 * i: 4 + 3 * i]) for i in range(n))
     assert labeler_text(gated) == joined
-    assert labeler_coverage(gated) == "Summary covers seasons 1–2 of 9 (season 2 only in part)."
+    assert labeler_coverage(gated) == (
+        f"Summary covers seasons 1–2 of 9 (season 2 only in part{TAIL}")
     verify_request(params, gated, prompt)
 
     selection = [{"qid": SERIES, "title": "Tidewater", "year": 1989, "media_type": "tv_series",
@@ -919,3 +935,105 @@ def test_split_list_pages_must_keep_seasons_rising() -> None:
     skipped = rec["episode_tables"]["tables_skipped"]
     assert {"title": "List of Tidewater episodes: 2010–present", "heading": "season 2",
             "reason": "season 2 after season 2 on an earlier page"} in skipped
+
+
+# --- QA round 2 ------------------------------------------------------------------------------
+
+
+def test_missing_summary_tail_marks_the_last_season_partial() -> None:
+    """QA S1: Shrinking season 3 has 11 episode rows but summaries for only the first 2, so
+    the summary stops before that season ends even though the cap was not reached."""
+    seasons, _ = list_page_seasons(parse_tables(fixture("shrinking_seasons_episodes")))
+    joined = join_episodes([season_episodes(n, ts) for n, ts in seasons], 3000, 20)
+    assert [(s.season, len(s.episodes)) for s in joined.seasons] == [(1, 2), (2, 2), (3, 2)]
+    assert joined.partial_season == 3 and joined.partial_reason == "missing_summaries"
+    assert joined.stopped_by is None
+    # a season whose rows all have summaries is not partial
+    full = join_episodes([season_episodes(n, ts) for n, ts in seasons[:2]], 3000, 20)
+    assert full.partial_season is None
+
+
+def test_missing_summary_tail_reaches_the_coverage_line() -> None:
+    html = list_page_html({1: (2, 60), 2: (3, 60)}).replace(
+        f"{words(60, 's2e3w')}", "")  # season 2's last episode has an empty summary
+    fake = episode_fake(list_html=html)
+    rec = fetch(fake)
+    assert rec["episode_tables"]["partial_season"] == 2
+    assert rec["episode_tables"]["partial_reason"] == "missing_summaries"
+    assert rec["coverage"]["partial_season"] == 2
+    gated, params = _request(rec)
+    assert params["messages"][0]["content"][0]["text"].splitlines()[2] == (
+        f"Summary covers seasons 1–2 of 9 (season 2 only in part{TAIL}")
+
+
+def test_part_subheadings_inside_a_season_keep_the_season() -> None:
+    """QA S3: a table under h4 "Part 1" inside h3 "Season 5 (2012–13)" is season 5; a table
+    under a "Specials" subheading inside a season is still skipped."""
+    html = (
+        heading(2, "Episodes") + heading(3, "Season 5 (2012–13)")
+        + heading(4, "Part 1") + table(ep_rows(5, 2, 20))
+        + heading(4, "Part 2") + table(ep_rows(5, 1, 20, first_overall=3))
+        + heading(4, "Specials") + table(ep_rows(5, 1, 20, first_overall=90))
+        + heading(3, "Season 6 (2014)") + table(ep_rows(6, 1, 20))
+        + heading(2, "Home media") + table(ep_rows(7, 1, 20))
+    )
+    tables = parse_tables(html)
+    assert [t.path for t in tables][0] == ("episodes", "season 5 (2012–13)", "part 1")
+    assert [t.heading for t in tables] == ["season 5 (2012–13)", "season 5 (2012–13)",
+                                           "specials", "season 6 (2014)", "home media"]
+    seasons, skipped = list_page_seasons(tables)
+    assert [(n, len(ts)) for n, ts in seasons] == [(5, 2), (6, 1)]
+    assert [s["heading"] for s in skipped] == ["specials", "home media"]
+    assert len(season_episodes(5, seasons[0][1]).episodes) == 3
+
+
+def _two_list_pages(first: dict[int, tuple[int, int]], second: dict[int, tuple[int, int]],
+                    *, first_summaries: bool = False) -> FakeWikimedia:
+    fake = split_list_fake()
+    w = fake.data["wikipedia"]
+    (r1, r2) = (SPLIT_LISTS["List of Tidewater episodes: 1998–2009"][1],
+                SPLIT_LISTS["List of Tidewater episodes: 2010–present"][1])
+    html1 = list_page_html(first)
+    if not first_summaries:
+        html1 = html1.replace('<tr class="expand-child">', '<tr class="other">')
+    w[f"page:{r1}"] = {"parse": {"text": html1}}
+    w[f"page:{r2}"] = {"parse": {"text": list_page_html(second)}}
+    return fake
+
+
+def test_empty_seasons_on_an_earlier_page_do_not_block_a_later_page() -> None:
+    """QA S4: rising order is checked against the seasons used. An earlier page whose seasons
+    1-5 have no summaries doesn't block seasons 6-7 on the next page; its headings still count
+    for the season total."""
+    rec = fetch(_two_list_pages({n: (2, 40) for n in range(1, 6)}, {6: (2, 40), 7: (2, 40)}),
+                seasons_total=None)
+    assert rec["status"] == "ok"
+    assert [p["source"]["season"] for p in rec["sources"]] == [6, 7]
+    assert rec["coverage"]["total_seasons"] == 7
+    assert rec["episode_tables"]["numbering_restart"] == []
+
+
+def test_numbering_restart_across_pages_is_not_used_and_is_reported() -> None:
+    """Doctor Who's shape: a classic page numbered Season 1-3 without summaries, then a
+    revival page restarting at Series 1. Which run "of N" would count is unclear, so the
+    revival's seasons are not used, and the restart is recorded for Hari."""
+    fake = _two_list_pages({1: (2, 40), 2: (2, 40), 3: (2, 40)}, {1: (2, 40), 2: (2, 40)})
+    rec = fetch(fake, seasons_total=None)
+    assert rec["status"] == "skipped"
+    assert "season numbering restarts across list pages" in rec["skip_detail"]
+    assert rec["episode_tables"]["numbering_restart"] == [
+        {"title": "List of Tidewater episodes: 2010–present", "season": 1,
+         "earlier_pages_up_to": 3},
+        {"title": "List of Tidewater episodes: 2010–present", "season": 2,
+         "earlier_pages_up_to": 3}]
+
+
+def test_season_too_long_series_are_fetched_again_by_1_5_0(tmp_path: Path) -> None:
+    from laminary_pipeline.ingest.plots import needs_fetch
+
+    paths = DataPaths.resolve(str(tmp_path))
+    old = {**_skipped("Q1", "season_too_long"), "fetcher_version": "1.4.0"}
+    write_json_atomic(paths.plot_file("Q1"), old)
+    assert needs_fetch(paths, "Q1", False)
+    write_json_atomic(paths.plot_file("Q1"), {**old, "fetcher_version": "1.5.0"})
+    assert not needs_fetch(paths, "Q1", False)

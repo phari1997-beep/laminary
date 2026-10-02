@@ -93,7 +93,7 @@ README_LINES = [
     "   stops before the series does: label only what it covers and never judge an ending",
     "   you can't see (guide rule on partial coverage). The model gets the same line.",
     "   Some series files are episode summaries, one per paragraph ('S2E5 \"Title\": ...');",
-    "   '(season 3 only in part)' in summary_coverage means that season stops early.",
+    "   '(season 3 only in part; ...)' in summary_coverage means that season stops early.",
     "3. Fill every white column: primary_plot, the 9 plot_ columns (Y/N), blueprint,",
     "   the 12 stage_ columns (Y/N), arc_shape (or all 11 arc_t points), the 10 tag_",
     "   columns (Y/N) and confidence. notes is optional.",

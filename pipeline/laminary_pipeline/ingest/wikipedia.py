@@ -364,14 +364,16 @@ class PlotFetcher:
             "stub_season_words": STUB_SEASON_WORDS,
         }
         if found.too_long is not None:
-            return {
+            # the prose is too long to use; the episode tables may still be (DECISIONS
+            # 2026-10-02, QA S2). Stays season_too_long when they don't give 150 words.
+            return self._try_episode_tables({
                 **skipped,
                 "skip_reason": SKIP_SEASON_TOO_LONG,
                 "skip_detail": f"first full season (no stub seasons before it) is over "
                 f"{LEAD_BLOCK_CEILING} words: "
-                f"{found.too_long}"[:300],
+                f"{found.too_long}",
                 "season_articles": report,
-            }
+            }, main, found)
         if found.words < self.min_words:
             detail = (
                 f"{skipped.get('skip_detail') or skipped['skip_reason']}; season articles: "
@@ -422,7 +424,9 @@ class PlotFetcher:
         # Episode-list pages in order (the plain page, then pages split by year, season range
         # or part); seasons must keep rising across pages. Fetched one at a time, until the
         # summaries pass the cap.
-        listed: list[int] = []
+        listed: list[int] = []  # every season heading seen, for the season total only
+        used: list[int] = []  # seasons with summaries, in order: these must keep rising
+        listed_before: list[int] = []  # season headings on earlier pages (restart check)
         for i, page in enumerate(found.list_pages):
             if words > cap or len(collected) >= MAX_SEASON_SOURCES:
                 report["pages_not_fetched"] = [p.title for p in found.list_pages[i:]]
@@ -436,18 +440,28 @@ class PlotFetcher:
                                                      "heading": f"season {n}",
                                                      "reason": "season number over 100"})
                     continue
-                if listed and n <= listed[-1]:
+                if used and n <= used[-1]:
                     report["tables_skipped"].append({
                         "title": page.title, "heading": f"season {n}",
-                        "reason": f"season {n} after season {listed[-1]} on an earlier page"})
+                        "reason": f"season {n} after season {used[-1]} on an earlier page"})
                     continue
-                listed.append(n)
                 se = season_episodes(n, tables)
                 report["episodes_without_summary"] += se.without_summary
+                if se.episodes and listed_before and n <= max(listed_before):
+                    # an earlier page (without summaries) already numbered a season this high:
+                    # two numbering runs (a revival restarting at "Series 1"). Which run "of N"
+                    # counts is not clear, so these seasons are not used (QA S4, for Hari).
+                    report["numbering_restart"].append({
+                        "title": page.title, "season": n,
+                        "earlier_pages_up_to": max(listed_before)})
+                    continue
+                listed.append(n)
                 if se.episodes:
                     collected.append((page, se))
+                    used.append(n)
                     words += sum(e.words for e in se.episodes)
                     used_here += 1
+            listed_before += [n for n, _ in seasons]
             if not used_here:
                 report["pages_skipped"].append({"title": page.title,
                                                 "reason": "no episode summaries under a season "
@@ -471,6 +485,8 @@ class PlotFetcher:
             "left_out_over_cap": {"episodes": 0, "seasons": []},
             "pages_not_fetched": [],
             "stopped_by": None,
+            "partial_reason": None,
+            "numbering_restart": [],
             "episodes_without_summary": 0,
             "pages_skipped": [],
             "tables_skipped": [],
@@ -493,13 +509,16 @@ class PlotFetcher:
             by_season=[{"season": s.season, "episodes": len(s.episodes),
                         "with_summary": available[s.season]} for s in joined.seasons],
             partial_season=joined.partial_season,
+            partial_reason=joined.partial_reason,
             left_out_over_cap={"episodes": joined.left_out_episodes,
                                "seasons": joined.left_out_seasons},
             stopped_by=joined.stopped_by,
         )
         if joined.words < self.min_words:
+            restart = (" (season numbering restarts across list pages; not used)"
+                       if report["numbering_restart"] else "")
             detail = (f"{skipped['skip_detail']}; episode tables: "
-                      f"{report['episodes_used']} episodes with {joined.words} words")
+                      f"{report['episodes_used']} episodes with {joined.words} words{restart}")
             return {**skipped, "skip_detail": detail[:300], "episode_tables": report}
         coverage = season_coverage(
             [s.season for s in joined.seasons], sorted({*found.verified_seasons, *listed}),

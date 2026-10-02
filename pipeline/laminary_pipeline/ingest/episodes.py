@@ -17,10 +17,15 @@ writers, directors, production codes) and everything outside the tables is ignor
 
 **Which tables.** On a season page every episode table counts as that season's, except one
 under a heading for specials, webisodes, minisodes or shorts (out of the season's order). On an
-episode-list page a table's season is the number in the nearest heading above it ("Season 3
-(1991–92)", "Series 2"); tables under other headings are skipped, and seasons must rise down
-the page (a repeated or lower number stops the page, e.g. a revival that restarts at
-"Series 1"). Every skipped table is recorded.
+episode-list page a table's season is the number in the nearest enclosing heading, at any
+level, that names one ("Season 3 (1991–92)", "Series 2"; a "Part 1" subheading inside "Season
+5" is still season 5), unless a specials heading sits between them. Tables under other
+headings are skipped, and seasons must rise down the page (a repeated or lower number stops
+the page, e.g. a revival that restarts at "Series 1"). Every skipped table is recorded.
+
+**Partial last season.** The last season used is marked ``partial_season`` when some of its
+episodes didn't fit under the cap, or when rows after its last used episode have no summary
+(episodes not yet aired or not yet summarized).
 
 **Text.** One paragraph per episode, in season order then table order: ``S2E5 "Title": <summary>``
 (``S2E5:`` without a title). The episode number is the table's in-season number when it has
@@ -73,7 +78,8 @@ class RawEpisode:
 
 @dataclass
 class RawTable:
-    heading: str  # nearest heading above the table, normalized ("" at the top)
+    heading: str  # the heading that decides the table (``table_heading``), normalized
+    path: tuple[str, ...] = ()  # every enclosing heading, outermost first
     rows: list[RawEpisode] = field(default_factory=list)
 
 
@@ -84,7 +90,8 @@ class _TableParser(HTMLParser):
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
         self.tables: list[RawTable] = []
-        self.heading = ""
+        self._headings: list[tuple[int, str]] = []  # enclosing headings: (level, text)
+        self._heading_level = 0
         self._heading_parts: list[str] | None = None
         self._table_depth = 0  # open <table> tags inside the current episode table, itself 1
         self._row_kind: str | None = None  # "episode", "description" or None
@@ -143,8 +150,10 @@ class _TableParser(HTMLParser):
         if self._table_depth == 0:
             if tag in ("h1", "h2", "h3", "h4", "h5", "h6"):
                 self._heading_parts = []
+                self._heading_level = int(tag[1])
             elif tag == "table" and EPISODE_TABLE_CLASS in self._classes(attrs):
-                self.tables.append(RawTable(self.heading))
+                path = tuple(text for _, text in self._headings)
+                self.tables.append(RawTable(table_heading(path), path))
                 self._table_depth = 1
             return
         if tag == "table":
@@ -180,7 +189,10 @@ class _TableParser(HTMLParser):
                 return
         if self._table_depth == 0:
             if tag in ("h1", "h2", "h3", "h4", "h5", "h6") and self._heading_parts is not None:
-                self.heading = normalize_heading("".join(self._heading_parts))
+                level = self._heading_level
+                while self._headings and self._headings[-1][0] >= level:
+                    self._headings.pop()
+                self._headings.append((level, normalize_heading("".join(self._heading_parts))))
                 self._heading_parts = None
             return
         if tag == "tr" and self._table_depth == 1:
@@ -204,6 +216,15 @@ class _TableParser(HTMLParser):
             self._flush_pending()
 
 
+def table_heading(path: tuple[str, ...]) -> str:
+    """The heading that decides a table, from its enclosing headings (outermost first): the
+    nearest one that names specials or a season, else the nearest one ("" with none)."""
+    for text in reversed(path):
+        if _SKIP_TABLE_HEADING.search(text) or _LIST_SEASON_HEADING.match(text):
+            return text
+    return path[-1] if path else ""
+
+
 def parse_tables(page_html: str) -> list[RawTable]:
     """Every ``wikiepisodetable`` on a rendered page, in document order, with its heading."""
     parser = _TableParser()
@@ -218,6 +239,7 @@ class Episode:
     number: int
     title: str  # the title cell as text ("" when there is none)
     summary: str  # the description cell as text
+    row: int = 0  # the episode row's position in its season (1-based), with or without summary
 
     @property
     def paragraph(self) -> str:
@@ -273,7 +295,8 @@ def season_episodes(season: int, tables: list[RawTable]) -> SeasonEpisodes:
             if not summary:
                 continue
             number = _episode_number(row.number_cells, position)
-            out.append(Episode(season, number, _title_text(row.title_html), summary))
+            out.append(Episode(season, number, _title_text(row.title_html), summary,
+                               position))
     return SeasonEpisodes(season, out, position)
 
 
@@ -325,7 +348,11 @@ class EpisodeJoin:
     """The joined episode text: one entry per season used, plus what the cap left out."""
 
     seasons: list[SeasonEpisodes]  # each with only the episodes used
-    partial_season: int | None = None  # the last season, when only some of its episodes fit
+    # the last season used, when it is included only in part: some of its episodes didn't fit
+    # under the cap ("word_cap"), or rows after its last used episode have no summary
+    # ("missing_summaries", e.g. episodes not yet aired)
+    partial_season: int | None = None
+    partial_reason: str | None = None
     left_out_episodes: int = 0  # episodes with a summary left out over the cap
     left_out_seasons: list[int] = field(default_factory=list)  # seasons with none used
     stopped_by: str | None = None  # "word_cap" or "source_limit"
@@ -366,7 +393,11 @@ def join_episodes(seasons: list[SeasonEpisodes], cap: int, max_sources: int) -> 
         if kept:
             out.seasons.append(SeasonEpisodes(s.season, kept, s.rows))
             if len(kept) < len(s.episodes):
-                out.partial_season = s.season
+                out.partial_season, out.partial_reason = s.season, "word_cap"
         else:
             out.left_out_seasons.append(s.season)
+    if out.seasons and out.partial_season is None:
+        last = out.seasons[-1]
+        if last.rows > last.episodes[-1].row:  # rows without a summary after the last one used
+            out.partial_season, out.partial_reason = last.season, "missing_summaries"
     return out
