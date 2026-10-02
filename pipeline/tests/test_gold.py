@@ -256,7 +256,7 @@ def test_columns_cover_exactly_the_gold_label_fields() -> None:
     assert set(col.ARC_NAMES) == set(schema["emotional_arc"]["enum"])
     assert set(col.TAG_NAMES) == set(schema["beat_tag"]["enum"])
     assert set(col.SKIP_NAMES) == set(schema["abstain_reason"]["enum"])
-    assert len(col.ALL_COLUMNS) == len(set(col.ALL_COLUMNS)) == 67
+    assert len(col.ALL_COLUMNS) == len(set(col.ALL_COLUMNS)) == 68  # + summary_coverage (1.4.0)
     for c in col.LABELER_COLS:
         if c.startswith(("plot_", "stage_", "tag_")):
             assert col.dropdown_for_column(c) == "yes_no"

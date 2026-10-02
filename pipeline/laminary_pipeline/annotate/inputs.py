@@ -46,7 +46,12 @@ from typing import Any
 from jsonschema import Draft202012Validator
 
 from laminary_pipeline.annotation import format_checker, load_schema, require_wikipedia_sources
-from laminary_pipeline.ingest.seasons import SEASON_ONE_CEILING, SEASON_WORD_CAP
+from laminary_pipeline.ingest.seasons import (
+    COVERAGE_BASES,
+    LEAD_BLOCK_CEILING,
+    MAX_SEASON_NUMBER,
+    SEASON_WORD_CAP,
+)
 from laminary_pipeline.ingest.text import word_count
 from laminary_pipeline.ingest.wikidata import effective_series_status
 from laminary_pipeline.ingest.wikipedia import VIA_SEASON_ARTICLES
@@ -90,6 +95,10 @@ class PlotInput:
     sources: tuple[PlotSource, ...]
     origin: str  # file (and line) it came from
     via: str | None = None  # "season_articles" when ingest built it from season articles
+    # Season-article input (DECISIONS 2026-10-02): the series' season total from the plot
+    # file's ``coverage`` (validated in parse_plot) and where it came from
+    season_total: int | None = None
+    season_total_basis: str | None = None
 
     @property
     def key(self) -> str:
@@ -120,7 +129,36 @@ def _from_ingest_shape(obj: dict[str, Any], origin: str) -> dict[str, Any]:
     }
     if cand.get("media_type") == "tv_series":
         title["series_status"] = effective_series_status(cand)
-    return {"title": title, "sources": ingest_sources(obj), "via": ingest_via(obj)}
+    out = {"title": title, "sources": ingest_sources(obj), "via": ingest_via(obj)}
+    if "coverage" in obj:
+        out["coverage"] = obj["coverage"]
+    return out
+
+
+def parse_coverage(
+    coverage: Any, sources: list[PlotSource], origin: str
+) -> tuple[int | None, str | None]:
+    """(total seasons, basis) from a plot file's ``coverage``, or (None, None) without one.
+    Raises InputFormatError unless the total is a plain int from 1 to 100 with a known basis,
+    and the listed seasons are exactly the sources' season numbers."""
+    if coverage is None:
+        return None, None
+    if not isinstance(coverage, dict):
+        raise InputFormatError(f"{origin}: coverage must be an object")
+    total = coverage.get("total_seasons")
+    basis = coverage.get("total_seasons_basis")
+    if total is not None and (type(total) is not int or not 1 <= total <= MAX_SEASON_NUMBER):
+        raise InputFormatError(f"{origin}: coverage.total_seasons {total!r} is not a whole "
+                               f"number from 1 to {MAX_SEASON_NUMBER}")
+    if (total is None) != (basis is None) or (basis is not None and basis not in
+                                               COVERAGE_BASES):
+        raise InputFormatError(f"{origin}: coverage.total_seasons_basis {basis!r} is not one of "
+                               f"{list(COVERAGE_BASES)} (or the total is missing)")
+    listed = coverage.get("seasons")
+    if listed is not None and listed != [s.meta.get("season") for s in sources]:
+        raise InputFormatError(f"{origin}: coverage.seasons {listed!r} doesn't match the "
+                               "sources' season numbers")
+    return total, basis
 
 
 def ingest_via(obj: dict[str, Any]) -> str | None:
@@ -173,8 +211,10 @@ def parse_plot(obj: Any, origin: str) -> PlotInput:
             raise InputFormatError(f"{origin}: source {i}: {'; '.join(errors)}")
         parsed.append(PlotSource(meta=meta, text=src["text"]))
     via = obj.get("via")
+    total, basis = parse_coverage(obj.get("coverage"), parsed, origin)
     return PlotInput(title=title, sources=tuple(parsed), origin=origin,
-                     via=via if isinstance(via, str) else None)
+                     via=via if isinstance(via, str) else None,
+                     season_total=total, season_total_basis=basis)
 
 
 def iter_plot_files(plots_dir: Path) -> Iterator[tuple[Any, str]]:
@@ -293,7 +333,7 @@ def check_source_limits(plot: PlotInput, total: int) -> None:
     if via_seasons and n == 1 and not has_season:
         limit, what = SEASON_WORD_CAP, "episode-list page"
     else:
-        limit, what = SEASON_ONE_CEILING, "ceiling"
+        limit, what = LEAD_BLOCK_CEILING, "ceiling"
     if total > limit:
         raise GateError(
             f"{plot.key}: season-article input of {n} source(s) and {total} words, over the "

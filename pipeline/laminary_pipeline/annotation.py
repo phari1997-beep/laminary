@@ -146,6 +146,26 @@ def validator() -> Draft202012Validator:
     return Draft202012Validator(load_schema(), format_checker=format_checker())
 
 
+def coverage_errors(prov: dict[str, Any]) -> list[str]:
+    """Schema 1.2.0 ``provenance.coverage``: seasons in increasing order and equal to the
+    sources' season numbers; a total at least the highest season and given with its basis."""
+    cov = prov.get("coverage")
+    if cov is None:
+        return []
+    errors = []
+    seasons = cov["seasons"]
+    if any(b <= a for a, b in zip(seasons, seasons[1:], strict=False)):
+        errors.append(f"coverage seasons {seasons} are not in increasing order")
+    if seasons != [src.get("season") for src in prov["sources"]]:
+        errors.append(f"coverage seasons {seasons} don't match the sources' season numbers")
+    total = cov.get("total_seasons")
+    if (total is None) != ("total_seasons_basis" not in cov):
+        errors.append("coverage total_seasons and total_seasons_basis go together")
+    if total is not None and total < max(seasons):
+        errors.append(f"coverage total_seasons {total} is below season {max(seasons)}")
+    return errors
+
+
 def semantic_errors(record: dict[str, Any]) -> list[str]:
     """Checks from docs/NARRATIVE_SCHEMA.md section 11. Assumes the record is schema-valid."""
     errors: list[str] = []
@@ -154,6 +174,7 @@ def semantic_errors(record: dict[str, Any]) -> list[str]:
         total = sum(src["word_count"] for src in prov["sources"])
         if prov["input_word_count"] != total:
             errors.append(f"input_word_count {prov['input_word_count']} != sum of sources {total}")
+    errors += coverage_errors(record.get("provenance") or {})
     if record.get("outcome") != "annotated":
         return errors
     layers = record["layers"]

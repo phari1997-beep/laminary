@@ -10,7 +10,7 @@ from __future__ import annotations
 from laminary_pipeline.annotation import load_schema
 
 # Version of docs/GOLD_LABELING_GUIDE.md. Stored as provenance.annotator.guide_version.
-GUIDE_VERSION = "1.3.0"
+GUIDE_VERSION = "1.4.0"  # 1.4.0: summary_coverage column, partial-coverage rule
 
 
 def _enum(name: str) -> list[str]:
@@ -96,7 +96,7 @@ NO = frozenset({"n", "no", "false", "0", "absent"})
 
 PREFILLED_LEFT = [
     "qid", "title", "year", "type", "label_slot", "summary_text_file", "wikipedia_revision_link",
-    "plot_section", "word_count",
+    "plot_section", "word_count", "summary_coverage",
 ]
 PLOT_COLS = [f"plot_{k}" for k in BOOKER_PLOTS]
 STAGE_COLS = [f"stage_{k}" for k in STAGES]
@@ -128,6 +128,11 @@ def help_row() -> dict[str, str]:
     h["wikipedia_revision_link"] = (
         "Attribution only (CC BY-SA source). Don't label from the web page: it has extra "
         "tables, captions and notes the model never sees"
+    )
+    h["summary_coverage"] = (
+        "If filled (e.g. 'Summary covers seasons 1–4 of 7.'), the summary stops before the "
+        "series does: label only what it covers and don't judge an ending you can't see. The "
+        "model gets the same line"
     )
     h["label_slot"] = (
         "1, or 2 for a title two people label. Take a slot Hari assigns; label on your own"

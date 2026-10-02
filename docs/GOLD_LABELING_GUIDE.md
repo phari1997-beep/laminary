@@ -1,6 +1,6 @@
 # Gold labeling guide
 
-**Version 1.3.0** (this number goes in the sheet's `guide_version` column). Owner: data-pipeline. Definitions come from `docs/NARRATIVE_SCHEMA.md` v1.1.0; if the two ever disagree, the schema wins and this guide gets fixed.
+**Version 1.4.0** (this number goes in the sheet's `guide_version` column). Owner: data-pipeline. Definitions come from `docs/NARRATIVE_SCHEMA.md` v1.2.0; if the two ever disagree, the schema wins and this guide gets fixed.
 
 ## What this is for
 
@@ -23,6 +23,7 @@ Labels are internal. Nobody sees them in the app, so spoilers are fine here.
 4. **If you can't label it, skip it** with a `skip_reason` (below) rather than guessing.
 5. **One row per title per person.** Don't copy someone else's row. About 25 titles have two rows (`label_slot` 1 and 2) so two people can label them; each person takes the slot Hari assigns.
 6. **Label independently; don't confer.** Don't discuss a title with other labelers, and don't look at anyone else's row, until Hari says labeling is finished. The two-person titles measure how often careful people agree on their own; comparing notes makes that number meaningless. Where the two of you disagree, Hari settles it afterwards.
+7. **Partial series: label only what the summary covers.** Some series files cover only some seasons, because the rest were left out to keep the file short or have no usable article. Then the grey `summary_coverage` column says so, for example "Summary covers seasons 1–4 of 7." (or "Summary covers seasons 3–6." when the total isn't known); the model gets exactly the same line (DECISIONS 2026-10-02). Label the run the file covers, as if its last covered season were the end of the story. Don't guess what happens in the missing seasons, and don't judge an ending you can't see: an ending-dependent label (Tragedy, the last journey stages, the ending tags, the end of the arc) needs the text itself to show that ending. If what's left can't support a label, skip it under rule 4 with "Summary too thin". An empty `summary_coverage` means the file is not known to be partial.
 
 Expect about 15 to 25 minutes a title once you're used to it.
 
@@ -198,7 +199,7 @@ The importer checks every row and names the column. The usual ones:
 1. The coordinator runs `python -m laminary_pipeline.gold select` and `... gold template`. That writes three CSVs in `pipeline/data/gold/` and the `texts` folder: one `<QID>.txt` per title (the exact model input) plus `manifest.csv` (filename, QID, title, SHA-256, word count). Upload the three CSVs and the whole `texts` folder to the Laminary folder on your Drive, and share it with labelers as view-only. The manifest lets anyone check that a file wasn't changed: its SHA-256 must equal the sheet's `source_sha256` (for a title joined from season articles, the manifest's SHA-256 is of the joined file, and `source_sha256` lists each article's hash). Nothing is uploaded automatically.
 2. In Google Sheets, import `gold_labels_template.csv` (File > Import > Replace spreadsheet), then import `gold_labels_lists.csv` and `gold_labels_readme.csv` with "Insert new sheet(s)". Rename the tabs Labels, Lists and README.
 3. On the Labels tab: View > Freeze > 2 rows (header plus the `#` help row). Select the `plot_`, `stage_` and `tag_` columns and add Data > Data validation > "Dropdown (from a range)" = `Lists!A2:A3` (the `yes_no` column). Do the same for `primary_plot`, `blueprint`, `arc_shape`, `skip_reason` and `confidence`, each pointing at its column on the Lists tab. Set invalid data to "Reject input".
-4. Shade the prefilled columns grey (`qid` to `word_count`, including `label_slot`, and `series_status` to `guide_version`) and protect them (Data > Protect sheets and ranges > "Show a warning").
+4. Shade the prefilled columns grey (`qid` to `summary_coverage`, including `label_slot`, and `series_status` to `guide_version`) and protect them (Data > Protect sheets and ranges > "Show a warning").
 5. Give each labeler a code (`L01`, `L02`, ...) and assign rows. The selector marks 25 titles for double labeling (DECISIONS 2026-09-30), and the template already has two rows for each, `label_slot` 1 and 2. Assign the two slots of a title to different people. Slot 1 is the reference the model is scored against; slot 2 measures human agreement. Tell labelers to work independently (golden rule 6). The evaluation lists every title where the two disagree, for you to adjudicate.
 6. When done: File > Download > CSV (Labels tab) and hand it to the coordinator, who runs `python -m laminary_pipeline.gold import <file>.csv`. Any problems come back as a list by row number and title.
 
@@ -208,5 +209,6 @@ The importer checks every row and names the column. The usual ones:
 - **1.1.0** (2026-09-30): labelers read the exact model-input text file (`summary_text_file`), not the Wikipedia page.
 - **1.2.0** (2026-10-01): two-part Phase 1 exit check; `label_slot` and double labeling of 25 titles; label independently (rule 6); text files in the Drive Laminary folder with a manifest; series joined from season articles. Label definitions unchanged.
 - **1.3.0** (2026-10-01): rule 1 notes that a series file may hold only short season articles when the first full season is too long to join them (DECISIONS 2026-10-01). Label definitions unchanged.
+- **1.4.0** (2026-10-02): new grey column `summary_coverage` and golden rule 7: when a series file covers only some seasons, label only the covered run and never judge an ending you can't see; the model gets the same line in its request (prompt annotate-1.2.0, DECISIONS 2026-10-02). Series files no longer include production, ratings or broadcast subsections, or "Cite error" messages. Label definitions unchanged.
 
 Changing a definition here changes what a label means. That needs a new guide version, and labels made under the old version stay tagged with it.

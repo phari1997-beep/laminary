@@ -1,6 +1,6 @@
 # Narrative taxonomy and annotation schema
 
-**Status: v1.1.0.** Owner: data-pipeline. Includes Hari's decisions of 2026-09-26, 2026-09-29 and 2026-09-30 (`docs/DECISIONS.md`). The one remaining **[OPEN]** item (TMDB authorization) is in section 16 and does not block 1.0.0, because the schema already enforces Wikipedia-only input.
+**Status: v1.2.0.** Owner: data-pipeline. Includes Hari's decisions of 2026-09-26, 2026-09-29, 2026-09-30, 2026-10-01 and 2026-10-02 (`docs/DECISIONS.md`). The one remaining **[OPEN]** item (TMDB authorization) is in section 16 and does not block 1.0.0, because the schema already enforces Wikipedia-only input.
 
 - Stored record contract: `pipeline/laminary_pipeline/schema/annotation.schema.json` (JSON Schema draft 2020-12, shipped as package data)
 - Model-facing output schema: derived in code, `laminary_pipeline/model_output.py` (section 11)
@@ -23,6 +23,8 @@ This document is the single source of definitions for the annotation prompt, the
 6. **Series from season articles (decided 2026-10-01).** When a series' main English Wikipedia article fails the 150-word rule or has no plot section, its per-season English Wikipedia articles may be used instead. Season pages are found from the main article's links and from title patterns ("<X> season N", "<X> (season N)", "<X> series N", "List of <X> episodes"), must be main-namespace enwiki pages, and must be verified on Wikidata: the page's item states P179 (part of the series) or P361 (part of) with the series' QID. Unverifiable pages are skipped. From each season page, ingest takes the plot, summary or synopsis sections and a prose season overview, with episode tables dropped, and joins seasons in season order up to about **3,000 words**, stopping at a season boundary (a season that would cross the cap is left out, never cut). Lead block (decided 2026-10-01, replacing the same day's "first-season exception" and "stub season 1 doesn't count" rules; stub threshold raised from 150 to 500 words the same day): a *stub* season is one whose own text is under **500 words** (`STUB_SEASON_WORDS` in `laminary_pipeline/ingest/seasons.py`), judged per season. The first *full* season (500 words or more: season 1, or the first later season when earlier ones are missing, unverified, have no text or are stubs) is used in full together with any stub seasons before it, in order; this lead block may run past the cap up to a hard ceiling of **6,000 words** (for example 300 + 3,500 words, or 300 + 400 + 3,000 words, are both used whole). Over the ceiling (fallback, decided 2026-10-01): when stub seasons lead the block, the full season and every later page are left out and the stubs are used alone, joined under the ~3,000-word cap as stubs only (for example 450 + 5,551 = 6,001 words → season 1 alone, 450 words; 100 + 5,901 → the 100-word stub alone, which fails the 150-word minimum, so too_short). A lone full season over the ceiling, with no stubs before it, skips the title, with no fallback to the episode-list page (ingest skip reason season_too_long). If the lead block is over the cap nothing more is added; otherwise later seasons join under the cap as above. With no full season at all (or when the 20-source limit is reached before one), the stubs join under the cap as usual. Ingest records the threshold in each season record's `season_articles.stub_season_words` (fetcher version 1.2.0; 1.3.0 adds the stubs-alone fallback). The worst-case cost bound prices each request from its actual size, so it covers this; at the ceiling it is about $0.23 per batch attempt (one or several sources) against $0.21 at 3,000 words, because the output cap dominates. The 150-word minimum is a separate rule and still applies to the joined text. Each article is its own source with its own `ref`, `revision`, `content_sha256` and `season`; the request carries one summary block per source, opened by a marker naming the article, which is the season marker. The gate and `verify_request()` check every block, and a change to any source's hash triggers re-annotation (section 10). Before any paid call, the input gate (`check_source_limits()` in `laminary_pipeline/annotate/inputs.py`) also refuses inputs these rules can't produce: more sources than a record may hold (the schema's `provenance.sources.maxItems`, 20); any season-article input (`via: "season_articles"`, several sources, or one with a `season`) over the 6,000-word ceiling; and a lone episode-list page from season articles (no `season`) over the ~3,000-word cap, since ingest only joins one under the cap. The ~3,000-word cap is a joining rule, not an input limit, since a lead block may be several sources up to the ceiling. A single main article has no upper word limit.
 7. **Describe, don't grade.** Text explains the story's shape. No quality judgments.
 8. **Scope (decided 2026-09-26).** Movies, and TV at series level only: one record per whole series, never per episode or season. Ongoing series are annotated on the episodes aired so far and refreshed when the summary changes (section 10).
+9. **Partial season coverage (decided 2026-10-02, prompt `annotate-1.2.0` on).** When a series summary is built from season articles and covers only some seasons (seasons left out over the cap, or missing, unverified or without plot text), the request header states it, for example "Summary covers seasons 1–4 of 7." or, for a run that doesn't start at season 1, "Summary covers seasons 3–6 of 7." The line is built from validated integers only: the season numbers are the sources' `season` fields, and the total is Wikidata's "number of seasons" (P2437, CC0, fetched with the candidate details) when it is a whole number at least as large as every verified season article, otherwise the highest verified season article found. If the total is unknown the line ends without "of N". A summary that covers every season, a main article and an episode-list page get no line. `verify_request()` rebuilds the line and checks the header exactly. The prompt tells the model to annotate only the covered run and never to judge an ending it can't see. The record stores the same facts in `provenance.coverage` (section 10), and gold labelers see the line in the sheet's "summary_coverage" column (the summary text files stay byte-identical to the model's summary blocks).
+10. **Non-plot text in series sections (decided 2026-10-02).** A series article's plot heading may hold production, ratings, broadcast or reception text. Ingest keeps only plot-like parts: subsections whose headings name non-plot content are dropped; under an "Episodes", "Seasons" or "Series overview" heading only season, part, arc and plot subsections are kept, and the text directly under "Episodes"/"Seasons" is dropped as the episode-list lead; parts that are mostly production writing (by a list of cue words) are dropped; and such a broad section that keeps under half its words doesn't count as a plot section at all. The 150-word rule and the season-article fallback then apply as usual. What was dropped, and why, is recorded in the plot file. MediaWiki error messages ("Cite error: ...") are stripped by their HTML class. Film plot sections are used whole.
 
 TMDB's written authorization for LLM use is **[OPEN]**, owned by Hari (section 16). Until TMDB authorizes it in writing, the rule above stands.
 
@@ -34,7 +36,7 @@ TMDB's written authorization for LLM use is **[OPEN]**, owned by Hari (section 1
 schema_version        "1.0.0"
 record_kind           llm_annotation | gold_label | illustrative_example
 title                 media_type, name, release_year, tmdb_id, wikidata_id, series_status (TV only)
-provenance            annotated_at, annotator{...}, sources[...], input_word_count, usage{...}, notes
+provenance            annotated_at, annotator{...}, sources[...], input_word_count, usage{...}, notes, coverage{...}
 outcome               annotated | abstained
 abstain_reason        (only when abstained)
 layers                (only when annotated)
@@ -404,6 +406,14 @@ The `input_license` subset is what LLM and gold records may cite, together with 
 
 `provenance.usage` records token counts per title (and whether the Batch API was used) so cost per title is known after every run; it is required on LLM records. `provenance.notes` is internal only.
 
+`provenance.coverage` (schema 1.2.0, optional) records a partial season-article summary (section 1 item 9): `seasons` (the season numbers covered, equal to the sources' `season` fields), `total_seasons` and `total_seasons_basis` when the total is known, and `statement`, the exact header line the annotator saw. It is absent when the summary is not known to be partial. Display: a title page for such a record should say the analysis covers only those seasons.
+
+<!-- vocab:season_total_basis -->
+| Value | Name | Definition |
+|---|---|---|
+| `wikidata_P2437` | Wikidata number of seasons | The series' Wikidata "number of seasons" (P2437, CC0), used when it is a whole number at least as large as every verified season article. |
+| `verified_season_pages` | Verified season articles | The highest season number among the season articles that Wikidata places in the series (P179/P361), used when P2437 is missing or smaller. |
+
 <!-- vocab:outcome -->
 | Value | Name | Definition |
 |---|---|---|
@@ -453,6 +463,7 @@ Implemented in `annotation.semantic_errors()` and run by `validate_record()` on 
 2. `evidence` lists each tag at most once, and only tags judged present.
 3. For a derived `emotional_arc`: `label`, `threshold_used`, `net_change_fallback` and `reduced_shape` equal what the rule in section 8 gives for `arc_points`, and a flagged label has confidence below 0.5.
 4. For LLM records: `input_word_count` equals the sum of `sources[].word_count`.
+6. `provenance.coverage` (schema 1.2.0): `seasons` are in increasing order and equal to the sources' `season` numbers; `total_seasons` comes with `total_seasons_basis` and is at least the highest covered season.
 5. Date-times are checked as RFC 3339 (the validator registers its own `date-time` format check, because jsonschema skips it without an optional package).
 
 Done at ingestion, not here: `tmdb_id` exists in TMDB and its title and year match.
@@ -461,13 +472,15 @@ Done at ingestion, not here: `tmdb_id` exists in TMDB and its title and year mat
 
 ## 13. Versioning
 
-`schema_version` is semantic versioning, fixed by `const` in the schema so a record can't claim a version it doesn't conform to. The current version is 1.0.0.
+`schema_version` is semantic versioning, fixed by `const` in the schema so a record can't claim a version it doesn't conform to. The current version is 1.2.0.
 
 - **Major** (1.0.0 → 2.0.0): a field or term is removed, renamed or redefined. Old records must be migrated or re-annotated. Backend is told first; they own the migration.
 - **Minor** (1.0.0 → 1.1.0): a new optional field or a new vocabulary term. For fixed-key judgments a new term is a new required key, so old records validate against their own version only. They are treated as **not assessed** for the new term until re-run, never as "absent".
 - **Patch** (1.0.0 → 1.0.1): wording in this document only, with no change to what a label means.
 
 `prompt_version` changes whenever the annotation prompt text changes (including definition wording pulled from this document), and `model_version` records the exact model id. Evaluation results are always reported per (schema_version, prompt_version, model_version).
+
+**Changelog, 1.1.0 → 1.2.0 (2026-10-02, DECISIONS 2026-10-02):** `provenance` gains an optional `coverage` object (`seasons`, `total_seasons`, `total_seasons_basis`, `statement`) and the vocabulary `season_total_basis`, for series summaries that cover only some seasons (section 1 item 9); semantic check 6 in section 12. A minor change: no field is removed or renamed. Records at 1.1.0 validate against 1.1.0 only; none exist outside tests (no LLM or gold run has happened), and no database table uses these fields yet. Backend mirrors `provenance.coverage` when it builds the tables, and frontend may show "covers seasons 1–4 of 7" on title pages.
 
 **Changelog, 1.0.0 → 1.1.0 (2026-09-30, DECISIONS 2026-09-30):** `series_status` gains `unknown`; a missing Wikidata end date now means `unknown`, not `ongoing` (section 10 says what counts as evidence). The `ref` pattern for LLM and gold sources is tightened from any `https://en.wikipedia.org/` URL to an article URL, `^https://en\.wikipedia\.org/wiki/[^\s?#<>\[\]{}|"]+$`, the same pattern the input gate (`require_wikipedia_sources()`) enforces. Sources gain an optional `season` (DECISIONS 2026-10-01, season articles), and `provenance.sources` may hold up to 20 entries instead of 5. All are minor changes: no field is removed or renamed. Records at 1.0.0 validate against 1.0.0 only. None exist outside tests yet, and no database table uses these fields yet; backend mirrors both changes when it builds the tables.
 

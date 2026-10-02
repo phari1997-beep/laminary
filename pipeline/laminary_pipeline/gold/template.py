@@ -18,6 +18,11 @@ Three files (one per tab; File > Import > "Insert new sheet(s)" for each):
   tables, captions, hatnotes and notes that ingest strips (``ingest/text.py``), and a TV
   series' episode tables are dropped. The revision link stays in the sheet for attribution.
   These files hold CC BY-SA text and live under the gitignored data directory.
+- ``summary_coverage`` (sheet column, guide 1.4.0, DECISIONS 2026-10-02): for a series summary
+  that covers only some seasons, the exact line the annotate-1.2.0 request header carries
+  ("Summary covers seasons 1–4 of 7."; ``prompt.labeler_coverage``), else empty. It is a column,
+  not a header in the text file, so the text files stay byte-identical to the model's summary
+  blocks.
 - ``texts/manifest.csv``: one row per text file (filename, qid, title, sha256, word_count), so
   the ``texts`` folder can be uploaded to the Drive Laminary folder as is (DECISIONS
   2026-09-30) and checked after upload. Stale ``Q*.txt`` files from earlier runs are removed,
@@ -38,6 +43,7 @@ from pathlib import Path
 from typing import Any
 
 from laminary_pipeline.annotate.inputs import (
+    GatedInput,
     GateError,
     InputFormatError,
     NotAnnotatable,
@@ -46,8 +52,9 @@ from laminary_pipeline.annotate.inputs import (
     gate,
     ingest_sources,
     ingest_via,
+    parse_coverage,
 )
-from laminary_pipeline.annotate.prompt import labeler_text
+from laminary_pipeline.annotate.prompt import labeler_coverage, labeler_text
 from laminary_pipeline.gold.columns import (
     ALL_COLUMNS,
     GUIDE_VERSION,
@@ -80,6 +87,9 @@ README_LINES = [
     "   in the Laminary Drive folder) and read ONLY that text. It is exactly",
     "   what the model reads. Don't label from the Wikipedia page (wikipedia_revision_link",
     "   is there for attribution) and don't use anything you know about the film or show.",
+    "   If summary_coverage is filled (e.g. 'Summary covers seasons 1–4 of 7.'), the text",
+    "   stops before the series does: label only what it covers and never judge an ending",
+    "   you can't see (guide rule on partial coverage). The model gets the same line.",
     "3. Fill every white column: primary_plot, the 9 plot_ columns (Y/N), blueprint,",
     "   the 12 stage_ columns (Y/N), arc_shape (or all 11 arc_t points), the 10 tag_",
     "   columns (Y/N) and confidence. notes is optional.",
@@ -96,10 +106,10 @@ README_LINES = [
 MULTI_SEP = " | "  # separates per-source values in the source_* columns
 
 
-def labeler_text_for(plot: dict[str, Any]) -> str:
-    """The text file for one ok plot file: its sources gated exactly like annotation input
-    (Wikipedia-only, hashes, word counts, 150 words), then ``prompt.labeler_text``. Raises
-    GateError or InputFormatError if the model could not be sent this text."""
+def _gated(plot: dict[str, Any]) -> GatedInput:
+    """One ok plot file's sources gated exactly like annotation input (Wikipedia-only, hashes,
+    word counts, 150 words, season coverage). Raises GateError or InputFormatError if the
+    model could not be sent this text."""
     sources = []
     for src in ingest_sources(plot):
         if not isinstance(src.get("text"), str):
@@ -107,8 +117,20 @@ def labeler_text_for(plot: dict[str, Any]) -> str:
         sources.append(PlotSource({k: v for k, v in src.items() if k != "text"}, src["text"]))
     cand = plot.get("candidate") or {}
     title = {"media_type": cand.get("media_type"), "tmdb_id": cand.get("tmdb_id")}
-    return labeler_text(gate(PlotInput(title, tuple(sources), plot.get("qid", "plot file"),
-                                       via=ingest_via(plot))))
+    origin = plot.get("qid", "plot file")
+    total, basis = parse_coverage(plot.get("coverage"), sources, origin)
+    return gate(PlotInput(title, tuple(sources), origin, via=ingest_via(plot),
+                          season_total=total, season_total_basis=basis))
+
+
+def labeler_text_for(plot: dict[str, Any]) -> str:
+    """The text file for one ok plot file (``prompt.labeler_text`` of the gated input)."""
+    return labeler_text(_gated(plot))
+
+
+def labeler_coverage_for(plot: dict[str, Any]) -> str:
+    """The ``summary_coverage`` cell for one ok plot file (``prompt.labeler_coverage``)."""
+    return labeler_coverage(_gated(plot))
 
 
 def template_rows(
@@ -124,6 +146,7 @@ def template_rows(
             continue
         try:
             labeler_text_for(plot)
+            coverage = labeler_coverage_for(plot)
             sources = ingest_sources(plot)
         except (GateError, InputFormatError, NotAnnotatable) as e:
             reason = "plot text doesn't match its sha256" if "sha256" in str(e) else str(e)
@@ -149,6 +172,7 @@ def template_rows(
                 else plot["section"]["heading"].capitalize()
             ),
             word_count=str(plot["word_count"]),
+            summary_coverage=coverage,
             series_status=effective_series_status(cand) or "",
             tmdb_id=str(sel["tmdb_id"]),
             source_ref=joined("ref"),

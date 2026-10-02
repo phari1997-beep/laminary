@@ -71,7 +71,7 @@ def test_single_success_writes_a_valid_record_with_provenance(env) -> None:
     assert ann == {
         "model_version": MODEL, "prompt_version": DEFAULT_PROMPT_VERSION, "run_id": run.run_id
     }
-    assert DEFAULT_PROMPT_VERSION == "annotate-1.1.0"
+    assert DEFAULT_PROMPT_VERSION == "annotate-1.2.0"
     assert rec["provenance"]["usage"] == {
         "input_tokens": 1000,
         "output_tokens": 2000,

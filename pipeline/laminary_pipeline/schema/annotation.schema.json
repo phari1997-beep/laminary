@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:laminary:schema:annotation:1.1.0",
+  "$id": "urn:laminary:schema:annotation:1.2.0",
   "title": "Laminary title annotation",
-  "description": "Version 1.1.0. Stored contract for one title's narrative annotation (movie, or whole TV series at series level). Definitions: docs/NARRATIVE_SCHEMA.md. Display rule: text under any 'safe_text' key may always be shown; text under any 'spoiler_text' key is hidden unless the viewer opts in; labels carry the levels in 'x-laminary-spoiler-levels'. The model-facing output schema is derived from this file by laminary_pipeline.model_output.",
+  "description": "Version 1.2.0. Stored contract for one title's narrative annotation (movie, or whole TV series at series level). Definitions: docs/NARRATIVE_SCHEMA.md. Display rule: text under any 'safe_text' key may always be shown; text under any 'spoiler_text' key is hidden unless the viewer opts in; labels carry the levels in 'x-laminary-spoiler-levels'. The model-facing output schema is derived from this file by laminary_pipeline.model_output.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -15,7 +15,7 @@
   "properties": {
     "schema_version": {
       "description": "Schema version the record conforms to.",
-      "const": "1.1.0"
+      "const": "1.2.0"
     },
     "record_kind": {
       "$ref": "#/$defs/record_kind"
@@ -414,6 +414,13 @@
         "TMDB-API-terms"
       ]
     },
+    "season_total_basis": {
+      "description": "Where a series' season total came from: Wikidata 'number of seasons' (P2437, CC0), else the highest verified per-season article (schema 1.2.0).",
+      "enum": [
+        "wikidata_P2437",
+        "verified_season_pages"
+      ]
+    },
     "input_license": {
       "enum": [
         "CC-BY-SA-4.0",
@@ -757,6 +764,43 @@
           "description": "Internal provenance note. Never shown to users.",
           "type": "string",
           "maxLength": 500
+        },
+        "coverage": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Seasons the summary covers, when a series summary built from per-season articles leaves seasons out (schema 1.2.0, prompt annotate-1.2.0 on). Absent when the summary is not known to be partial. 'statement' is the exact line the annotator saw.",
+          "required": [
+            "seasons",
+            "statement"
+          ],
+          "properties": {
+            "seasons": {
+              "description": "Season numbers covered, in increasing order; equal to the sources' season fields.",
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 100
+              },
+              "minItems": 1,
+              "maxItems": 20
+            },
+            "total_seasons": {
+              "description": "The series' number of seasons, when known.",
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            },
+            "total_seasons_basis": {
+              "$ref": "#/$defs/season_total_basis"
+            },
+            "statement": {
+              "description": "The header line, e.g. 'Summary covers seasons 1–4 of 7.'",
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            }
+          }
         }
       }
     },

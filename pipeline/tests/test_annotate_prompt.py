@@ -86,7 +86,7 @@ def request_for(plot, model="claude-opus-5-5", prompt_obj=None):
 
 
 def test_prompt_is_pinned_and_versioned(prompt) -> None:
-    assert prompt.version == "annotate-1.1.0"
+    assert prompt.version == "annotate-1.2.0"
     assert prompt.sha256 == PINNED_PROMPTS[prompt.version].sha256
     assert not prompt.body.startswith("---")
     for version in PINNED_PROMPTS:  # released versions stay loadable, for reproducibility

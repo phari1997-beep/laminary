@@ -22,10 +22,20 @@ it, so the behaviour stays defined if the schema ever makes the year optional. T
 display name is never sent, so the model reads only the summary (docs/NARRATIVE_SCHEMA.md
 section 1).
 
+From annotate-1.2.0 on (DECISIONS 2026-10-02), a series summary built from season articles that
+covers only some seasons gets one more header line, e.g. "Summary covers seasons 1–4 of 7."
+(``prompt_coverage``). It is built from validated integers only: the season numbers are the
+sources' schema-checked ``season`` fields, and the total is the plot file's
+``coverage.total_seasons`` (Wikidata P2437, else the highest verified season page; checked in
+``inputs.parse_plot``). With no known total the line drops "of N". A summary that covers every
+season, a main article, or an episode-list page gets no line. The record stores the same
+coverage in ``provenance.coverage`` and gold labelers see the line in the sheet's
+``summary_coverage`` column.
+
 ``verify_request`` re-checks the built request block by block: the system prompt is the pinned
 body, every non-source block equals its expected constant, the header rebuilt from the
-validated year, or a marker rebuilt from the validated ref, and every source block passes the
-hash and word-count checks.
+validated year and season coverage, or a marker rebuilt from the validated ref, and every source
+block passes the hash and word-count checks.
 
 What the hash check proves: ``content_sha256`` and ``word_count`` come from the same local plot
 file as the text, so a match shows the text is internally consistent and unchanged since
@@ -52,6 +62,8 @@ from laminary_pipeline.annotate.inputs import (
     gate,
 )
 from laminary_pipeline.annotation import wikipedia_article_title as _article_title
+from laminary_pipeline.ingest.seasons import MAX_SEASON_NUMBER
+from laminary_pipeline.ingest.wikipedia import VIA_SEASON_ARTICLES
 from laminary_pipeline.model_output import model_output_schema
 
 
@@ -59,6 +71,8 @@ class PinnedPrompt(NamedTuple):
     filename: str
     sha256: str  # of the body sent
     sends_release_year: bool  # the user-message header carries "Release year: <year>"
+    # the header carries "Summary covers seasons ..." for a partial series summary
+    sends_coverage: bool = False
 
 
 # prompt_version -> pinned file. Editing a prompt without adding a new version here fails
@@ -73,6 +87,12 @@ PINNED_PROMPTS: dict[str, PinnedPrompt] = {
         "annotate_v1_1.md",
         "f481bcdb60b7802339a8f4b2e8ad57488c690bd03a15a8459705c3856ea2d397",
         sends_release_year=True,
+    ),
+    "annotate-1.2.0": PinnedPrompt(
+        "annotate_v1_2.md",
+        "318edac192004309e1d4ef0c0588a5c5aa4f8eef3fdf696836f2842280365031",
+        sends_release_year=True,
+        sends_coverage=True,
     ),
 }
 MIN_RELEASE_YEAR = 1880
@@ -99,6 +119,10 @@ class Prompt:
     def sends_release_year(self) -> bool:
         return PINNED_PROMPTS[self.version].sends_release_year
 
+    @property
+    def sends_coverage(self) -> bool:
+        return PINNED_PROMPTS[self.version].sends_coverage
+
 
 def split_front_matter(raw: str) -> tuple[dict[str, str], str]:
     if not raw.startswith("---\n"):
@@ -114,7 +138,7 @@ def split_front_matter(raw: str) -> tuple[dict[str, str], str]:
 def load_prompt(version: str, prompts_dir: Path = PROMPTS_DIR) -> Prompt:
     if version not in PINNED_PROMPTS:
         raise PromptError(f"unknown prompt version {version!r}; known: {sorted(PINNED_PROMPTS)}")
-    filename, pinned, _ = PINNED_PROMPTS[version]
+    filename, pinned = PINNED_PROMPTS[version][:2]
     path = prompts_dir / filename
     meta, body = split_front_matter(path.read_text(encoding="utf-8"))
     if meta.get("prompt_version") != version:
@@ -169,6 +193,56 @@ def prompt_release_year(title: dict[str, Any]) -> int | None:
     return year
 
 
+def _plain_int(value: Any) -> bool:
+    return type(value) is int
+
+
+def format_seasons(seasons: list[int]) -> str:
+    """[1, 2, 3, 4] -> "seasons 1–4"; [3] -> "season 3"; [1, 2, 4] -> "seasons 1–2 and 4"."""
+    runs: list[list[int]] = []
+    for n in seasons:
+        if runs and n == runs[-1][-1] + 1:
+            runs[-1].append(n)
+        else:
+            runs.append([n])
+    parts = [f"{r[0]}–{r[-1]}" if len(r) > 1 else str(r[0]) for r in runs]
+    joined = parts[0] if len(parts) == 1 else ", ".join(parts[:-1]) + " and " + parts[-1]
+    return ("season " if len(seasons) == 1 else "seasons ") + joined
+
+
+def prompt_coverage(plot: PlotInput) -> dict[str, Any] | None:
+    """The season coverage to state for a partial series summary, or None (see the module
+    docstring). Returns {"seasons", "total_seasons" (when known), "total_seasons_basis" (when
+    known), "statement"}. Raises GateError on season numbers that aren't plain ints in
+    increasing order from 1 to MAX_SEASON_NUMBER, or a total below the highest season."""
+    if plot.via != VIA_SEASON_ARTICLES:
+        return None
+    raw = [src.meta.get("season") for src in plot.sources]
+    if all(s is None for s in raw):
+        return None  # an episode-list page: no season numbers
+    if not all(_plain_int(s) and 1 <= s <= MAX_SEASON_NUMBER for s in raw):
+        raise GateError(f"{plot.key}: season numbers {raw!r} are not all whole season numbers")
+    seasons = [int(s) for s in raw if s is not None]
+    if any(b <= a for a, b in zip(seasons, seasons[1:], strict=False)):
+        raise GateError(f"{plot.key}: season numbers {seasons} are not in increasing order")
+    total = plot.season_total
+    if total is not None and not (_plain_int(total) and max(seasons) <= total
+                                  <= MAX_SEASON_NUMBER):
+        raise GateError(f"{plot.key}: total seasons {total!r} is not a whole number from "
+                        f"{max(seasons)} to {MAX_SEASON_NUMBER}")
+    if total is not None and seasons == list(range(1, total + 1)):
+        return None  # every season is covered
+    statement = f"Summary covers {format_seasons(seasons)}" + (
+        f" of {total}." if total is not None else ".")
+    out: dict[str, Any] = {"seasons": seasons}
+    if total is not None:
+        out["total_seasons"] = total
+        if plot.season_total_basis is not None:
+            out["total_seasons_basis"] = plot.season_total_basis
+    out["statement"] = statement
+    return out
+
+
 def _header(gated: GatedInput, prompt: Prompt) -> str:
     plot = gated.plot
     n = len(plot.sources)
@@ -177,6 +251,10 @@ def _header(gated: GatedInput, prompt: Prompt) -> str:
         year = prompt_release_year(plot.title)
         if year is not None:
             lines.append(f"Release year: {year}")
+    if prompt.sends_coverage:
+        coverage = prompt_coverage(plot)
+        if coverage is not None:
+            lines.append(coverage["statement"])
     lines.append(f"The plot summary follows in {n} part{'s' if n > 1 else ''}.")
     return "\n".join(lines)
 
@@ -189,6 +267,13 @@ def _user_content(gated: GatedInput, prompt: Prompt) -> list[dict[str, Any]]:
         blocks.append({"type": "text", "text": CLOSE_MARKER})
     blocks.append({"type": "text", "text": INSTRUCTION})
     return blocks
+
+
+def labeler_coverage(gated: GatedInput) -> str:
+    """The coverage line for the gold sheet's ``summary_coverage`` column: the same statement
+    the annotate-1.2.0 header carries, or "" when the summary isn't partial."""
+    coverage = prompt_coverage(gated.plot)
+    return coverage["statement"] if coverage else ""
 
 
 def labeler_text(gated: GatedInput) -> str:

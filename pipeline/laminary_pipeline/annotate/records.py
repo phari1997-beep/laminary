@@ -19,6 +19,7 @@ from jsonschema import Draft202012Validator
 
 from laminary_pipeline.annotate.client import Response, Usage
 from laminary_pipeline.annotate.inputs import GatedInput
+from laminary_pipeline.annotate.prompt import PINNED_PROMPTS, prompt_coverage
 from laminary_pipeline.annotation import validate_record
 from laminary_pipeline.model_output import model_output_schema, to_record
 
@@ -63,7 +64,7 @@ def build_provenance(
         f"cache_creation_input_tokens={usage.cache_creation_input_tokens}; "
         f"request_id={request_id}"
     )
-    return {
+    out: dict[str, Any] = {
         "annotated_at": now_rfc3339(),
         "annotator": {
             "model_version": ctx.model,
@@ -80,6 +81,13 @@ def build_provenance(
         },
         "notes": _clip(notes, 500),
     }
+    # The season coverage the request header stated (annotate-1.2.0 on), so the record says
+    # the model saw only those seasons (DECISIONS 2026-10-02).
+    pinned = PINNED_PROMPTS.get(ctx.prompt_version)
+    coverage = prompt_coverage(gated.plot) if pinned and pinned.sends_coverage else None
+    if coverage is not None:
+        out["coverage"] = coverage
+    return out
 
 
 def interpret(
