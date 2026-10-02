@@ -47,7 +47,8 @@ def series_plot(
         text = season_text(n)
         meta = source_meta(text, ref=f"https://en.wikipedia.org/wiki/Tidewater_season_{n}",
                            season=n)
-        sources.append({"page_title": f"Tidewater season {n}", "source": meta, "text": text})
+        sources.append({"page_title": f"Tidewater season {n}", "source": meta, "text": text,
+                        "permalink": f"https://en.wikipedia.org/w/index.php?oldid={n}"})
     plot: dict[str, Any] = {
         "fetcher_version": "1.4.0", "qid": "Q9100000", "status": "ok", "skip_reason": None,
         "via": "season_articles",
@@ -78,8 +79,8 @@ def test_1_2_0_is_pinned_sends_coverage_and_1_1_0_still_loads() -> None:
     assert not PINNED_PROMPTS["annotate-1.1.0"].sends_coverage
     body = load_prompt("annotate-1.2.0").body
     assert "Summary covers seasons 1–4 of 7." in body
-    assert "you cannot see how the series ends" in body
-    assert "Never infer, predict or fill in what happens in the seasons" in body
+    assert "whether they come at the start, in the middle or at the end" in body
+    assert "not the ending if the last season isn't covered" in body
     assert load_prompt("annotate-1.1.0").version == "annotate-1.1.0"
 
 
@@ -89,7 +90,6 @@ def test_1_2_0_is_pinned_sends_coverage_and_1_1_0_still_loads() -> None:
         ([1, 2, 3, 4], 7, "Summary covers seasons 1–4 of 7."),  # Mad Men-like
         ([1, 2, 3, 4, 5], 7, "Summary covers seasons 1–5 of 7."),  # Pretty Little Liars-like
         ([3, 4, 5, 6], 6, "Summary covers seasons 3–6 of 6."),  # iCarly-like: 1-2 missing
-        ([3, 4, 5, 6], None, "Summary covers seasons 3–6."),  # total unknown
         ([1, 2, 4], 5, "Summary covers seasons 1–2 and 4 of 5."),
         ([2], 3, "Summary covers season 2 of 3."),
         ([1, 3, 5], 5, "Summary covers seasons 1, 3 and 5 of 5."),
@@ -108,9 +108,66 @@ def test_full_coverage_and_other_inputs_get_no_line() -> None:
     full = header(series_plot([1, 2, 3], 3))
     assert "Summary covers" not in full
     assert full == f"{SERIES_TYPE}\nRelease year: 2019\nThe plot summary follows in 3 parts."
-    no_cov = series_plot([1, 2], 7)
-    del no_cov["coverage"]  # a plot file from before fetcher 1.4.0: total unknown
-    assert "Summary covers seasons 1–2.\n" in header(no_cov)
+
+
+# --- stale plot files (QA should-fix 1) -------------------------------------------------------
+
+
+def stale(plot: dict[str, Any], version: str = "1.3.0") -> dict[str, Any]:
+    """A plot file as fetcher 1.3.0 wrote it: no coverage key."""
+    out = copy.deepcopy(plot)
+    out["fetcher_version"] = version
+    out.pop("coverage", None)
+    return out
+
+
+@pytest.mark.parametrize("seasons", [[1, 2, 3, 4, 5, 6, 7, 8], [1, 2, 3, 4]])
+def test_stale_season_files_are_refused_by_1_2_0(seasons: list[int]) -> None:
+    """Brooklyn Nine-Nine (all 8 seasons) used to get "Summary covers seasons 1–8." from a
+    pre-1.4.0 file: wrong, since nothing is missing. Now the file is refused instead."""
+    with pytest.raises(GateError, match="fetcher '1.3.0'"):
+        request(stale(series_plot(seasons, 8)))
+    no_cov = series_plot(seasons, 8)
+    del no_cov["coverage"]  # current version but no coverage: refused too
+    with pytest.raises(GateError, match="no coverage total"):
+        request(no_cov)
+
+
+def test_stale_files_of_any_kind_are_refused_by_1_2_0_but_not_1_1_0() -> None:
+    from annotate_support import ingest_plot
+
+    film = ingest_plot()
+    for version in ("1.3.0", "1.3", "1.4.0-rc1", "x"):
+        with pytest.raises(GateError, match="needs 1.4.0"):
+            request({**film, "fetcher_version": version})
+    no_version = dict(film)
+    del no_version["fetcher_version"]
+    with pytest.raises(GateError, match="fetcher '0'"):
+        request(no_version)
+    assert header({**film, "fetcher_version": "1.10.0"}).startswith("Work type: film")
+    # annotate-1.1.0 stays as it was: stale files build, with no coverage line
+    assert header(stale(series_plot([1, 2, 3, 4], 7)), "annotate-1.1.0") == (
+        f"{SERIES_TYPE}\nRelease year: 2019\nThe plot summary follows in 4 parts.")
+    assert header({**film, "fetcher_version": "1.0.0"}, "annotate-1.1.0").startswith(
+        "Work type: film")
+
+
+def test_verify_request_rechecks_the_fetcher_version() -> None:
+    gated, params = request(series_plot([1, 2, 3, 4], 7))
+    old = type(gated)(dataclasses.replace(gated.plot, fetcher_version="1.3.0"))
+    with pytest.raises(GateError, match="needs 1.4.0"):
+        verify_request(params, old, load_prompt("annotate-1.2.0"))
+
+
+def test_gold_template_skips_stale_season_files() -> None:
+    from laminary_pipeline.gold.template import template_rows
+
+    sel = [{"qid": "Q9100000", "title": "Tidewater", "year": 2019, "media_type": "tv_series",
+            "tmdb_id": 91000}]
+    rows, skipped = template_rows(sel, {"Q9100000": stale(series_plot([1, 2, 3, 4], 7))})
+    assert rows == [] and "no coverage total" in skipped[0]
+    rows, skipped = template_rows(sel, {"Q9100000": series_plot([1, 2, 3, 4], 7)})
+    assert skipped == [] and rows[0]["summary_coverage"] == "Summary covers seasons 1–4 of 7."
 
 
 def test_annotate_1_1_0_header_is_unchanged() -> None:

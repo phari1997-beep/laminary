@@ -53,7 +53,7 @@ def ingest_plot(
 ) -> dict[str, Any]:
     """A plot file in the ingest agent's shape (data/plots/<QID>.json)."""
     return {
-        "fetcher_version": "1.0.0",
+        "fetcher_version": "1.4.0",
         "qid": qid,
         "status": "ok",
         "skip_reason": None,

@@ -99,6 +99,9 @@ class PlotInput:
     # file's ``coverage`` (validated in parse_plot) and where it came from
     season_total: int | None = None
     season_total_basis: str | None = None
+    # ingest's fetcher_version for an ingest plot file ("0" when the file has none); None for
+    # the generic shape. annotate-1.2.0 refuses files from before fetcher 1.4.0.
+    fetcher_version: str | None = None
 
     @property
     def key(self) -> str:
@@ -129,7 +132,8 @@ def _from_ingest_shape(obj: dict[str, Any], origin: str) -> dict[str, Any]:
     }
     if cand.get("media_type") == "tv_series":
         title["series_status"] = effective_series_status(cand)
-    out = {"title": title, "sources": ingest_sources(obj), "via": ingest_via(obj)}
+    out = {"title": title, "sources": ingest_sources(obj), "via": ingest_via(obj),
+           "fetcher_version": str(obj.get("fetcher_version") or "0")}
     if "coverage" in obj:
         out["coverage"] = obj["coverage"]
     return out
@@ -212,9 +216,11 @@ def parse_plot(obj: Any, origin: str) -> PlotInput:
         parsed.append(PlotSource(meta=meta, text=src["text"]))
     via = obj.get("via")
     total, basis = parse_coverage(obj.get("coverage"), parsed, origin)
+    fetcher = obj.get("fetcher_version")
     return PlotInput(title=title, sources=tuple(parsed), origin=origin,
                      via=via if isinstance(via, str) else None,
-                     season_total=total, season_total_basis=basis)
+                     season_total=total, season_total_basis=basis,
+                     fetcher_version=fetcher if isinstance(fetcher, str) else None)
 
 
 def iter_plot_files(plots_dir: Path) -> Iterator[tuple[Any, str]]:

@@ -27,8 +27,12 @@ covers only some seasons gets one more header line, e.g. "Summary covers seasons
 (``prompt_coverage``). It is built from validated integers only: the season numbers are the
 sources' schema-checked ``season`` fields, and the total is the plot file's
 ``coverage.total_seasons`` (Wikidata P2437, else the highest verified season page; checked in
-``inputs.parse_plot``). With no known total the line drops "of N". A summary that covers every
-season, a main article, or an episode-list page gets no line. The record stores the same
+``inputs.parse_plot``). Fetcher 1.4.0 always records the total, so a season-article file without
+one is stale and refused (GateError), as is any ingest plot file from before fetcher 1.4.0
+when the prompt sends coverage (``require_current_ingest``): those files predate the non-plot
+filter and the coverage data, and would get a wrong or missing line. annotate-1.1.0 requests
+are unaffected. A summary that covers every season, a main article, or an episode-list page
+gets no line. The record stores the same
 coverage in ``provenance.coverage`` and gold labelers see the line in the sheet's
 ``summary_coverage`` column.
 
@@ -90,7 +94,7 @@ PINNED_PROMPTS: dict[str, PinnedPrompt] = {
     ),
     "annotate-1.2.0": PinnedPrompt(
         "annotate_v1_2.md",
-        "318edac192004309e1d4ef0c0588a5c5aa4f8eef3fdf696836f2842280365031",
+        "ca27e8eb20e6e55dd65f034487a691394caa74a1732477dcb31f230ed4545b85",
         sends_release_year=True,
         sends_coverage=True,
     ),
@@ -197,6 +201,29 @@ def _plain_int(value: Any) -> bool:
     return type(value) is int
 
 
+MIN_FETCHER_FOR_COVERAGE = (1, 4, 0)
+
+
+def _version_tuple(version: str) -> tuple[int, ...] | None:
+    parts = version.split(".")
+    if not all(p.isdigit() for p in parts):
+        return None
+    return tuple(int(p) for p in parts)
+
+
+def require_current_ingest(plot: PlotInput) -> None:
+    """For prompts that send coverage (annotate-1.2.0 on): refuse an ingest plot file from
+    before fetcher 1.4.0 (no non-plot filter, no coverage data). The generic input shape has
+    no fetcher version and is not checked."""
+    if plot.fetcher_version is None:
+        return
+    got = _version_tuple(plot.fetcher_version)
+    if got is None or got < MIN_FETCHER_FOR_COVERAGE:
+        need = ".".join(map(str, MIN_FETCHER_FOR_COVERAGE))
+        raise GateError(f"{plot.key}: plot file from fetcher {plot.fetcher_version!r}, "
+                        f"annotate-1.2.0 needs {need} or later: re-run ingest plots --refresh")
+
+
 def format_seasons(seasons: list[int]) -> str:
     """[1, 2, 3, 4] -> "seasons 1–4"; [3] -> "season 3"; [1, 2, 4] -> "seasons 1–2 and 4"."""
     runs: list[list[int]] = []
@@ -212,9 +239,10 @@ def format_seasons(seasons: list[int]) -> str:
 
 def prompt_coverage(plot: PlotInput) -> dict[str, Any] | None:
     """The season coverage to state for a partial series summary, or None (see the module
-    docstring). Returns {"seasons", "total_seasons" (when known), "total_seasons_basis" (when
-    known), "statement"}. Raises GateError on season numbers that aren't plain ints in
-    increasing order from 1 to MAX_SEASON_NUMBER, or a total below the highest season."""
+    docstring). Returns {"seasons", "total_seasons", "total_seasons_basis", "statement"}.
+    Raises GateError on season numbers that aren't plain ints in increasing order from 1 to
+    MAX_SEASON_NUMBER, on a missing total (a stale plot file), or a total below the highest
+    season."""
     if plot.via != VIA_SEASON_ARTICLES:
         return None
     raw = [src.meta.get("season") for src in plot.sources]
@@ -226,20 +254,18 @@ def prompt_coverage(plot: PlotInput) -> dict[str, Any] | None:
     if any(b <= a for a, b in zip(seasons, seasons[1:], strict=False)):
         raise GateError(f"{plot.key}: season numbers {seasons} are not in increasing order")
     total = plot.season_total
-    if total is not None and not (_plain_int(total) and max(seasons) <= total
-                                  <= MAX_SEASON_NUMBER):
+    if total is None:
+        raise GateError(f"{plot.key}: season-article plot file has no coverage total (written "
+                        "before fetcher 1.4.0): re-run ingest plots --refresh")
+    if not (_plain_int(total) and max(seasons) <= total <= MAX_SEASON_NUMBER):
         raise GateError(f"{plot.key}: total seasons {total!r} is not a whole number from "
                         f"{max(seasons)} to {MAX_SEASON_NUMBER}")
-    if total is not None and seasons == list(range(1, total + 1)):
+    if seasons == list(range(1, total + 1)):
         return None  # every season is covered
-    statement = f"Summary covers {format_seasons(seasons)}" + (
-        f" of {total}." if total is not None else ".")
-    out: dict[str, Any] = {"seasons": seasons}
-    if total is not None:
-        out["total_seasons"] = total
-        if plot.season_total_basis is not None:
-            out["total_seasons_basis"] = plot.season_total_basis
-    out["statement"] = statement
+    out: dict[str, Any] = {"seasons": seasons, "total_seasons": total}
+    if plot.season_total_basis is not None:
+        out["total_seasons_basis"] = plot.season_total_basis
+    out["statement"] = f"Summary covers {format_seasons(seasons)} of {total}."
     return out
 
 
@@ -311,6 +337,8 @@ def build_request(
     if model not in MODELS:
         raise ValueError(f"unknown model {model!r}; known: {sorted(MODELS)}")
     gated = gate(plot)
+    if prompt.sends_coverage:
+        require_current_ingest(gated.plot)  # before the header is built
     output_config: dict[str, Any] = {
         "format": {"type": "json_schema", "schema": model_output_schema()}
     }
@@ -347,6 +375,8 @@ def verify_request(params: dict[str, Any], gated: GatedInput, prompt: Prompt) ->
     system = params.get("system")
     if not isinstance(system, list) or len(system) != 1 or system[0].get("text") != prompt.body:
         raise GateError("request system prompt is not the pinned prompt body")
+    if prompt.sends_coverage:
+        require_current_ingest(gated.plot)
     messages = params["messages"]
     if len(messages) != 1 or messages[0]["role"] != "user":
         raise GateError("request must hold exactly one user message")
