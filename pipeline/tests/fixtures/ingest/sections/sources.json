@@ -37,7 +37,23 @@
   "revision": "1376543545",
   "permalink": "https://en.wikipedia.org/w/index.php?title=Better_Call_Saul&oldid=1376543545",
   "license": "CC-BY-SA-4.0",
-  "note": "trimmed to the first 99 paragraph(s) of each part; references, links, tables and styles removed"
+  "note": "trimmed to the first 2 paragraph(s) of each part; references, links, tables and styles removed"
+ },
+ "x_files_premise": {
+  "title": "The X-Files",
+  "section": "premise",
+  "revision": "1377437254",
+  "permalink": "https://en.wikipedia.org/w/index.php?title=The_X-Files&oldid=1377437254",
+  "license": "CC-BY-SA-4.0",
+  "note": "trimmed to the first 1 paragraph(s) of each part; references, links, tables and styles removed"
+ },
+ "friends_episodes": {
+  "title": "Friends",
+  "section": "episodes",
+  "revision": "1377353522",
+  "permalink": "https://en.wikipedia.org/w/index.php?title=Friends&oldid=1377353522",
+  "license": "CC-BY-SA-4.0",
+  "note": "trimmed to the first 3 paragraph(s) of each part, first 4 parts only; references, links, tables and styles removed"
  },
  "scrubs_overview": {
   "title": "Scrubs (2001 TV series)",

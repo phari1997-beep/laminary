@@ -8,19 +8,26 @@ The fetcher used to take such a section with all its subsections. Now each secti
 its subsection headings and every part is kept or dropped by three plain rules, applied in
 order. Every dropped part is recorded with its reason in the plot file.
 
-1. **Heading denylist.** A subsection whose heading names non-plot content is dropped, with
-   everything under it: production, development, casting, music, broadcast, ratings, reception,
-   awards, home media, distribution, merchandise, mythology/interpretations, themes,
-   influences, spin-offs, crossovers, adaptations, legacy, episode lists, catchphrases,
-   documentaries, anniversaries and similar (``NONPLOT_WORDS``, ``NONPLOT_HEADINGS``).
-2. **Broad sections keep only plot headings.** Under a *broad* heading ("episodes",
-   "seasons", "series overview", "overview", "season overview"; ``BROAD_HEADINGS``):
-   - the text directly under "Episodes" or "Seasons" (before the first subsection) is the
-     episode-list lead (run dates, episode counts, networks) and is dropped;
-   - a direct subsection is kept only if its heading is plot-like (``PLOT_HEADING``: "Season
-     3", "Series 1: ...", "Seasons 1-3", "Part I", "... Saga", "... Arc", "Plot", "Synopsis",
-     "Story" and so on); other headings ("Missing episodes", "CID Special Bureau",
-     "Christmas special") are dropped.
+1. **Headings.** A heading that names the story ("Season 3", "Series 2: The Reboot", "Part I",
+   "... Saga", "... Arc", "Plot", "Plotlines", "Synopsis", "Story"; ``PLOT_HEADING``) is
+   plot-like, and that wins over the word denylist. Otherwise a subsection whose heading names
+   non-plot content is dropped, with everything under it: production, development, casting,
+   music, broadcast, ratings, reception, awards, home media, distribution, merchandise,
+   interpretations, themes, influences, spin-offs, crossovers, adaptations, legacy, episode
+   lists, catchphrases, documentaries, anniversaries and similar (``NONPLOT_WORDS``,
+   ``NONPLOT_HEADINGS``). "Mythology" is not on the list: in some series (The X-Files) it is
+   the main storyline, so the content check decides.
+2. **Broad sections.** Under a *broad* heading ("episodes", "seasons", "series overview",
+   "overview", "season overview"; ``BROAD_HEADINGS``):
+   - the text directly under "Episodes" or "Seasons" is presumed to be the episode-list lead
+     (run dates, episode counts, networks): it goes through a stricter content check
+     (dropped from ``EPISODE_LEAD_MAX_SHARE``, a quarter, of cue-dense words);
+   - a direct subsection is kept only if its heading is plot-like, or names specials ("Specials",
+     "Christmas special": content check); other headings ("Missing episodes", "CID Special
+     Bureau") are dropped;
+   - in a kept season part, a first paragraph that reads as production writing (the cue test
+     of rule 3) is dropped: such sections often open each season with its renewal and
+     premiere dates (Better Call Saul, Blackadder). Later paragraphs are never cut.
    Under any other plot heading ("plot", "synopsis", "premise", ...) the section's own text is
    always kept, and subsections not caught by rule 1 are kept (subject to rule 3 when their
    heading is not plot-like).
@@ -36,10 +43,15 @@ so the next heading, the 150-word rule and the season-article fallback apply as 
 section with nothing dropped yields exactly the text the fetcher produced before (the parts
 are slices of the section's HTML and are rejoined unchanged).
 
-Limits, by design: the check works on whole subsections and paragraphs' vocabulary only; a
-production sentence inside a kept season summary stays, and a story about a TV show (its
-characters air episodes and chase ratings) can look like production writing, which is why the
-content check is applied only where the heading doesn't already say "plot".
+Fail closed on markup: if the section holds heading tags (``<h2>``-``<h6>``) that are not in
+MediaWiki's ``mw-heading`` wrapper, the parts can't be told apart, so the section is not used
+(``markup_error`` in its check) instead of being taken unfiltered.
+
+Limits, by design: the check works on subsections and on paragraphs' vocabulary only; apart
+from a season's first paragraph, a production sentence inside a kept season summary stays,
+and a story about a TV show (its characters air episodes and chase ratings) can look like
+production writing, which is why the content check is applied only where the heading doesn't
+already say "plot".
 """
 
 from __future__ import annotations
@@ -55,8 +67,9 @@ from laminary_pipeline.ingest.text import html_to_text, word_count
 BROAD_HEADINGS = frozenset(
     {"episodes", "seasons", "series overview", "overview", "season overview"}
 )
-# Broad headings whose own lead is the episode-list lead (rule 2).
+# Broad headings whose own lead is presumed to be the episode-list lead (rule 2).
 EPISODE_LIST_HEADINGS = frozenset({"episodes", "seasons"})
+EPISODE_LEAD_MAX_SHARE = 0.25  # stricter than CONTENT_MAX_SHARE: non-plot is the default here
 BROAD_MIN_KEPT_SHARE = 0.5
 
 # Rule 1: a word or phrase anywhere in a subsection heading.
@@ -65,7 +78,7 @@ NONPLOT_WORDS = (
     "music", "soundtrack", "theme song", "broadcast", "broadcasting", "airing", "ratings",
     "viewership", "reception", "critical response", "accolades", "awards", "nominations",
     "home media", "home video", "dvd", "blu-ray", "release", "releases", "distribution",
-    "syndication", "merchandise", "merchandising", "consumer products", "mythology",
+    "syndication", "merchandise", "merchandising", "consumer products",
     "interpretation", "interpretations", "themes", "theme", "motifs", "symbolism",
     "influences", "inspiration", "inspirations", "derivations", "spin-off", "spin-offs",
     "spinoff", "spinoffs", "sub-series", "crossover", "crossovers", "backdoor pilot",
@@ -91,10 +104,12 @@ _NONPLOT_WORD_RE = re.compile(
 # Rule 2: plot-like headings.
 PLOT_HEADING = re.compile(
     r"\b(plot|plots|synopsis|synopses|summary|summaries|story|stories|storyline|storylines"
-    r"|premise|arc|arcs|saga|sagas)\b"
+    r"|plotline|plotlines|premise|arc|arcs|saga|sagas)\b"
     r"|\b(season|seasons|series|part|parts|book|volume|chapter)\s+([0-9]+|[ivxlc]+)\b"
     r"|^(season|series|part|book|volume|chapter|act)\b"
 )
+# Rule 2: specials under a broad heading go to the content check instead of being dropped.
+SPECIALS_HEADING = re.compile(r"\bspecials?\b")
 # Rule 3: production / broadcast / reception vocabulary.
 NONPLOT_CUE_WORDS = (
     # broadcast and release
@@ -123,6 +138,8 @@ CONTENT_MAX_SHARE = 0.5  # a part with this share of its words in cue-dense para
 _HEADING_RE = re.compile(
     r'<div class="mw-heading(?: mw-heading\d)?"[^>]*>\s*<h([2-6])\b[^>]*>(.*?)</h\1>', re.S
 )
+_ANY_HEADING_TAG = re.compile(r"<h[2-6]\b")
+_PARAGRAPH = re.compile(r"<p\b[^>]*>.*?</p>", re.S)
 
 
 def normalize_heading(line: str) -> str:
@@ -145,6 +162,7 @@ class Part:
     parent: int | None = None  # index of the enclosing part
     kept: bool = True
     reason: str | None = None
+    trimmed: dict[str, Any] | None = None  # a dropped first paragraph (rule 2)
 
 
 @dataclass
@@ -159,6 +177,7 @@ class SectionFilter:
     accepted: bool
     reason: str | None
     dropped: list[dict[str, Any]] = field(default_factory=list)
+    markup_error: bool = False
 
     def record(self, index: str | None = None) -> dict[str, Any]:
         out: dict[str, Any] = {"heading": self.heading}
@@ -166,6 +185,8 @@ class SectionFilter:
             out["index"] = index
         out.update(kind=self.kind, words_before=self.words_before, words_kept=self.words,
                    accepted=self.accepted)
+        if self.markup_error:
+            out["markup_error"] = True
         if self.reason:
             out["reason"] = self.reason
         out["dropped"] = self.dropped
@@ -194,15 +215,25 @@ def split_parts(html: str) -> list[Part]:
 
 
 def nonplot_heading(heading: str) -> str | None:
-    """The denylist entry a subsection heading matches (rule 1), else None."""
+    """The denylist entry a subsection heading matches (rule 1), else None. A plot-like heading
+    ("Season 5: Revival (2016)") is never denied by a word in it."""
     if heading in NONPLOT_HEADINGS:
         return heading
+    if is_plot_heading(heading):
+        return None
     m = _NONPLOT_WORD_RE.search(heading)
     return m.group(1) if m else None
 
 
 def is_plot_heading(heading: str) -> bool:
     return bool(PLOT_HEADING.search(heading))
+
+
+def is_nonplot_paragraph(para: str) -> bool:
+    """The rule 3 cue test for one paragraph of text."""
+    words = word_count(para)
+    hits = len(NONPLOT_CUES.findall(para))
+    return bool(words) and hits >= CUE_MIN_HITS and hits * 100 / words >= CUE_MIN_PER_100_WORDS
 
 
 def nonplot_share(text: str) -> float:
@@ -214,18 +245,29 @@ def nonplot_share(text: str) -> float:
         if not words:
             continue
         total += words
-        hits = len(NONPLOT_CUES.findall(para))
-        if hits >= CUE_MIN_HITS and hits * 100 / words >= CUE_MIN_PER_100_WORDS:
+        if is_nonplot_paragraph(para):
             flagged += words
     return flagged / total if total else 0.0
 
 
-def _content_reason(part: Part) -> str | None:
+def _content_reason(part: Part, limit: float = CONTENT_MAX_SHARE) -> str | None:
     share = nonplot_share(html_to_text(part.html))
-    if share >= CONTENT_MAX_SHARE:
+    if share >= limit:
         return (f"content: {share:.0%} of its words are in paragraphs with production, "
                 "broadcast or reception wording")
     return None
+
+
+def _trim_first_paragraph(part: Part) -> None:
+    """Rule 2: drop a season part's first paragraph if it reads as production writing."""
+    for m in _PARAGRAPH.finditer(part.html):
+        text = html_to_text(m.group(0))
+        if not word_count(text):
+            continue  # an empty or markup-only paragraph: look at the next one
+        if is_nonplot_paragraph(text):
+            part.html = part.html[: m.start()] + part.html[m.end():]
+            part.trimmed = {"words": word_count(text), "starts": text[:80]}
+        return
 
 
 def filter_section(html: str, heading: str, media_type: str = "tv_series") -> SectionFilter:
@@ -239,13 +281,23 @@ def filter_section(html: str, heading: str, media_type: str = "tv_series") -> Se
         return SectionFilter(heading, "film", text, words_before, words_before, True, None)
     kind = "broad" if heading in BROAD_HEADINGS else "plot"
     parts = split_parts(html)
+    found = len(_ANY_HEADING_TAG.findall(html))
+    recognised = len(parts) if parts[0].heading else 0
+    if found != recognised:
+        return SectionFilter(
+            heading, kind, "", 0, words_before, False,
+            f"markup_error: {found} heading tags but {recognised} in MediaWiki's mw-heading "
+            "wrapper; the parts can't be told apart, so the section is not used",
+            markup_error=True)
     top = parts[0]
     for i, part in enumerate(parts):
         if i == 0:
             if kind == "broad" and heading in EPISODE_LIST_HEADINGS:
-                part.kept, part.reason = False, (
-                    f"episode-list lead: the text directly under {heading!r} introduces the "
-                    "episode list (run dates, episode counts, networks)")
+                reason = _content_reason(part, EPISODE_LEAD_MAX_SHARE)
+                if reason:
+                    part.kept, part.reason = False, (
+                        f"episode-list lead under {heading!r}, {reason} (dropped from "
+                        f"{EPISODE_LEAD_MAX_SHARE:.0%})")
             elif kind == "broad":
                 reason = _content_reason(part)
                 if reason:
@@ -260,24 +312,34 @@ def filter_section(html: str, heading: str, media_type: str = "tv_series") -> Se
             part.kept, part.reason = False, f"heading names non-plot content ({denied!r})"
             continue
         plot_like = is_plot_heading(part.heading)
-        if kind == "broad" and not plot_like and part.parent in (0, None):
+        special = bool(SPECIALS_HEADING.search(part.heading))
+        if kind == "broad" and not plot_like and not special and part.parent in (0, None):
             part.kept, part.reason = False, (
                 "not a plot heading: under an episodes/seasons/overview section only season, "
-                "part, arc and plot subsections are kept")
+                "part, arc, plot and specials subsections are kept")
             continue
+        if kind == "broad" and plot_like:
+            _trim_first_paragraph(part)
         if kind == "broad" or not plot_like:
             reason = _content_reason(part)
             if reason:
                 part.kept, part.reason = False, reason
     kept = [p for p in parts if p.kept]
-    if len(kept) == len(parts):
+    if len(kept) == len(parts) and not any(p.trimmed for p in parts):
         text = html_to_text(html)
     else:
         text = html_to_text("".join(p.html for p in kept))
     words = word_count(text)
+    parents = {p.parent for p in parts}
     dropped = [
         {"heading": p.heading or heading, "level": p.level, "words": p.words, "reason": p.reason}
-        for p in parts if not p.kept and p.words > 0
+        for i, p in enumerate(parts) if not p.kept and (p.words > 0 or i in parents)
+    ]
+    dropped += [
+        {"heading": p.heading, "level": p.level, "words": p.trimmed["words"],
+         "reason": "first paragraph of a season part reads as production or broadcast "
+                   "writing", "paragraph": 1, "starts": p.trimmed["starts"]}
+        for p in parts if p.kept and p.trimmed
     ]
     accepted, reason = True, None
     if kind == "broad" and words_before and words < BROAD_MIN_KEPT_SHARE * words_before:

@@ -48,7 +48,7 @@ def test_seinfeld_series_overview_is_all_non_plot() -> None:
     f = filter_section(fixture("seinfeld_series_overview"), "series overview")
     assert not f.accepted and f.text == "" and f.words == 0
     r = reasons(f)
-    assert r["plotlines"].startswith("not a plot heading")
+    assert "plotlines" not in r  # a plot heading now: content-checked and kept, but too small
     for heading in ("themes", "catchphrases", "consumer products", "music"):
         assert r[heading].startswith("heading names non-plot content")
     assert "mostly non-plot" in (f.reason or "")
@@ -70,8 +70,19 @@ def test_doctor_who_episode_list_lead_and_missing_episodes_are_dropped() -> None
     f = filter_section(fixture("doctor_who_episodes"), "episodes")
     assert not f.accepted and f.words == 0
     r = reasons(f)
-    assert r["episodes"].startswith("episode-list lead")
+    assert r["episodes"].startswith("episode-list lead under 'episodes', content: ")
     assert r["missing episodes"] == "heading names non-plot content ('missing episodes')"
+
+
+def test_lost_fan_theories_still_go_but_x_files_mythology_stays() -> None:
+    """QA: 'mythology' is The X-Files' main storyline, so it is no longer denylisted; Lost's
+    'Mythology and interpretations' still goes on 'interpretations'."""
+    xf = filter_section(fixture("x_files_premise"), "premise")
+    assert xf.accepted and xf.dropped == [] and xf.words == xf.words_before
+    assert "mythology" in [p.heading for p in split_parts(fixture("x_files_premise"))]
+    lost = reasons(filter_section(fixture("lost_series_overview"), "series overview"))
+    assert lost["mythology and interpretations"] == (
+        "heading names non-plot content ('interpretations')")
 
 
 def test_star_trek_tng_production_seasons_fail_the_content_check() -> None:
@@ -84,10 +95,28 @@ def test_star_trek_tng_production_seasons_fail_the_content_check() -> None:
 
 
 def test_better_call_saul_keeps_every_season_and_drops_the_lead() -> None:
+    """Each season part opens with its renewal/premiere paragraph: that paragraph goes, the
+    season summary after it stays."""
     f = filter_section(fixture("better_call_saul_episodes"), "episodes")
     assert f.accepted
-    assert list(reasons(f)) == ["episodes"]
+    assert f.dropped[0]["heading"] == "episodes"
+    trimmed = [d for d in f.dropped if d.get("paragraph") == 1]
+    assert [d["heading"] for d in trimmed] == [
+        "season 1 (2015)", "season 2 (2016)", "season 3 (2017)", "season 4 (2018)",
+        "season 5 (2020)", "season 6 (2022)"]
+    for d in trimmed:
+        assert d["reason"].startswith("first paragraph of a season part")
+    assert "renewed" not in f.text and "premiered" not in f.text
+    assert f.words + sum(d["words"] for d in f.dropped) == f.words_before
     assert f.words > 0.5 * f.words_before
+
+
+def test_friends_plot_paragraph_with_cue_words_is_untouched() -> None:
+    """Friends season 2's third paragraph has cue words (an interview, the show's writer) but
+    is plot; only a season's first paragraph is ever cut, so nothing changes."""
+    html = fixture("friends_episodes")
+    f = filter_section(html, "episodes")
+    assert f.accepted and f.dropped == [] and f.text == html_to_text(html)
 
 
 def test_scrubs_overview_is_production_writing() -> None:
@@ -160,10 +189,51 @@ def test_broad_heading_keeps_only_plot_headings() -> None:
                                        (3, "Season 2", PRODUCTION)], lead=STORY)
     f = filter_section(html, "series overview")
     r = reasons(f)
-    assert r["christmas special"].startswith("not a plot heading")
-    assert r["season 2"].startswith("content: ")
+    assert "christmas special" not in r  # specials: content check, and this one is story
+    assert r["season 2"].startswith("first paragraph of a season part")
     assert "series overview" not in r  # a story lead under an overview heading is kept
-    assert f.accepted  # 2 of 4 equal parts kept: exactly half
+    assert f.accepted
+
+
+def test_specials_and_neutral_headings_under_a_broad_section() -> None:
+    html = section("Episodes", [(3, "Season 1", STORY), (3, "Specials", ""),
+                                (4, "Christmas Carol", STORY), (3, "Specials (2020)", PRODUCTION),
+                                (3, "Missing episodes", STORY)], lead=STORY)
+    f = filter_section(html, "episodes")
+    r = reasons(f)
+    assert "specials" not in r and "christmas carol" not in r
+    assert r["specials (2020)"].startswith("content: ")
+    assert r["missing episodes"].startswith("heading names non-plot content")
+    assert "episodes" not in r  # a story lead passes the stricter episode-lead check
+
+
+def test_dropped_empty_parent_heading_is_logged() -> None:
+    html = section("Premise", [(3, "Production", ""), (4, "Filming", STORY)], lead=STORY)
+    f = filter_section(html, "premise")
+    assert [(d["heading"], d["words"]) for d in f.dropped] == [("production", 0),
+                                                              ("filming", f.dropped[1]["words"])]
+    assert f.dropped[1]["reason"] == "under dropped subsection 'production'"
+
+
+def test_plot_heading_wins_over_the_word_denylist() -> None:
+    assert nonplot_heading("season 5: revival (2016)") is None
+    assert nonplot_heading("series 2: the reboot") is None
+    assert nonplot_heading("revival") == "revival"
+    html = section("Episodes", [(3, "Season 5: Revival (2016)", STORY)], lead=STORY)
+    assert filter_section(html, "episodes").dropped == []
+
+
+def test_unrecognised_heading_markup_fails_closed() -> None:
+    html = ('<div class="mw-parser-output"><h2>Episodes</h2><p>' + STORY + "</p>"
+            "<h3>Season 1</h3><p>" + STORY + "</p></div>")
+    f = filter_section(html, "episodes")
+    assert not f.accepted and f.markup_error and f.text == "" and f.words == 0
+    assert f.record("3")["markup_error"] is True
+    assert "mw-heading" in (f.reason or "")
+    mixed = section("Plot", [(3, "Season 1", STORY)]) + "<h3>Season 2</h3><p>x</p>"
+    assert filter_section(mixed, "plot").markup_error
+    film = filter_section(html, "plot", "movie")  # films are used whole, as before
+    assert film.accepted and not film.markup_error
 
 
 def test_broad_section_mostly_dropped_is_rejected() -> None:
@@ -189,7 +259,8 @@ def test_films_are_used_whole() -> None:
 @pytest.mark.parametrize(
     ("heading", "denied"),
     [("production", "production"), ("cast and characters", "cast"), ("themes", "themes"),
-     ("mythology and interpretations", "mythology"), ("home media", "home media"),
+     ("mythology and interpretations", "interpretations"), ("mythology", None),
+     ("home media", "home media"),
      ("u.s. television ratings", "ratings"), ("cid special bureau", None),
      ("future trunks saga", None), ("future", "future"), ("story and characters", None),
      ("characters", "characters"), ("episodes 1–9, completing the laura palmer arc", None),
@@ -204,7 +275,7 @@ def test_heading_denylist(heading: str, denied: str | None) -> None:
     ("heading", "plot_like"),
     [("season 1 (2008)", True), ("seasons 1–3", True), ("series 2: blackadder ii", True),
      (" part i", True), ("saiyan saga", True), ("apophis arc", True), ("plot summary", True),
-     ("plotlines", False), ("missing episodes", False), ("christmas mini-episode (2013)",
+     ("plotlines", True), ("missing episodes", False), ("christmas mini-episode (2013)",
                                                          False)],
 )
 def test_plot_headings(heading: str, plot_like: bool) -> None:
