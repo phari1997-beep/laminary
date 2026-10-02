@@ -200,7 +200,7 @@ def test_listed_non_narrative_titles_are_excluded() -> None:
     zobo = item("tv_series", "english", 1999, 90, "children's television series")
     zobo["qid"] = "Q3109770"
     assert c.excluded_reason(zobo) == "non_narrative:listed"
-    assert c.SELECTOR_VERSION == "1.1.0"
+    assert c.SELECTOR_VERSION == "1.2.0"
 
 
 @pytest.mark.parametrize(
@@ -217,7 +217,8 @@ def test_story_genres_are_not_caught_by_the_new_words(genre: str) -> None:
     ("kw", "bucket"),
     [
         ({"media_type": "movie", "lang": "tamil", "country": "Q668"}, "film:tamil"),
-        ({"media_type": "movie", "lang": "english", "country": "Q668"}, "film:world"),
+        # selector 1.2.0: an English-only film made in India is English (was film:world)
+        ({"media_type": "movie", "lang": "english", "country": "Q668"}, "film:english"),
         ({"media_type": "movie", "lang": "korean", "country": "Q884"}, "film:korean"),
         ({"media_type": "movie", "lang": "Q150", "country": "Q142"}, "film:world"),
         ({"media_type": "tv_series", "lang": "hindi", "country": "Q668"}, "tv:indian"),
@@ -231,6 +232,116 @@ def test_classify(kw: dict[str, Any], bucket: str) -> None:
     it = item(kw["media_type"], kw["lang"], 2010, 10, "drama", country=kw["country"],
               classes=kw.get("classes"))
     assert c.classify(it) == bucket
+
+
+# --- selector 1.2.0: original language decides (DECISIONS 2026-10-02) -------------------------
+# Language sets and countries copied from the pilot's Wikidata detail data (2026-10-02 run).
+US, UK, AU, IN, KR, JP, FR = "Q30", "Q145", "Q408", "Q668", "Q884", "Q17", "Q142"
+EN, JA, KO, HI, TA, TE = (LANG[n] for n in ("english", "japanese", "korean", "hindi", "tamil",
+                                            "telugu"))
+FRENCH, SPANISH, BENGALI, GERMAN, PORTUGUESE = "Q150", "Q1321", "Q9610", "Q188", "Q5146"
+
+
+def real(media_type: str, languages: list[str], countries: list[str],
+         labels: dict[str, str] | None = None, classes: list[str] | None = None) -> dict[str, Any]:
+    it = item(media_type, "english", 2010, 50, "drama film", classes=classes)
+    it.update(languages=sorted(languages), countries=sorted(countries),
+              language_labels=labels or {})
+    return it
+
+
+@pytest.mark.parametrize(
+    ("name", "media_type", "languages", "countries", "bucket", "basis"),
+    [
+        # QA's examples, previously pulled into regional buckets by an incidental link
+        ("Inception", "movie", [FRENCH, EN, JA], [UK, US], "film:english", "country_of_origin"),
+        ("Sonic the Hedgehog", "movie", [EN, JA], [JP, US], "film:english",
+         "co_production_english"),
+        ("Snowpiercer", "movie", [EN, KO], [FR, "Q213", US, KR], "film:english",
+         "co_production_english"),
+        ("Minari", "movie", [EN, KO], [US], "film:english", "country_of_origin"),
+        ("Life of Pi", "movie", [FRENCH, EN, JA, TA], [US], "film:english",
+         "country_of_origin"),
+        ("Lion", "movie", [HI, EN, BENGALI], [UK, US, AU], "film:english", "country_of_origin"),
+        ("Hotel Mumbai", "movie", [HI, EN], [US, AU, IN], "film:english",
+         "co_production_english"),
+        ("The Theory of Everything", "movie", [FRENCH, EN], [UK, JP, US], "film:english",
+         "country_of_origin"),
+        # regional titles stay regional
+        ("Lagaan", "movie", [HI, EN], [IN], "film:hindi", "country_of_origin"),
+        ("The Handmaiden", "movie", [JA, KO], [KR], "film:korean", "country_of_origin"),
+        ("Sympathy for Lady Vengeance", "movie", [EN, JA, KO], [KR], "film:korean",
+         "country_of_origin"),
+        # a French production with an incidental Korean or Tamil link is world
+        ("Taxi", "movie", [FRENCH, GERMAN, PORTUGUESE, KO], [FR], "film:world",
+         "no_language_matches_country"),
+        ("Dheepan", "movie", [FRENCH, EN, TA], [FR], "film:world",
+         "no_language_matches_country"),
+        # several Indian languages: fixed order (documented edge case)
+        ("Baahubali: The Beginning", "movie", [TA, TE], [IN], "film:tamil",
+         "country_of_origin_fixed_order"),
+        ("Toy Story", "movie", [SPANISH, EN], [US], "film:english", "country_of_origin"),
+        ("Breaking Bad", "tv_series", ["Q7976"], [US], "tv:english", "only_language"),
+    ],
+)
+def test_original_language_decides_the_bucket(
+    name: str, media_type: str, languages: list[str], countries: list[str], bucket: str,
+    basis: str,
+) -> None:
+    it = real(media_type, languages, countries)
+    assert c.classify(it) == bucket, name
+    assert c.classify_language(it)[1] == basis, name
+
+
+@pytest.mark.parametrize("qid", ["Q1860", "Q7976", "Q7979", "Q44679"])
+def test_english_varieties_count_as_english(qid: str) -> None:
+    assert c.classify(real("tv_series", [qid], [UK])) == "tv:english"
+    assert c.classify(real("movie", [qid], [US])) == "film:english"
+    assert c.primary_language(real("movie", [qid], [US])) == "english"
+
+
+def test_english_varieties_by_label_but_not_old_or_middle_english() -> None:
+    assert c.is_english("Q99999901", "Canadian English")
+    assert c.is_english("Q99999902", "New Zealand English")
+    assert not c.is_english("Q42365", "Old English")
+    assert not c.is_english("Q36395", "Middle English")
+    assert not c.is_english("Q150", "French")
+    it = real("tv_series", ["Q99999901"], ["Q16"], labels={"Q99999901": "Canadian English"})
+    assert c.classify(it) == "tv:english"
+    vikings = real("tv_series", [EN, "Q35505", "Q42365"], ["Q16", "Q27"],
+                   labels={"Q42365": "Old English", "Q35505": "Old Norse"})
+    assert c.classify(vikings) == "tv:english"
+
+
+def test_no_country_of_origin_falls_back_to_listed_languages() -> None:
+    assert c.classify(real("movie", [EN, KO], [])) == "film:english"
+    assert c.classify(real("movie", [HI, TA], [])) == "film:tamil"
+    assert c.classify(real("movie", [FRENCH], [])) == "film:world"
+
+
+def test_series_buckets_follow_the_language() -> None:
+    anime = real("tv_series", [JA], [JP], classes=["Q63952888"])
+    assert c.classify(anime) == "tv:anime"
+    assert c.classify(real("tv_series", [JA], [JP])) == "tv:world"
+    assert c.classify(real("tv_series", [HI, EN], [IN])) == "tv:indian"
+    assert c.classify(real("tv_series", [KO], [KR])) == "tv:korean"
+
+
+def test_rows_record_the_bucket_basis_and_season_count() -> None:
+    it = real("tv_series", ["Q7976"], [US])
+    it["number_of_seasons"] = 5
+    sel = c.select({it["qid"]: it}, reserve_ratio=0)
+    row = sel.rows[0]
+    assert row["bucket"] == "tv:english" and row["bucket_basis"] == "only_language"
+    assert row["number_of_seasons"] == 5 and row["selector_version"] == "1.2.0"
+
+
+def test_world_pools_exclude_english_varieties() -> None:
+    world = next(q for q in c.pool_queries() if q.query_id == "tv:world").sparql()
+    for qid in ("Q1860", "Q7976", "Q7979", "Q44679"):
+        assert f"wd:{qid}" in world
+    english = next(q for q in c.pool_queries() if q.query_id == "tv:english:2000s").sparql()
+    assert "VALUES ?l_ { wd:Q1860 wd:Q7976 wd:Q7979 wd:Q44679 }" in english
 
 
 def test_coarse_genre_priority() -> None:
@@ -252,14 +363,14 @@ def test_sparql_rendering() -> None:
     assert len(ids) == len(set(ids))
     q = next(q for q in queries if q.query_id == "film:english:1990s")
     text = q.sparql()
-    assert "wdt:P364 wd:Q1860" in text
+    assert "VALUES ?l_ { wd:Q1860 wd:Q7976 wd:Q7979 wd:Q44679 } ?item wdt:P364 ?l_ ." in text
     assert "HAVING (MIN(?year_) >= 1990 && MIN(?year_) < 2000)" in text
     assert "schema:isPartOf <https://en.wikipedia.org/>" in text and "LIMIT 105" in text
     tv = PoolQuery("x", "tv_series", "", 2000, 2010, 5, 10).sparql()
     assert "(wdt:P580|wdt:P577)" in tv and "wd:Q5398426" in tv
     detail = detail_sparql(["Q1", "Q2"])
     assert "VALUES ?item { wd:Q1 wd:Q2 }" in detail
-    for prop in ("P4947", "P4983", "P345", "P364", "P495", "P136", "P582"):
+    for prop in ("P4947", "P4983", "P345", "P364", "P495", "P136", "P582", "P2437"):
         assert f"wdt:{prop}" in detail
     seeds = seed_sparql(['He said "hi"', "Amélie"])
     assert '"He said \\"hi\\""@en' in seeds and "skos:altLabel" in seeds

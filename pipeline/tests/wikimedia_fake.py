@@ -55,9 +55,16 @@ class FakeWikimedia:
             values = re.search(r"VALUES \?item \{([^}]*)\}", query)
             wanted = set(re.findall(r"wd:(Q\d+)", values.group(1))) if values else set()
             check = sparql.get(f"season_check:{m.group(1)}", {"results": {"bindings": []}})
-            bindings = [b for b in check["results"]["bindings"]
-                        if b["item"]["value"].rsplit("/", 1)[-1] in wanted]
-            return {"head": {"vars": ["item", "ordinal"]}, "results": {"bindings": bindings}}
+            # One row per statement, like the query: fixtures may leave out ``prop``, which
+            # then reads as P179 when an ordinal is given and P361 otherwise.
+            bindings = [
+                b if "prop" in b else {**b, "prop": {"value": "P179" if "ordinal" in b
+                                                     else "P361"}}
+                for b in check["results"]["bindings"]
+                if b["item"]["value"].rsplit("/", 1)[-1] in wanted
+            ]
+            return {"head": {"vars": ["item", "prop", "ordinal"]},
+                    "results": {"bindings": bindings}}
         if "# laminary detail query" in query:
             values = re.search(r"VALUES \?item \{([^}]*)\}", query)
             wanted = set(re.findall(r"wd:(Q\d+)", values.group(1))) if values else set()

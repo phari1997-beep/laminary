@@ -7,9 +7,9 @@ Everything here is gitignored except this README and `config/`.
 |---|---|---|
 | `config/gold_seed_titles.csv` | hand-written | Well-known titles forced into the pilot so the gold set can be drawn from them. `guessed_plot`/`guessed_arc` only steer balance; they are never shown to labelers. |
 | `config/similarity_pairs.csv` | hand-written | "Should match" / "should NOT match" pairs for similarity evaluation (interview risk 1). Hari reviews `status`. |
-| `pilot_candidates.jsonl` | `ingest candidates` | One row per title: QID, title, year, type, TMDB/IMDb ids from Wikidata, bucket, role (`pilot` or `reserve`), region, language, decade, genre. |
+| `pilot_candidates.jsonl` | `ingest candidates` | One row per title: QID, title, year, type, TMDB/IMDb ids from Wikidata, bucket, `bucket_basis` (which step of the bucket rule decided it, selector 1.2.0), role (`pilot` or `reserve`), region, language, decade, genre, `number_of_seasons` (series: Wikidata P2437, a whole number, else null). |
 | `pilot_effective.jsonl` | `ingest plots` / `report` | The titles the annotation pilot should use: passing plots per bucket, with ranked reserves filling slots lost to the 150-word rule. `plots/` also holds reserves' files, so scope annotation to this list. |
-| `plots/<QID>.json` | `ingest plots` | `status: ok` with `text` and a schema-shaped `source`, or `status: skipped` with `skip_reason`. |
+| `plots/<QID>.json` | `ingest plots` | `status: ok` with `text` and a schema-shaped `source`, or `status: skipped` with `skip_reason`. Fetcher 1.4.0 adds `section_checks` (every plot heading tried: words before and after, whether it counted, and each dropped subsection with its reason) and `section.dropped`. A series built from season articles has `via: "season_articles"`, `sources` (each with its own `section_checks`), `season_articles` (pages used, left out and skipped; `evidence`: each used page's Wikidata item and the matched P179/P361 statement; `verified_seasons`; `lead_block_ceiling`, called `season_one_ceiling` before 1.4.0) and `coverage` (seasons used, `total_seasons` and its basis, `partial`). |
 | `cache/http/` | HTTP client | Cached API responses. Pinned-revision responses never expire; SPARQL pools expire after 30 days, latest-revision lookups after 7. Safe to delete. |
 | `reports/` | all commands | `candidates_summary.json`, `plots_summary.json`, `gold_selection_summary.json`. |
 | `gold/` | `gold select/template/import` | `gold_selection.jsonl`, the sheet CSVs, and imported `gold_labels.jsonl`. |
@@ -18,7 +18,8 @@ Skip reasons in `plots/<QID>.json`:
 
 | Reason | Meaning |
 |---|---|
-| `too_short` | No plot-like section reaches 150 words (DECISIONS 2026-09-26). |
+| `too_short` | No plot-like section reaches 150 words (DECISIONS 2026-09-26), counted after a series section's non-plot parts are dropped (DECISIONS 2026-10-02; see `section_checks`). |
+| `season_too_long` | A series' first full season article alone is over the 6,000-word ceiling. |
 | `no_plot_section` | No Plot / Synopsis / Premise / (series) overview heading. |
 | `no_enwiki_article` | No English Wikipedia article for the QID. |
 | `missing_page` | The enwiki title doesn't resolve to a page. |

@@ -6,7 +6,8 @@ Two-stage querying keeps each request light enough for the 60-second WDQS limit:
   ``?item``, ``?sitelinks`` and the first release year, ordered by sitelinks (the number of
   Wikipedia language editions with an article: our "well-known" proxy) with a LIMIT.
 - **Detail queries** fetch labels, enwiki title, TMDB/IMDb ids, languages, countries, genres,
-  classes and end year for a bounded list of QIDs (``VALUES``), in chunks.
+  classes, end year and number of seasons (P2437, series) for a bounded list of QIDs
+  (``VALUES``), in chunks.
 - **Seed lookup** finds the hand-picked gold seed titles by exact English label.
 
 TMDB ids (P4947 movie, P4983 TV) are read from Wikidata as plain identifiers. No TMDB API is
@@ -36,6 +37,14 @@ LANG = {
     "english": "Q1860", "hindi": "Q1568", "tamil": "Q5885", "malayalam": "Q36236",
     "telugu": "Q8097", "korean": "Q9176", "japanese": "Q5287",
 }
+# Varieties of English that Wikidata uses as an original language (P364), all counted as
+# English (DECISIONS 2026-10-02). These three were seen in the pilot's detail data with these
+# labels; other varieties are recognised by their English label in ``candidates`` (a label
+# "<X> English", except Old and Middle English, which are other languages).
+ENGLISH_VARIANTS = {
+    "Q7976": "American English", "Q7979": "British English", "Q44679": "Australian English",
+}
+ENGLISH_LANGS = (LANG["english"], *ENGLISH_VARIANTS)
 COUNTRY = {"india": "Q668", "south_korea": "Q884", "japan": "Q17"}
 NAMED_LANGS = tuple(LANG.values())
 
@@ -103,6 +112,7 @@ SELECT ?item
   (MIN(?year_) AS ?year)
   (MAX(?endYear_) AS ?end_year)
   (MAX(?noEnd_) AS ?no_end)
+  (MAX(?seasons_) AS ?number_of_seasons)
   (GROUP_CONCAT(DISTINCT ?tmdbMovie_; separator="|") AS ?tmdb_movie)
   (GROUP_CONCAT(DISTINCT ?tmdbTv_; separator="|") AS ?tmdb_tv)
   (GROUP_CONCAT(DISTINCT ?imdb_; separator="|") AS ?imdb)
@@ -122,6 +132,7 @@ WHERE {{
   OPTIONAL {{ ?item (wdt:P577|wdt:P580) ?date_ . BIND(YEAR(?date_) AS ?year_) }}
   OPTIONAL {{ ?item wdt:P582 ?end_ . BIND(YEAR(?end_) AS ?endYear_) }}
   OPTIONAL {{ ?item a wdno:P582 . BIND(1 AS ?noEnd_) }}
+  OPTIONAL {{ ?item wdt:P2437 ?seasons_ . }}
   OPTIONAL {{ ?item wdt:P4947 ?tmdbMovie_ . }}
   OPTIONAL {{ ?item wdt:P4983 ?tmdbTv_ . }}
   OPTIONAL {{ ?item wdt:P345 ?imdb_ . }}
@@ -217,6 +228,20 @@ def parse_seed_hits(data: dict[str, Any]) -> list[dict[str, Any]]:
     ]
 
 
+def season_count(value: str | None) -> int | None:
+    """Wikidata's number of seasons (P2437) as a whole number from 1 to 100, else None (a
+    quantity like "7.5" or "0" is not a usable season count)."""
+    if value is None:
+        return None
+    try:
+        number = float(value)
+    except ValueError:
+        return None
+    if not number.is_integer() or not 1 <= number <= 100:
+        return None
+    return int(number)
+
+
 def _single_int_id(values: list[str]) -> tuple[int | None, bool]:
     """One TMDB id, or None. Several distinct values -> None and flagged ambiguous."""
     ints = sorted({i for i in (_int(v) for v in values) if i and i > 0})
@@ -283,6 +308,7 @@ def parse_details(data: dict[str, Any]) -> dict[str, dict[str, Any]]:
             "media_type": media_type,
             "series_status": status,
             "series_status_basis": basis,
+            "number_of_seasons": season_count(_value(b, "number_of_seasons")) if is_tv else None,
             "tmdb_id": tmdb_id,
             "tmdb_id_ambiguous": ambiguous,
             "imdb_id": imdb[0] if len(imdb) == 1 else None,

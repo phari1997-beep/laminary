@@ -929,3 +929,137 @@ def test_ceiling_fallback_matches_the_source_limit_case() -> None:
             f"Tidewater season {n}" for n in range(7, last + 1)
         ]
         gate(parse_plot(rec, "t"))
+
+
+# --- Wikidata evidence, coverage, non-plot filter (fetcher 1.4.0, DECISIONS 2026-10-02) ------
+
+
+def fetch_cand(fake: FakeWikimedia, **cand_extra: Any) -> dict[str, Any]:
+    client = HttpClient(fake, None, sleep=lambda s: None, min_interval={})
+    cand = {"qid": SERIES, "enwiki_title": MAIN, "media_type": "tv_series", "title": "Tidewater",
+            "year": 2019, "tmdb_id": 91000, "series_status": "ended",
+            "series_status_basis": "P582", **cand_extra}
+    return PlotFetcher(client, clock=lambda: NOW).fetch(cand)
+
+
+def test_used_season_pages_record_their_wikidata_statement() -> None:
+    from laminary_pipeline.ingest.seasons import lead_block_ceiling
+
+    fake = season_fake()
+    for b in fake.data["sparql"]["season_check:" + SERIES]["results"]["bindings"]:
+        if b["item"]["value"].endswith("Q9100002"):  # season 2 is only "part of" the series
+            b.pop("ordinal", None)
+            b["prop"] = {"value": "P361"}
+    rec = fetch(fake)
+    report = rec["season_articles"]
+    assert report["evidence"] == [
+        {"title": "Tidewater season 1", "item": "Q9100001", "property": "P179",
+         "series": SERIES, "ordinal": 1},
+        {"title": "Tidewater (season 2)", "item": "Q9100002", "property": "P361",
+         "series": SERIES, "ordinal": None},
+    ]
+    assert report["lead_block_ceiling"] == 6000 and "season_one_ceiling" not in report
+    assert lead_block_ceiling(report) == 6000
+    assert lead_block_ceiling({"season_one_ceiling": 6000}) == 6000  # files before 1.4.0
+    assert lead_block_ceiling({}) is None
+    assert report["verified_seasons"] == [1, 2, 4]
+
+
+def test_bindings_without_a_known_property_are_not_evidence() -> None:
+    fake = season_fake()
+    for b in fake.data["sparql"]["season_check:" + SERIES]["results"]["bindings"]:
+        if b["item"]["value"].endswith("Q9100002"):
+            b["prop"] = {"value": "P31"}
+    rec = fetch(fake)
+    reasons = {s["title"]: s["reason"] for s in rec["season_articles"]["skipped"]}
+    assert reasons["Tidewater (season 2)"].startswith("unverified")
+
+
+def test_choose_evidence_prefers_the_matching_series_ordinal() -> None:
+    from laminary_pipeline.ingest.seasons import Evidence, choose_evidence
+
+    p361 = Evidence("Q5", "P361", SERIES, None)
+    bare = Evidence("Q5", "P179", SERIES, None)
+    two = Evidence("Q5", "P179", SERIES, 2)
+    three = Evidence("Q5", "P179", SERIES, 3)
+    assert choose_evidence([p361, bare, three, two], 2) == two
+    assert choose_evidence([p361, three], None) == three
+    assert choose_evidence([p361, bare], 2) == bare
+    assert choose_evidence([p361], 2) == p361
+    assert choose_evidence([], 2) is None
+
+
+def test_season_query_asks_which_property_matched() -> None:
+    from laminary_pipeline.ingest.seasons import season_check_sparql
+
+    q = season_check_sparql(SERIES, ["Q9100001"])
+    assert 'BIND("P179" AS ?prop)' in q and 'BIND("P361" AS ?prop)' in q
+    assert "SELECT ?item ?prop ?ordinal" in q and "GROUP BY" not in q
+
+
+@pytest.mark.parametrize(
+    ("extra", "total", "basis", "partial"),
+    [
+        ({}, 4, "verified_season_pages", True),  # pages 1, 2 and 4 verified; 1-2 used
+        ({"number_of_seasons": 6}, 6, "wikidata_P2437", True),
+        ({"number_of_seasons": 3}, 4, "verified_season_pages", True),  # under page 4: ignored
+    ],
+)
+def test_coverage_of_a_season_article_text(
+    extra: dict[str, Any], total: int, basis: str, partial: bool
+) -> None:
+    rec = fetch_cand(season_fake(), **extra)
+    cov = rec["coverage"]
+    assert cov["seasons"] == [1, 2]
+    assert (cov["total_seasons"], cov["total_seasons_basis"], cov["partial"]) == (
+        total, basis, partial)
+    assert ("wikidata_number_of_seasons_ignored" in cov) == (extra.get("number_of_seasons") == 3)
+    assert rec["candidate"]["number_of_seasons"] == extra.get("number_of_seasons")
+
+
+def test_season_coverage_rules() -> None:
+    from laminary_pipeline.ingest.seasons import season_coverage
+
+    full = season_coverage([1, 2, 3], [1, 2, 3], 3)
+    assert full == {"seasons": [1, 2, 3], "total_seasons": 3,
+                    "total_seasons_basis": "wikidata_P2437", "partial": False}
+    assert season_coverage([3, 4, 5, 6], [3, 4, 5, 6], None)["partial"] is True  # iCarly-like
+    assert season_coverage([None], [], 5) is None  # an episode-list page: no season numbers
+    assert season_coverage([], [], 5) is None
+    bad = season_coverage([1, 2], [1, 2], True)  # not a count
+    assert bad is not None and bad["total_seasons_basis"] == "verified_season_pages"
+    assert bad["total_seasons"] == 2 and bad["partial"] is False
+
+
+def test_wikidata_season_count_parsing() -> None:
+    from laminary_pipeline.ingest.wikidata import season_count
+
+    assert season_count("7") == 7 and season_count("7.0") == 7
+    for value in (None, "7.5", "0", "-1", "101", "seven"):
+        assert season_count(value) is None
+
+
+def test_main_article_episodes_section_of_production_text_falls_back_to_seasons() -> None:
+    """QA's blocker on synthetic markup: an 'Episodes' section whose lead is broadcast text and
+    whose only subsection is a spin-off doesn't count, so the season articles are used."""
+    fake = season_fake()
+    w = fake.data["wikipedia"]
+    w["sections:91000"] = sections(MAIN, ["Episodes", "Cast"])
+    lead = " ".join(["The series premiered on the network and aired weekly; ratings fell and the "
+                     "showrunner was renewed for a second season by critics."] * 12)
+    w["text:91000:1"] = {"parse": {"text": (
+        '<div class="mw-parser-output"><div class="mw-heading mw-heading2"><h2>Episodes</h2>'
+        f"</div><p>{lead}</p>"
+        '<div class="mw-heading mw-heading3"><h3>Harbor Lights spin-off</h3></div>'
+        f"<p>{words(200, 'spin')}</p></div>")}}
+    rec = fetch(fake)
+    assert rec["status"] == "ok" and rec["via"] == "season_articles"
+    main = rec["main_article"]
+    assert main["skip_reason"] == "too_short"
+    assert "after non-plot parts were dropped" in main["skip_detail"]
+    check = main["section_checks"][0]
+    assert check["heading"] == "episodes" and check["accepted"] is False
+    assert {d["heading"] for d in check["dropped"]} == {"episodes", "harbor lights spin-off"}
+    assert "section_checks" not in rec  # moved under main_article
+    for part in rec["sources"]:
+        assert part["section_checks"][-1]["accepted"] is True

@@ -1,0 +1,66 @@
+{
+ "seinfeld_series_overview": {
+  "title": "Seinfeld",
+  "section": "series overview",
+  "revision": "1377389130",
+  "permalink": "https://en.wikipedia.org/w/index.php?title=Seinfeld&oldid=1377389130",
+  "license": "CC-BY-SA-4.0",
+  "note": "trimmed to the first 1 paragraph(s) of each part; references, links, tables and styles removed"
+ },
+ "lost_series_overview": {
+  "title": "Lost (TV series)",
+  "section": "series overview",
+  "revision": "1377703790",
+  "permalink": "https://en.wikipedia.org/w/index.php?title=Lost_%28TV_series%29&oldid=1377703790",
+  "license": "CC-BY-SA-4.0",
+  "note": "trimmed to the first 1 paragraph(s) of each part; references, links, tables and styles removed"
+ },
+ "doctor_who_episodes": {
+  "title": "Doctor Who",
+  "section": "episodes",
+  "revision": "1377232352",
+  "permalink": "https://en.wikipedia.org/w/index.php?title=Doctor_Who&oldid=1377232352",
+  "license": "CC-BY-SA-4.0",
+  "note": "trimmed to the first 2 paragraph(s) of each part; references, links, tables and styles removed"
+ },
+ "star_trek_tng_seasons": {
+  "title": "Star Trek: The Next Generation",
+  "section": "seasons",
+  "revision": "1375326858",
+  "permalink": "https://en.wikipedia.org/w/index.php?title=Star_Trek%3A_The_Next_Generation&oldid=1375326858",
+  "license": "CC-BY-SA-4.0",
+  "note": "trimmed to the first 2 paragraph(s) of each part; references, links, tables and styles removed"
+ },
+ "better_call_saul_episodes": {
+  "title": "Better Call Saul",
+  "section": "episodes",
+  "revision": "1376543545",
+  "permalink": "https://en.wikipedia.org/w/index.php?title=Better_Call_Saul&oldid=1376543545",
+  "license": "CC-BY-SA-4.0",
+  "note": "trimmed to the first 99 paragraph(s) of each part; references, links, tables and styles removed"
+ },
+ "scrubs_overview": {
+  "title": "Scrubs (2001 TV series)",
+  "section": "overview",
+  "revision": "1377844175",
+  "permalink": "https://en.wikipedia.org/w/index.php?title=Scrubs_%282001_TV_series%29&oldid=1377844175",
+  "license": "CC-BY-SA-4.0",
+  "note": "trimmed to the first 2 paragraph(s) of each part; references, links, tables and styles removed"
+ },
+ "sherlock_episodes": {
+  "title": "Sherlock (TV series)",
+  "section": "episodes",
+  "revision": "1376864923",
+  "permalink": "https://en.wikipedia.org/w/index.php?title=Sherlock_%28TV_series%29&oldid=1376864923",
+  "license": "CC-BY-SA-4.0",
+  "note": "trimmed to the first 2 paragraph(s) of each part; references, links, tables and styles removed"
+ },
+ "cite_error_plot": {
+  "title": "Vikram (2022 film)",
+  "section": "plot",
+  "revision": "1376810115",
+  "permalink": "https://en.wikipedia.org/w/index.php?title=Vikram_%282022_film%29&oldid=1376810115",
+  "license": "CC-BY-SA-4.0",
+  "note": "first plot paragraph and the MediaWiki cite-error message span, as rendered"
+ }
+}

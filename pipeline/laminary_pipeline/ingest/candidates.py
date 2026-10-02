@@ -12,6 +12,28 @@ Rationale (also in the Phase 1 report and data/README.md):
   Tamil/Malayalam/Korean titles and anime (risk 6), and the launch isn't US-only
   (DECISIONS 2026-09-29). The pilot measures how often these titles have a 150-word English
   Wikipedia plot section.
+- **Bucket rule** (``classify``, selector 1.2.0, DECISIONS 2026-10-02): the original language
+  (P364) decides, not incidental country, filming or secondary-language links. English
+  varieties (American, British, Australian English...) count as English. Wikidata gives a
+  title's original languages as an unordered set, so there is no "first" language; when a
+  title has several, its country of origin (P495) breaks the tie. Steps:
+
+  0. No original language in Wikidata at all (some Indian series): the country of origin
+     decides as before (India: Indian, South Korea: Korean, Japan: Japanese), else world.
+  1. Map each original language to English, one of the six regional languages, or "other".
+  2. No English or regional language: world.
+  3. Exactly one of them and no "other" language: that one.
+  4. Otherwise keep the languages whose home country is a country of origin (English: US,
+     UK, Canada, Australia, Ireland, New Zealand; Hindi, Tamil, Malayalam, Telugu: India;
+     Korean: South Korea; Japanese: Japan). One left: that one. English and a regional
+     language both left (a co-production with an English-speaking country): English. Several
+     regional languages left: the fixed order Tamil, Malayalam, Telugu, Hindi, Korean,
+     Japanese.
+  5. None left: world when the title has a country of origin (e.g. a French film listing
+     English and Tamil); with no P495 at all, English if listed, else the fixed order.
+
+  Series: Japanese goes to anime only for anime classes/genres (else world); the Indian
+  languages go to tv:indian. Each row records the step as ``bucket_basis``.
 - **Within each cell** half the quota is taken purely by fame (sitelinks = number of Wikipedia
   language editions), and the rest round-robins across coarse genres, so every cell has
   well-known titles (gold-set material) and genre spread.
@@ -45,13 +67,16 @@ from typing import Any
 from laminary_pipeline.ingest.wikidata import (
     ANIME_TV_CLASSES,
     COUNTRY,
+    ENGLISH_LANGS,
     LANG,
     NAMED_LANGS,
     PoolQuery,
     Wikidata,
 )
 
-SELECTOR_VERSION = "1.1.0"  # 1.1.0: non-narrative series filter (DECISIONS 2026-10-01)
+SELECTOR_VERSION = "1.2.0"  # 1.1.0: non-narrative series filter (DECISIONS 2026-10-01);
+# 1.2.0: original language decides the bucket, English varieties count as English, English
+# pools include the varieties (DECISIONS 2026-10-02)
 RESERVE_RATIO = 0.3
 FAME_SHARE = 0.5  # share of each cell taken purely by sitelinks before genre round-robin
 
@@ -162,30 +187,106 @@ def decade_key(year: int, floor: int) -> str:
     return f"{year // 10 * 10}s"
 
 
-def classify(item: dict[str, Any]) -> str:
-    """Bucket name for an item, from its type, original languages (P364) and countries (P495).
-    Country wins for India/Korea/Japan so co-produced or partly English titles land in their
-    regional bucket."""
-    langs = set(item.get("languages", []))
+# Countries of origin (P495) that back each named language in the tie-break (step 4).
+ENGLISH_COUNTRIES = {
+    "Q30": "United States", "Q145": "United Kingdom", "Q16": "Canada", "Q408": "Australia",
+    "Q27": "Ireland", "Q664": "New Zealand",
+}
+HOME_COUNTRIES: dict[str, frozenset[str]] = {
+    "english": frozenset(ENGLISH_COUNTRIES),
+    "hindi": frozenset({COUNTRY["india"]}),
+    "tamil": frozenset({COUNTRY["india"]}),
+    "malayalam": frozenset({COUNTRY["india"]}),
+    "telugu": frozenset({COUNTRY["india"]}),
+    "korean": frozenset({COUNTRY["south_korea"]}),
+    "japanese": frozenset({COUNTRY["japan"]}),
+}
+REGIONAL_ORDER = ("tamil", "malayalam", "telugu", "hindi", "korean", "japanese")
+INDIAN = frozenset({"tamil", "malayalam", "telugu", "hindi"})
+NOT_ENGLISH_LABELS = frozenset({"Old English", "Middle English"})
+_ENGLISH_LABEL = re.compile(r"[A-Z][\w .'-]* English")
+
+
+def is_english(qid: str, label: str | None = None) -> bool:
+    """English or one of its varieties: the listed QIDs, or an English label "<X> English"
+    other than Old/Middle English."""
+    if qid in ENGLISH_LANGS:
+        return True
+    return bool(label and label not in NOT_ENGLISH_LABELS and _ENGLISH_LABEL.fullmatch(label))
+
+
+def language_groups(item: dict[str, Any]) -> tuple[set[str], bool]:
+    """(named languages among the original languages, whether any other language is listed).
+    Named: "english" (any variety) and the six regional languages."""
+    labels = item.get("language_labels") or {}
+    named: set[str] = set()
+    other = False
+    for qid in item.get("languages", []):
+        name = LANG_NAME.get(qid) or ("english" if is_english(qid, labels.get(qid)) else None)
+        if name:
+            named.add(name)
+        else:
+            other = True
+    return named, other
+
+
+def _first_regional(names: Iterable[str]) -> str:
+    return min(names, key=REGIONAL_ORDER.index)
+
+
+def classify_language(item: dict[str, Any]) -> tuple[str | None, str]:
+    """(the named language that decides the bucket, or None for world; the rule step used).
+    See the module docstring, "Bucket rule"."""
+    named, other = language_groups(item)
     countries = set(item.get("countries", []))
+    if not item.get("languages"):
+        # no original language in Wikidata at all (some Indian series): the country of origin
+        # is the only evidence, as before 1.2.0
+        for name in ("hindi", "korean", "japanese"):
+            if HOME_COUNTRIES[name] & countries:
+                return name, "no_language_country_only"
+        return None, "no_language"
+    if not named:
+        return None, "no_named_language"
+    if len(named) == 1 and not other:
+        return next(iter(named)), "only_language"
+    home = {n for n in named if HOME_COUNTRIES[n] & countries}
+    if len(home) == 1:
+        return next(iter(home)), "country_of_origin"
+    if "english" in home:
+        return "english", "co_production_english"
+    if home:
+        return _first_regional(home), "country_of_origin_fixed_order"
+    if countries:
+        return None, "no_language_matches_country"
+    if "english" in named:
+        return "english", "no_country_english_listed"
+    regional = named - {"english"}
+    return _first_regional(regional), "no_country_fixed_order"
+
+
+def bucket_for(item: dict[str, Any], language: str | None) -> str:
     tv = item["media_type"] == "tv_series"
-    indian_langs = [n for n in ("tamil", "malayalam", "telugu", "hindi") if LANG[n] in langs]
-    if COUNTRY["india"] in countries or indian_langs:
-        if tv:
-            return "tv:indian"
-        return f"film:{indian_langs[0]}" if indian_langs else "film:world"
-    if COUNTRY["south_korea"] in countries or LANG["korean"] in langs:
-        return "tv:korean" if tv else "film:korean"
-    if COUNTRY["japan"] in countries or LANG["japanese"] in langs:
-        if tv:
-            anime = set(item.get("classes", [])) & set(ANIME_TV_CLASSES) or any(
-                "anime" in g.lower() for g in item.get("genres", [])
-            )
-            return "tv:anime" if anime else "tv:world"
-        return "film:japanese"
-    if LANG["english"] in langs:
+    if language is None:
+        return "tv:world" if tv else "film:world"
+    if language == "english":
         return "tv:english" if tv else "film:english"
-    return "tv:world" if tv else "film:world"
+    if not tv:
+        return f"film:{language}"
+    if language in INDIAN:
+        return "tv:indian"
+    if language == "korean":
+        return "tv:korean"
+    anime = set(item.get("classes", [])) & set(ANIME_TV_CLASSES) or any(
+        "anime" in g.lower() for g in item.get("genres", [])
+    )
+    return "tv:anime" if anime else "tv:world"
+
+
+def classify(item: dict[str, Any]) -> str:
+    """Bucket name for an item, from its type, original languages (P364) and, to break ties,
+    its countries of origin (P495). See the module docstring, "Bucket rule"."""
+    return bucket_for(item, classify_language(item)[0])
 
 
 def language_display(candidate: dict[str, Any]) -> str:
@@ -197,9 +298,16 @@ def language_display(candidate: dict[str, Any]) -> str:
 
 
 def primary_language(item: dict[str, Any]) -> str:
+    """The language that decided the bucket ("english", "korean", ...); for a world title its
+    first original language QID (sorted), else "unknown"."""
+    language = classify_language(item)[0]
+    if language is not None:
+        return language
+    named, _ = language_groups(item)
     for qid in item.get("languages", []):
-        if qid in LANG_NAME:
-            return LANG_NAME[qid]
+        if qid not in LANG_NAME and not is_english(qid, (item.get("language_labels") or {})
+                                                   .get(qid)):
+            return qid
     return item["languages"][0] if item.get("languages") else "unknown"
 
 
@@ -224,12 +332,15 @@ def pool_queries(scale: float = 3.0) -> list[PoolQuery]:
         return max(60, int(q * scale))
 
     lang = LANG
-    not_named = ", ".join(f"wd:{q}" for q in NAMED_LANGS)
+    not_named = ", ".join(f"wd:{q}" for q in (*NAMED_LANGS, *ENGLISH_LANGS[1:]))
+    # English pools take every listed English variety (selector 1.2.0); world pools exclude
+    # them, so English-language titles don't fill the world pools' limits.
+    english = "VALUES ?l_ { " + " ".join(f"wd:{q}" for q in ENGLISH_LANGS) + " } " \
+        "?item wdt:P364 ?l_ ."
     qs: list[PoolQuery] = []
     for key, y0, y1 in _decade_ranges(FILM_ENGLISH_DECADES, 1960):
         quota = FILM_ENGLISH_DECADES[key]
-        where = f"?item wdt:P364 wd:{lang['english']} ."
-        qs.append(PoolQuery(f"film:english:{key}", "movie", where, y0, y1, 25, limit(quota)))
+        qs.append(PoolQuery(f"film:english:{key}", "movie", english, y0, y1, 25, limit(quota)))
     for name, floor in (("hindi", 15), ("tamil", 8), ("malayalam", 5), ("telugu", 10),
                         ("korean", 15), ("japanese", 20)):
         quota = BUCKET_BY_NAME[f"film:{name}"].quota
@@ -240,9 +351,8 @@ def pool_queries(scale: float = 3.0) -> list[PoolQuery]:
                         1870, 2100, 50, limit(25)))
     for key, y0, y1 in _decade_ranges(TV_ENGLISH_DECADES, 1990):
         quota = TV_ENGLISH_DECADES[key]
-        qs.append(PoolQuery(f"tv:english:{key}", "tv_series",
-                            f"?item wdt:P364 wd:{lang['english']} .", y0 if y0 > 1870 else 1930,
-                            y1, 20, limit(quota)))
+        qs.append(PoolQuery(f"tv:english:{key}", "tv_series", english,
+                            y0 if y0 > 1870 else 1930, y1, 20, limit(quota)))
     qs.append(PoolQuery("tv:korean", "tv_series", f"?item wdt:P364 wd:{lang['korean']} .",
                         1930, 2100, 10, limit(15)))
     qs.append(PoolQuery("tv:anime", "tv_series", f"?item wdt:P364 wd:{lang['japanese']} .",
@@ -380,7 +490,9 @@ def select(
             continue
         it = dict(it)
         it["genre"] = coarse_genre(it["genres"])
-        it["bucket"] = classify(it)
+        language, basis = classify_language(it)
+        it["bucket"] = bucket_for(it, language)
+        it["bucket_basis"] = basis
         it["language"] = primary_language(it)
         eligible.append(it)
 
@@ -424,10 +536,12 @@ def _row(
         "media_type": it["media_type"],
         "series_status": it["series_status"],
         "series_status_basis": it.get("series_status_basis"),
+        "number_of_seasons": it.get("number_of_seasons"),
         "tmdb_id": it["tmdb_id"],
         "tmdb_id_ambiguous": it["tmdb_id_ambiguous"],
         "imdb_id": it["imdb_id"],
         "bucket": bucket.name,
+        "bucket_basis": it.get("bucket_basis"),
         "role": role,
         "bucket_rank": rank,
         "region": bucket.region,

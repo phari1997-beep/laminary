@@ -15,8 +15,12 @@ Everything after step 2 is pinned to one revision id, so it is cached forever an
 ``content_sha256`` always describes a reproducible text.
 
 Section choice: the first heading, in the priority order below for the title's type, whose text
-has at least ``MIN_WORDS`` words. Titles with no such section are skipped with a recorded reason
-and never annotated (DECISIONS 2026-09-26: 150-word minimum; never guess from a title).
+has at least ``MIN_WORDS`` words after non-plot parts are dropped (``sections.py``, DECISIONS
+2026-10-02: production, ratings, broadcast and similar subsections are dropped, and a broad
+"Episodes"/"Seasons"/"Series overview" section that is mostly non-plot doesn't count). Every
+section tried is recorded under ``section_checks`` with what was dropped and why. Titles with no
+such section are skipped with a recorded reason and never annotated (DECISIONS 2026-09-26:
+150-word minimum; never guess from a title).
 
 Series fallback (DECISIONS 2026-10-01): when a series' main article is too short or has no plot
 section, its verified per-season articles are tried (``seasons.py``). Such a record has
@@ -27,7 +31,6 @@ main article's result is kept under ``main_article``.
 
 from __future__ import annotations
 
-import re
 import urllib.parse
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -37,17 +40,21 @@ from typing import Any
 from laminary_pipeline.annotation import require_wikipedia_sources
 from laminary_pipeline.ingest.http import HttpClient, HttpError
 from laminary_pipeline.ingest.seasons import (
-    SEASON_ONE_CEILING,
+    LEAD_BLOCK_CEILING,
     SEASON_WORD_CAP,
     STUB_SEASON_WORDS,
     SeasonFinder,
     SeasonResult,
+    season_coverage,
 )
-from laminary_pipeline.ingest.text import html_to_text, sha256_text, word_count
+from laminary_pipeline.ingest.sections import SectionFilter, filter_section, normalize_heading
+from laminary_pipeline.ingest.text import html_to_text, sha256_text
 
-FETCHER_VERSION = "1.3.0"  # 1.1.0: per-season articles for thin series; 1.2.0: lead block
+FETCHER_VERSION = "1.4.0"  # 1.1.0: per-season articles for thin series; 1.2.0: lead block
 # of stub seasons (under STUB_SEASON_WORDS, 500) before the first full season; 1.3.0: stubs
-# alone when the lead block is over the 6,000-word ceiling
+# alone when the lead block is over the 6,000-word ceiling; 1.4.0 (DECISIONS 2026-10-02):
+# non-plot subsections dropped (sections.py), MediaWiki "Cite error" text stripped, Wikidata
+# P179/P361 evidence per season page, season coverage, lead_block_ceiling key
 MIN_WORDS = 150
 API_URL = "https://en.wikipedia.org/w/api.php"
 WIKIDATA_API_URL = "https://www.wikidata.org/w/api.php"
@@ -79,7 +86,7 @@ SKIP_QID_MISMATCH = "qid_mismatch"
 SKIP_NO_SECTION = "no_plot_section"
 SKIP_TOO_SHORT = "too_short"
 SKIP_FETCH_ERROR = "fetch_error"  # transient: retried on the next run
-SKIP_SEASON_TOO_LONG = "season_too_long"  # lone full season over SEASON_ONE_CEILING
+SKIP_SEASON_TOO_LONG = "season_too_long"  # lone full season over LEAD_BLOCK_CEILING
 VIA_SEASON_ARTICLES = "season_articles"
 
 
@@ -98,12 +105,6 @@ def permalink(page_title: str, revid: int | str) -> str:
 
 def license_for(revision_timestamp: str) -> str:
     return "CC-BY-SA-4.0" if revision_timestamp >= CC_BY_SA_4_FROM else "CC-BY-SA-3.0"
-
-
-def normalize_heading(line: str) -> str:
-    text = re.sub(r"<[^>]+>", "", line)
-    text = re.sub(r"\s+", " ", text).strip().lower()
-    return text.rstrip(":.")
 
 
 def headings_for(media_type: str) -> tuple[str, ...]:
@@ -188,7 +189,7 @@ class PlotFetcher:
                          cache_ttl=None)
         return data["parse"]["sections"]
 
-    def section_text(self, revid: int, index: str) -> str:
+    def section_html(self, revid: int, index: str) -> str:
         data = self._api(
             {
                 "action": "parse", "oldid": str(revid), "section": index, "prop": "text",
@@ -196,7 +197,19 @@ class PlotFetcher:
             },
             cache_ttl=None,
         )
-        return html_to_text(data["parse"]["text"])
+        return str(data["parse"]["text"])
+
+    def section_text(self, revid: int, index: str) -> str:
+        """The whole section as text, nothing dropped (for inspection; the fetcher uses
+        ``section_filtered``)."""
+        return html_to_text(self.section_html(revid, index))
+
+    def section_filtered(
+        self, revid: int, index: str, heading: str, media_type: str = "tv_series"
+    ) -> SectionFilter:
+        """The section's plot-like parts only (``sections.filter_section``; series only, a
+        film's plot section is used whole)."""
+        return filter_section(self.section_html(revid, index), heading, media_type)
 
     # ---------- main entry ----------
 
@@ -214,7 +227,8 @@ class PlotFetcher:
             "candidate": {
                 k: candidate.get(k)
                 for k in ("title", "year", "media_type", "bucket", "language", "decade",
-                          "tmdb_id", "imdb_id", "series_status", "series_status_basis")
+                          "tmdb_id", "imdb_id", "series_status", "series_status_basis",
+                          "number_of_seasons")
             },
             "min_words": self.min_words,
             "retrieved_at": self.clock(),
@@ -258,19 +272,24 @@ class PlotFetcher:
             return self._try_seasons({**result, "skip_reason": SKIP_NO_SECTION}, media_type)
 
         best: tuple[int, Section] | None = None
+        checks: list[dict[str, Any]] = []
+        result["section_checks"] = checks
         for section in candidates:
-            text = self.section_text(revid, section.index)
-            words = word_count(text)
-            if words >= self.min_words:
-                return self._ok(result, page_title, revid, rev_ts, section, text, words)
-            if best is None or words > best[0]:
-                best = (words, section)
+            filtered = self.section_filtered(revid, section.index, section.heading,
+                                             media_type)
+            checks.append(filtered.record(section.index))
+            if filtered.words >= self.min_words:
+                return self._ok(result, page_title, revid, rev_ts, section, filtered)
+            if best is None or filtered.words > best[0]:
+                best = (filtered.words, section)
         assert best is not None
         words, section = best
+        trimmed = any(c["dropped"] or not c["accepted"] for c in checks)
         skipped = {
             **result,
             "skip_reason": SKIP_TOO_SHORT,
-            "skip_detail": f"longest plot-like section {section.heading!r} has {words} words",
+            "skip_detail": f"longest plot-like section {section.heading!r} has {words} words"
+            + (" after non-plot parts were dropped" if trimmed else ""),
             "section": {"heading": section.heading, "index": section.index},
             "word_count": words,
         }
@@ -290,14 +309,22 @@ class PlotFetcher:
             int(skipped["revision"]),
         )
         main = {k: skipped.get(k) for k in ("skip_reason", "skip_detail", "section",
-                                            "word_count", "revision", "permalink")}
+                                            "word_count", "revision", "permalink",
+                                            "section_checks")}
         report = {
             "used": [t.page.title for t in found.texts],
+            # Wikidata evidence that placed each used page in this series (DECISIONS
+            # 2026-10-02): its item and the matched P179/P361 statement
+            "evidence": [
+                {"title": t.page.title, **t.page.evidence.record()}
+                for t in found.texts if t.page.evidence is not None
+            ],
+            "verified_seasons": found.verified_seasons,
             "skipped": found.skipped,
             "left_out_over_cap": found.left_out_over_cap,
             "used_list_page": found.used_list_page,
             "word_cap": self.season_word_cap,
-            "season_one_ceiling": SEASON_ONE_CEILING,
+            "lead_block_ceiling": LEAD_BLOCK_CEILING,  # "season_one_ceiling" before 1.4.0
             "stub_season_words": STUB_SEASON_WORDS,
         }
         if found.too_long is not None:
@@ -305,7 +332,7 @@ class PlotFetcher:
                 **skipped,
                 "skip_reason": SKIP_SEASON_TOO_LONG,
                 "skip_detail": f"first full season (no stub seasons before it) is over "
-                f"{SEASON_ONE_CEILING} words: "
+                f"{LEAD_BLOCK_CEILING} words: "
                 f"{found.too_long}"[:300],
                 "season_articles": report,
             }
@@ -315,7 +342,11 @@ class PlotFetcher:
                 f"{len(found.texts)} usable with {found.words} words"
             )
             return {**skipped, "skip_detail": detail[:300], "season_articles": report}
-        return self._ok_seasons(skipped, main, found, report)
+        coverage = season_coverage(
+            [t.page.season for t in found.texts], found.verified_seasons,
+            (skipped.get("candidate") or {}).get("number_of_seasons"),
+        )
+        return self._ok_seasons(skipped, main, found, report, coverage)
 
     def _ok_seasons(
         self,
@@ -323,6 +354,7 @@ class PlotFetcher:
         main: dict[str, Any],
         found: SeasonResult,
         report: dict[str, Any],
+        coverage: dict[str, Any] | None,
     ) -> dict[str, Any]:
         parts = []
         for t in found.texts:
@@ -341,11 +373,14 @@ class PlotFetcher:
                 "page_title": t.page.title,
                 "permalink": permalink(t.page.title, t.page.revid),
                 "sections": t.headings,
+                "section_checks": t.checks,
                 "source": source,
                 "text": t.text,
             })
         require_wikipedia_sources([p["source"] for p in parts])  # fail closed, every page
-        out = {k: v for k, v in result.items() if k not in ("skip_detail", "word_count")}
+        out = {k: v for k, v in result.items()
+               if k not in ("skip_detail", "word_count", "section_checks")}
+        extra = {"coverage": coverage} if coverage is not None else {}
         return {
             **out,
             "status": "ok",
@@ -357,6 +392,7 @@ class PlotFetcher:
             "word_count": found.words,
             "sources": parts,
             "season_articles": report,
+            **extra,
         }
 
     def _ok(
@@ -366,9 +402,9 @@ class PlotFetcher:
         revid: int,
         rev_ts: str,
         section: Section,
-        text: str,
-        words: int,
+        filtered: SectionFilter,
     ) -> dict[str, Any]:
+        text, words = filtered.text, filtered.words
         source = {
             "kind": "wikipedia_plot",
             "ref": article_url(page_title),
@@ -382,7 +418,8 @@ class PlotFetcher:
         return {
             **result,
             "status": "ok",
-            "section": {"heading": section.heading, "index": section.index},
+            "section": {"heading": section.heading, "index": section.index,
+                        "dropped": filtered.dropped},
             "word_count": words,
             "source": source,
             "text": text,

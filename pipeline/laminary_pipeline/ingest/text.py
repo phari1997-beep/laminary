@@ -7,8 +7,9 @@ send ``text`` byte-for-byte and use ``word_count()`` from this module for its pr
 
 Removed: references and all superscripts (``[1]``, ``[citation needed]``), tables (episode
 lists, series overviews), hatnotes ("Main article: ..."), images and captions, navboxes,
-headings, edit links, style and script. Kept: paragraph and list text, with paragraphs separated
-by a blank line.
+headings, edit links, style and script, and MediaWiki error messages such as "Cite error: ..."
+(by their ``error`` / ``mw-ext-cite-error`` class). Kept: paragraph and list text, with
+paragraphs separated by a blank line.
 """
 
 from __future__ import annotations
@@ -26,7 +27,11 @@ SKIP_CLASSES = frozenset(
     {"reference", "references", "reflist", "mw-editsection", "hatnote", "navbox", "noprint",
      "thumb", "gallery", "infobox", "sidebar", "shortdescription", "metadata", "ambox",
      "mw-cite-backlink", "toc", "mw-heading", "mw-empty-elt", "rellink", "dablink",
-     "portalbox", "sistersitebox", "side-box", "mbox-small", "quotebox"}
+     "portalbox", "sistersitebox", "side-box", "mbox-small", "quotebox",
+     # MediaWiki error messages ("Cite error: There are <ref group=lower-alpha> tags on this
+     # page...", citation-template and Lua errors): the wiki's rendering, never plot text.
+     # Matched on the class MediaWiki puts on the message, not on its wording.
+     "error", "mw-ext-cite-error", "cs1-visible-error", "cs1-hidden-error", "scribunto-error"}
 )
 BLOCK_TAGS = frozenset({"p", "li", "dd", "dt", "blockquote", "div", "ul", "ol", "dl", "br"})
 VOID_TAGS = frozenset(

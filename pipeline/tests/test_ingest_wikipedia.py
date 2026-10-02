@@ -50,7 +50,7 @@ def test_movie_plot_section_ok_and_source_passes_the_gate() -> None:
     assert rec["status"] == "ok", rec
     text = rec["text"]
     assert rec["word_count"] == word_count(text) >= MIN_WORDS
-    assert rec["section"] == {"heading": "plot", "index": "1"}
+    assert rec["section"] == {"heading": "plot", "index": "1", "dropped": []}
     assert "[1]" not in text and "citation needed" not in text
     assert "Main article" not in text and "fictional lighthouse used as a set" not in text
     assert text.startswith("On a windswept island") and "child's account." in text
