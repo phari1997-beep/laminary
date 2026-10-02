@@ -19,7 +19,8 @@ Rationale (also in the Phase 1 report and data/README.md):
   title has several, its country of origin (P495) breaks the tie. Steps:
 
   0. No original language in Wikidata at all (some Indian series): the country of origin
-     decides as before (India: Indian, South Korea: Korean, Japan: Japanese), else world.
+     decides as before (India: tv:indian for a series, world for a film; South Korea:
+     Korean; Japan: Japanese), else world.
   1. Map each original language to English, one of the six regional languages, or "other".
   2. No English or regional language: world.
   3. Exactly one of them and no "other" language: that one.
@@ -241,8 +242,12 @@ def classify_language(item: dict[str, Any]) -> tuple[str | None, str]:
     countries = set(item.get("countries", []))
     if not item.get("languages"):
         # no original language in Wikidata at all (some Indian series): the country of origin
-        # is the only evidence, as before 1.2.0
-        for name in ("hindi", "korean", "japanese"):
+        # is the only evidence, used as before 1.2.0 (an Indian film without a language is
+        # world: its language bucket is unknown)
+        if COUNTRY["india"] in countries:
+            tv = item.get("media_type") == "tv_series"
+            return ("hindi", "no_language_country_only") if tv else (None, "no_language")
+        for name in ("korean", "japanese"):
             if HOME_COUNTRIES[name] & countries:
                 return name, "no_language_country_only"
         return None, "no_language"
@@ -303,10 +308,9 @@ def primary_language(item: dict[str, Any]) -> str:
     language = classify_language(item)[0]
     if language is not None:
         return language
-    named, _ = language_groups(item)
+    labels = item.get("language_labels") or {}
     for qid in item.get("languages", []):
-        if qid not in LANG_NAME and not is_english(qid, (item.get("language_labels") or {})
-                                                   .get(qid)):
+        if qid not in LANG_NAME and not is_english(qid, labels.get(qid)):
             return qid
     return item["languages"][0] if item.get("languages") else "unknown"
 

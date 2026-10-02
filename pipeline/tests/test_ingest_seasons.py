@@ -469,6 +469,11 @@ def test_report_counts_titles_via_season_articles(tmp_path: Path) -> None:
     report = plots_report(paths, cands)
     assert report["via_season_articles"] == {"total": 1, "by_bucket": {"tv:english": 1}}
     assert "Via season articles: 1" in format_report(report)
+    # seasons 1-2 of 4 verified pages: partial; nothing dropped in the synthetic sections
+    assert report["non_plot_filter"] == {"titles_with_parts_dropped": 0,
+                                         "titles_with_a_section_rejected": 0,
+                                         "partial_season_coverage": 1}
+    assert "1 passing series cover only some seasons" in format_report(report)
 
 
 def test_thin_series_from_an_older_fetcher_are_fetched_again(tmp_path: Path) -> None:

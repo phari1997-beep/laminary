@@ -153,6 +153,16 @@ def effective_pilot(paths: DataPaths, candidates: Sequence[dict[str, Any]]) -> l
     return out
 
 
+def section_checks(rec: dict[str, Any]) -> list[dict[str, Any]]:
+    """Every section check in a plot file (fetcher 1.4.0): the main article's, wherever it sits,
+    and each season article's."""
+    out = list(rec.get("section_checks") or [])
+    out += (rec.get("main_article") or {}).get("section_checks") or []
+    for part in rec.get("sources") or []:
+        out += part.get("section_checks") or []
+    return out
+
+
 def plots_report(paths: DataPaths, candidates: Sequence[dict[str, Any]]) -> dict[str, Any]:
     """Pass rates of the 150-word rule over every candidate with a plot file."""
     fetched = []
@@ -180,6 +190,7 @@ def plots_report(paths: DataPaths, candidates: Sequence[dict[str, Any]]) -> dict
         c["bucket"] for c, rec in fetched
         if rec["status"] == "ok" and rec.get("via") == VIA_SEASON_ARTICLES
     )
+    checks = [(rec, section_checks(rec)) for _, rec in fetched]
     return {
         "candidates": len(candidates),
         "fetched": len(fetched),
@@ -194,6 +205,16 @@ def plots_report(paths: DataPaths, candidates: Sequence[dict[str, Any]]) -> dict
         "via_season_articles": {
             "total": sum(via_seasons.values()),
             "by_bucket": dict(sorted(via_seasons.items())),
+        },
+        # fetcher 1.4.0 (DECISIONS 2026-10-02): series sections with non-plot parts dropped
+        "non_plot_filter": {
+            "titles_with_parts_dropped": sum(
+                1 for _, cs in checks if any(c.get("dropped") for c in cs)),
+            "titles_with_a_section_rejected": sum(
+                1 for _, cs in checks if any(c.get("accepted") is False for c in cs)),
+            "partial_season_coverage": sum(
+                1 for rec, _ in checks
+                if rec["status"] == "ok" and (rec.get("coverage") or {}).get("partial")),
         },
         "sections_used": dict(sections.most_common()),
         "ok_word_count": (
@@ -225,6 +246,12 @@ def format_report(report: dict[str, Any]) -> str:
     lines.append(f"Via season articles: {via['total']} passing titles")
     for bucket, n in via["by_bucket"].items():
         lines.append(f"  {bucket:<26} {n:>4}")
+    npf = report.get("non_plot_filter")
+    if npf:
+        lines.append(
+            f"Non-plot filter: {npf['titles_with_parts_dropped']} titles had parts dropped, "
+            f"{npf['titles_with_a_section_rejected']} had a section rejected as mostly "
+            f"non-plot; {npf['partial_season_coverage']} passing series cover only some seasons")
     eff = report["effective_pilot"]
     lines.append(f"Effective pilot (after backfill): {eff['total']}/{eff['slots']} slots filled")
     lines.append("  " + ", ".join(f"{b} {v}" for b, v in eff["by_bucket"].items()))

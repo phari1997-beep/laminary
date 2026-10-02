@@ -313,6 +313,16 @@ def test_english_varieties_by_label_but_not_old_or_middle_english() -> None:
     assert c.classify(vikings) == "tv:english"
 
 
+def test_no_original_language_falls_back_to_the_country() -> None:
+    """Kumkum Bhagya, The Family Man: Indian series with no P364 stay tv:indian."""
+    assert c.classify_language(real("tv_series", [], [IN])) == ("hindi",
+                                                                "no_language_country_only")
+    assert c.classify(real("tv_series", [], [IN])) == "tv:indian"
+    assert c.classify(real("movie", [], [IN])) == "film:world"
+    assert c.classify(real("movie", [], [KR])) == "film:korean"
+    assert c.classify(real("tv_series", [], [US])) == "tv:world"
+
+
 def test_no_country_of_origin_falls_back_to_listed_languages() -> None:
     assert c.classify(real("movie", [EN, KO], [])) == "film:english"
     assert c.classify(real("movie", [HI, TA], [])) == "film:tamil"
