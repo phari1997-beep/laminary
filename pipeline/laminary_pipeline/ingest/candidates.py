@@ -46,6 +46,9 @@ Rationale (also in the Phase 1 report and data/README.md):
   well-known titles (gold-set material) and genre spread.
 - **Gold seeds** (``data/config/gold_seed_titles.csv``) are forced in first, so the gold set can
   be drawn from the pilot.
+- **Priority series** (``priority.PRIORITY_SERIES``, selector 1.3.1, DECISIONS 2026-10-02): the
+  ten big shows Hari named are forced in the same way when eligible, and ``gather`` always
+  fetches them. Each row says ``priority_series: true``.
 - **Reserves**: ~30% extra per bucket, ranked, used by ``plots --backfill`` to replace titles
   that fail the 150-word rule without changing the mix.
 - Excluded: documentaries, concert films, stand-up, reality/competition/talk/sketch shows,
@@ -71,6 +74,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from laminary_pipeline.ingest.priority import PRIORITY_SERIES
 from laminary_pipeline.ingest.wikidata import (
     ANIME_TV_CLASSES,
     COUNTRY,
@@ -81,9 +85,10 @@ from laminary_pipeline.ingest.wikidata import (
     Wikidata,
 )
 
-SELECTOR_VERSION = "1.3.0"  # 1.1.0: non-narrative series filter (DECISIONS 2026-10-01);
+SELECTOR_VERSION = "1.3.1"  # 1.1.0: non-narrative series filter (DECISIONS 2026-10-01);
 # 1.2.0: original language decides the bucket, English varieties count as English, English
 # pools include the varieties (DECISIONS 2026-10-02); 1.3.0: bucket override table
+# (DECISIONS 2026-10-02); 1.3.1: priority series forced in like gold seeds
 # (DECISIONS 2026-10-02)
 RESERVE_RATIO = 0.3
 FAME_SHARE = 0.5  # share of each cell taken purely by sitelinks before genre round-robin
@@ -560,7 +565,9 @@ def select(
             seed_titles.setdefault(hit["qid"], seed["title"])
         else:
             missing.append(seed)
-    seed_qids = set(seed_titles)
+    # gold seeds and the eligible priority series are forced in (DECISIONS 2026-10-02)
+    eligible_qids = {it["qid"] for it in eligible}
+    seed_qids = set(seed_titles) | (set(PRIORITY_SERIES) & eligible_qids)
 
     by_bucket: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for it in eligible:
@@ -613,6 +620,7 @@ def _row(
         "countries": it["countries"],
         "sitelinks": it["sitelinks"],
         "gold_seed": seed_title is not None,
+        "priority_series": it["qid"] in PRIORITY_SERIES,
         "gold_seed_title": seed_title,
         "source": {"kind": "wikidata_sparql", "license": "CC0-1.0", "retrieved_at": retrieved_at},
         "selector_version": SELECTOR_VERSION,
@@ -642,7 +650,8 @@ def interleave_limit(rows: Sequence[dict[str, Any]], limit: int) -> list[dict[st
 
 def gather(wd: Wikidata, seeds: Sequence[dict[str, str]]) -> dict[str, dict[str, Any]]:
     """Run pool and seed queries, then fetch details for every QID found."""
-    qids: set[str] = set(BUCKET_OVERRIDES)  # always fetched, whichever pool finds them
+    # always fetched, whichever pool finds them (or none)
+    qids: set[str] = set(BUCKET_OVERRIDES) | set(PRIORITY_SERIES)
     for q in pool_queries():
         qids.update(r["qid"] for r in wd.pool(q))
     seed_labels: dict[str, list[str]] = defaultdict(list)

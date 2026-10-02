@@ -201,7 +201,7 @@ def test_listed_non_narrative_titles_are_excluded() -> None:
     zobo = item("tv_series", "english", 1999, 90, "children's television series")
     zobo["qid"] = "Q3109770"
     assert c.excluded_reason(zobo) == "non_narrative:listed"
-    assert c.SELECTOR_VERSION == "1.3.0"
+    assert c.SELECTOR_VERSION == "1.3.1"
 
 
 @pytest.mark.parametrize(
@@ -344,7 +344,7 @@ def test_rows_record_the_bucket_basis_and_season_count() -> None:
     sel = c.select({it["qid"]: it}, reserve_ratio=0)
     row = sel.rows[0]
     assert row["bucket"] == "tv:english" and row["bucket_basis"] == "only_language"
-    assert row["number_of_seasons"] == 5 and row["selector_version"] == "1.3.0"
+    assert row["number_of_seasons"] == 5 and row["selector_version"] == "1.3.1"
 
 
 def test_world_pools_exclude_english_varieties() -> None:
@@ -509,7 +509,7 @@ def test_each_override_applies(qid: str, name: str, media_type: str, languages: 
     assert c.classify_with_basis(it) == (want, "override")
     row = c.select({qid: it}, reserve_ratio=0).rows[0]
     assert (row["bucket"], row["bucket_basis"], row["role"]) == (want, "override", "pilot")
-    assert row["selector_version"] == "1.3.0"
+    assert row["selector_version"] == "1.3.1"
 
 
 def test_override_table_is_exactly_hari_s_list() -> None:
@@ -575,3 +575,57 @@ def test_gather_always_fetches_override_qids() -> None:
     )
     assert "# laminary detail query" in sent
     assert all(f"wd:{q}" in sent for q in c.BUCKET_OVERRIDES)
+
+
+# --- priority series forced in (selector 1.3.1, DECISIONS 2026-10-02) ----------------------
+
+PRIORITY_ITEMS = [  # QID, year, original language, country: as in the cached candidate data
+    ("Q23733", 1989, EN, US), ("Q16290", 1987, EN, US), ("Q494244", 1972, EN, US),
+    ("Q751917", 1997, EN, UK), ("Q23572", 2011, EN, US), ("Q192837", 2010, EN, UK),
+    ("Q4525", 2003, EN, US), ("Q485668", 2001, EN, US), ("Q252118", 1998, HI, IN),
+    ("Q34316", 1963, "Q7979", UK),
+]
+
+
+def _priority_pool() -> dict[str, dict[str, Any]]:
+    pool = big_pool()
+    for qid, year, lang, country in PRIORITY_ITEMS:
+        it = item("tv_series", "english", year, 1, "drama television series", country=country)
+        it.update(qid=qid, languages=[lang])  # sitelinks 1: last by fame in any pool
+        pool[qid] = it
+    return pool
+
+
+def test_priority_series_are_forced_into_the_pilot() -> None:
+    from laminary_pipeline.ingest.priority import PRIORITY_SERIES
+
+    assert {q for q, *_ in PRIORITY_ITEMS} == set(PRIORITY_SERIES)
+    sel = c.select(_priority_pool())
+    pilot = [r for r in sel.rows if r["role"] == "pilot"]
+    by_qid = {r["qid"]: r for r in pilot}
+    assert set(PRIORITY_SERIES) <= set(by_qid)
+    assert by_qid["Q252118"]["bucket"] == "tv:indian"
+    assert all(by_qid[q]["priority_series"] for q in PRIORITY_SERIES)
+    assert sum(r["priority_series"] for r in sel.rows) == 10
+    # buckets still fill to their quotas, and no title appears twice
+    counts = Counter(r["bucket"] for r in pilot)
+    assert all(counts[b.name] == b.quota for b in c.BUCKETS)
+    assert len(pilot) == c.TARGET_TOTAL
+    qids = [r["qid"] for r in sel.rows]
+    assert len(qids) == len(set(qids))
+
+
+def test_ineligible_priority_series_are_not_forced() -> None:
+    pool = _priority_pool()
+    pool["Q4525"]["tmdb_id"] = None  # excluded: no TMDB id
+    assert "Q4525" not in {r["qid"] for r in c.select(pool).rows}
+
+
+def test_gather_always_fetches_priority_series() -> None:
+    from laminary_pipeline.ingest.priority import PRIORITY_SERIES
+
+    fake = FakeWikimedia()
+    wd = Wikidata(HttpClient(fake, None, sleep=lambda s: None, min_interval={}))
+    c.gather(wd, [])
+    sent = " ".join(urllib.parse.unquote_plus((r.data or b"").decode()) for r in fake.requests)
+    assert all(f"wd:{q}" in sent for q in PRIORITY_SERIES)

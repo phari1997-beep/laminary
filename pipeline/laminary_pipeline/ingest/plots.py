@@ -22,6 +22,7 @@ from typing import Any
 from laminary_pipeline.ingest.candidates import BUCKETS, language_display
 from laminary_pipeline.ingest.episodes import VIA_DETAIL_EPISODE_TABLE
 from laminary_pipeline.ingest.paths import DataPaths, read_json, write_json_atomic
+from laminary_pipeline.ingest.priority import PRIORITY_SERIES
 from laminary_pipeline.ingest.wikipedia import (
     SKIP_FETCH_ERROR,
     SKIP_NO_SECTION,
@@ -30,20 +31,6 @@ from laminary_pipeline.ingest.wikipedia import (
     PlotFetcher,
 )
 
-# DECISIONS 2026-10-02: big series that must not drop out of the pilot. QIDs from the cached
-# candidate data (pipeline/data/pilot_candidates.jsonl).
-PRIORITY_SERIES: dict[str, str] = {
-    "Q23733": "Seinfeld",
-    "Q16290": "Star Trek: The Next Generation",
-    "Q494244": "M*A*S*H",
-    "Q751917": "Midsomer Murders",
-    "Q23572": "Game of Thrones",
-    "Q192837": "Sherlock",
-    "Q4525": "NCIS",
-    "Q485668": "Scrubs",
-    "Q252118": "CID",
-    "Q34316": "Doctor Who",
-}
 EPISODE_TABLE_FETCHER = (1, 5, 0)
 
 
@@ -194,9 +181,18 @@ def held_priority(paths: DataPaths, rows: Sequence[dict[str, Any]]) -> list[dict
 def priority_report(
     paths: DataPaths, candidates: Sequence[dict[str, Any]]
 ) -> list[dict[str, Any]]:
-    """Every priority series, in PRIORITY_SERIES order: its status (ok, skipped, not_fetched,
-    or not_a_candidate), the skip reason and detail, and how an ok text was built."""
+    """Every priority series, in PRIORITY_SERIES order, with its status (DECISIONS 2026-10-02:
+    only "pass" counts as passing):
+
+    - ``pass``: in the effective pilot;
+    - ``skipped``: its plot file is skipped (with the reason and detail);
+    - ``not_fetched``: a candidate with no plot file yet;
+    - ``reserve``: passes the plot rules but is a reserve outside the effective pilot;
+    - ``not_selected``: a passing pilot row left out of the effective pilot;
+    - ``not_a_candidate``: not in the candidate list at all (excluded or not selected).
+    """
     by_qid = {c["qid"]: c for c in candidates}
+    effective = {r["qid"] for r in effective_pilot(paths, candidates)}
     out = []
     for qid, name in PRIORITY_SERIES.items():
         cand = by_qid.get(qid)
@@ -208,13 +204,17 @@ def priority_report(
             entry["status"] = "not_a_candidate"
         elif rec is None:
             entry["status"] = "not_fetched"
-        elif rec.get("status") == "ok":
-            entry.update(status="ok", via=rec.get("via"), via_detail=rec.get("via_detail"),
-                         word_count=rec.get("word_count"),
-                         coverage=(rec.get("coverage") or {}).get("seasons"))
-        else:
+        elif rec.get("status") != "ok":
             entry.update(status="skipped", skip_reason=rec.get("skip_reason"),
                          skip_detail=rec.get("skip_detail"))
+        else:
+            if qid in effective:
+                status = "pass"
+            else:
+                status = "reserve" if cand.get("role") == "reserve" else "not_selected"
+            entry.update(status=status, via=rec.get("via"), via_detail=rec.get("via_detail"),
+                         word_count=rec.get("word_count"),
+                         coverage=(rec.get("coverage") or {}).get("seasons"))
         out.append(entry)
     return out
 
@@ -370,17 +370,20 @@ def format_report(report: dict[str, Any]) -> str:
 
 def format_priority(entries: list[dict[str, Any]]) -> list[str]:
     """The priority-series check: a count, then one WARNING line per series that is not ok."""
-    ok = sum(1 for e in entries if e["status"] == "ok")
-    lines = [f"Priority series (DECISIONS 2026-10-02): {ok}/{len(entries)} pass"]
+    passing = sum(1 for e in entries if e["status"] == "pass")
+    lines = [f"Priority series (DECISIONS 2026-10-02): {passing}/{len(entries)} pass "
+             "(in the effective pilot)"]
     for e in entries:
+        where = f" ({e['bucket']}, role {e['role']})" if e["bucket"] else ""
         if e["status"] == "skipped":
-            lines.append(f"  WARNING for Hari: {e['qid']} {e['title']!r} ({e['bucket']}, "
-                         f"{e['role']}) skipped: {e['skip_reason']}: "
-                         f"{(e.get('skip_detail') or '')[:200]}")
-        elif e["status"] != "ok":
-            lines.append(f"  WARNING for Hari: {e['qid']} {e['title']!r} is "
-                         f"{e['status'].replace('_', ' ')}"
-                         + (f" ({e['bucket']}, {e['role']})" if e["bucket"] else ""))
+            lines.append(f"  WARNING for Hari: {e['qid']} {e['title']!r}{where} skipped: "
+                         f"{e['skip_reason']}: {(e.get('skip_detail') or '')[:200]}")
+        elif e["status"] == "reserve":
+            lines.append(f"  WARNING for Hari: {e['qid']} {e['title']!r}{where} passes but is "
+                         "a reserve, not in the effective pilot")
+        elif e["status"] != "pass":
+            lines.append(f"  WARNING for Hari: {e['qid']} {e['title']!r}{where} is "
+                         f"{e['status'].replace('_', ' ')}")
     return lines
 
 

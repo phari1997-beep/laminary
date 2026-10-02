@@ -744,23 +744,29 @@ def test_priority_report_lists_skipped_series_with_the_reason(tmp_path: Path,
     paths = DataPaths.resolve(str(tmp_path))
     write_json_atomic(paths.plot_file("Q23572"), {**episode_plot, "qid": "Q23572"})
     write_json_atomic(paths.plot_file("Q23733"), _skipped("Q23733"))
+    write_json_atomic(paths.plot_file("Q485668"), {**episode_plot, "qid": "Q485668"})
     cands = _cands([("Q23572", "Game of Thrones", "pilot", 1),
                     ("Q23733", "Seinfeld", "pilot", 2),
-                    ("Q4525", "NCIS", "reserve", 1)])
+                    ("Q4525", "NCIS", "reserve", 1),
+                    ("Q485668", "Scrubs", "reserve", 2)])
     report = plots_report(paths, cands)
     by_qid = {e["qid"]: e for e in report["priority_series"]}
     assert len(by_qid) == 10
-    assert by_qid["Q23572"]["status"] == "ok"
+    assert by_qid["Q23572"]["status"] == "pass"
     assert by_qid["Q23572"]["via_detail"] == "episode_table"
     assert by_qid["Q23733"]["status"] == "skipped"
     assert by_qid["Q23733"]["skip_reason"] == "too_short"
     assert by_qid["Q4525"]["status"] == "not_fetched"
+    # passes the plot rules, but a reserve outside the effective pilot: not a pass (QA B1)
+    assert by_qid["Q485668"]["status"] == "reserve"
     assert by_qid["Q34316"]["status"] == "not_a_candidate"
     text = format_report(report)
-    assert "Priority series (DECISIONS 2026-10-02): 1/10 pass" in text
-    assert ("WARNING for Hari: Q23733 'Seinfeld' (tv:english, pilot) skipped: too_short: "
+    assert "Priority series (DECISIONS 2026-10-02): 1/10 pass (in the effective pilot)" in text
+    assert ("WARNING for Hari: Q23733 'Seinfeld' (tv:english, role pilot) skipped: too_short: "
             "longest plot-like section") in text
-    assert "WARNING for Hari: Q4525 'NCIS' is not fetched (tv:english, reserve)" in text
+    assert "WARNING for Hari: Q4525 'NCIS' (tv:english, role reserve) is not fetched" in text
+    assert ("WARNING for Hari: Q485668 'Scrubs' (tv:english, role reserve) passes but is a "
+            "reserve, not in the effective pilot") in text
     assert "WARNING for Hari: Q34316 'Doctor Who' is not a candidate" in text
 
 
