@@ -36,6 +36,13 @@ plus ``via_detail: "episode_table"`` (on the record and on each entry of ``sourc
 ``episode_tables`` report: pages used and their Wikidata evidence, episodes used per season, the
 partly included season, and what was left out over the cap. ``season_articles`` keeps the
 prose attempt.
+
+Series run rules (fetcher 1.5.1, DECISIONS 2026-10-02): for a series listed in
+``runs.SERIES_RUN_RULES`` (Doctor Who: the 2005 revival only), both fallbacks use only the
+pages and list-page headings of that run, and the season total ignores Wikidata P2437. The
+record then carries ``series_run_rule`` (the rule's name) and ``series_run_ignored`` (the pages
+it left out, with the reason); list-page headings it skipped are in
+``episode_tables.tables_skipped``.
 """
 
 
@@ -74,12 +81,13 @@ from laminary_pipeline.ingest.seasons import (
 from laminary_pipeline.ingest.sections import SectionFilter, filter_section, normalize_heading
 from laminary_pipeline.ingest.text import html_to_text, sha256_text, word_count
 
-FETCHER_VERSION = "1.5.0"  # 1.1.0: per-season articles for thin series; 1.2.0: lead block
+FETCHER_VERSION = "1.5.1"  # 1.1.0: per-season articles for thin series; 1.2.0: lead block
 # of stub seasons (under STUB_SEASON_WORDS, 500) before the first full season; 1.3.0: stubs
 # alone when the lead block is over the 6,000-word ceiling; 1.4.0 (DECISIONS 2026-10-02):
 # non-plot subsections dropped (sections.py), MediaWiki "Cite error" text stripped, Wikidata
 # P179/P361 evidence per season page, season coverage, lead_block_ceiling key; 1.5.0
-# (DECISIONS 2026-10-02): episode-table fallback for series (episodes.py)
+# (DECISIONS 2026-10-02): episode-table fallback for series (episodes.py); 1.5.1 (DECISIONS
+# 2026-10-02): per-title series run rules (runs.py; Doctor Who uses its 2005 revival only)
 MIN_WORDS = 150
 API_URL = "https://en.wikipedia.org/w/api.php"
 WIKIDATA_API_URL = "https://www.wikidata.org/w/api.php"
@@ -347,6 +355,11 @@ class PlotFetcher:
         main = {k: skipped.get(k) for k in ("skip_reason", "skip_detail", "section",
                                             "word_count", "revision", "permalink",
                                             "section_checks")}
+        if found.run_rule is not None:
+            # a per-title series run rule (fetcher 1.5.1, runs.py): recorded on the file,
+            # whether the title ends ok or skipped
+            skipped = {**skipped, "series_run_rule": found.run_rule.name,
+                       "series_run_ignored": found.run_ignored}
         report = {
             "used": [t.page.title for t in found.texts],
             # Wikidata evidence that placed each used page in this series (DECISIONS
@@ -385,6 +398,7 @@ class PlotFetcher:
         coverage = season_coverage(
             [t.page.season for t in found.texts], found.verified_seasons,
             (skipped.get("candidate") or {}).get("number_of_seasons"),
+            use_wikidata_total=found.run_rule is None,
         )
         return self._ok_seasons(skipped, main, found, report, coverage)
 
@@ -431,7 +445,8 @@ class PlotFetcher:
             if words > cap or len(collected) >= MAX_SEASON_SOURCES:
                 report["pages_not_fetched"] = [p.title for p in found.list_pages[i:]]
                 break
-            seasons, skipped_tables = list_page_seasons(parse_tables(self.page_html(page.revid)))
+            seasons, skipped_tables = list_page_seasons(
+                parse_tables(self.page_html(page.revid)), found.run_rule)
             report["tables_skipped"] += [{"title": page.title, **t} for t in skipped_tables]
             used_here = 0
             for n, tables in seasons:
@@ -523,6 +538,7 @@ class PlotFetcher:
         coverage = season_coverage(
             [s.season for s in joined.seasons], sorted({*found.verified_seasons, *listed}),
             (skipped.get("candidate") or {}).get("number_of_seasons"),
+            use_wikidata_total=found.run_rule is None,
         )
         assert coverage is not None  # every episode-table source has a season number
         if joined.partial_season is not None:

@@ -54,13 +54,14 @@ from dataclasses import dataclass, field
 from html.parser import HTMLParser
 from typing import Any
 
+from laminary_pipeline.ingest.runs import SeriesRunRule
 from laminary_pipeline.ingest.sections import normalize_heading
 from laminary_pipeline.ingest.text import html_to_text, word_count
 
 VIA_DETAIL_EPISODE_TABLE = "episode_table"
 EPISODE_TABLE_CLASS = "wikiepisodetable"
 MAX_TITLE_CHARS = 150
-_LIST_SEASON_HEADING = re.compile(r"^(?:season|series)\s+(\d{1,3})\b")
+_LIST_SEASON_HEADING = re.compile(r"^(season|series)\s+(\d{1,3})\b")
 # headings whose tables are out of a season's order (season pages): specials and extras
 _SKIP_TABLE_HEADING = re.compile(r"\b(?:specials?|webisodes?|minisodes?|mobisodes?|shorts?)\b")
 _PLAIN_INT = re.compile(r"^\d{1,3}$")
@@ -315,11 +316,13 @@ def season_page_tables(
 
 
 def list_page_seasons(
-    tables: list[RawTable],
+    tables: list[RawTable], rule: SeriesRunRule | None = None,
 ) -> tuple[list[tuple[int, list[RawTable]]], list[dict[str, str]]]:
     """An episode-list page's tables grouped by the season named in the heading above them,
     in page order, and the skipped tables with a reason. Seasons must rise down the page; the
-    first table under a repeated or lower season number stops the page."""
+    first table under a repeated or lower season number stops the page. With a series run rule
+    (fetcher 1.5.1, ``runs.py``), a heading in the other run's numbering ("Season 3" when the
+    rule uses "Series N") is skipped before the rising check."""
     seasons: list[tuple[int, list[RawTable]]] = []
     skipped: list[dict[str, str]] = []
     for i, t in enumerate(tables):
@@ -327,7 +330,10 @@ def list_page_seasons(
         if not m or _SKIP_TABLE_HEADING.search(t.heading):
             skipped.append({"heading": t.heading, "reason": "not under a season heading"})
             continue
-        n = int(m.group(1))
+        if rule is not None and not rule.heading_ok(m.group(1).casefold()):
+            skipped.append({"heading": t.heading, "reason": rule.heading_reason()})
+            continue
+        n = int(m.group(2))
         if n < 1:
             skipped.append({"heading": t.heading, "reason": "season 0"})
             continue

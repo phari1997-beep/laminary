@@ -354,7 +354,7 @@ def test_join_respects_the_source_limit() -> None:
 def test_series_with_failing_prose_uses_episode_tables_in_order() -> None:
     fake = episode_fake(season_pages=TWO_SEASONS)
     rec = fetch(fake)
-    assert rec["status"] == "ok" and rec["fetcher_version"] == FETCHER_VERSION == "1.5.0"
+    assert rec["status"] == "ok" and rec["fetcher_version"] == FETCHER_VERSION == "1.5.1"
     assert rec["via"] == "season_articles" and rec["via_detail"] == "episode_table"
     assert rec["section"] == {"heading": "episode tables", "index": None}
     assert rec["main_article"]["skip_reason"] == "too_short"
@@ -440,7 +440,7 @@ def test_too_little_episode_text_stays_too_short_with_the_report() -> None:
     assert rec["status"] == "skipped" and rec["skip_reason"] == "too_short"
     assert "episode tables: 2 episodes with" in rec["skip_detail"]
     assert rec["episode_tables"]["episodes_used"] == 2
-    assert rec["fetcher_version"] == "1.5.0"
+    assert rec["fetcher_version"] == "1.5.1"
 
 
 def test_no_pages_at_all_still_records_the_attempt() -> None:
@@ -656,9 +656,9 @@ def test_malformed_episode_table_files_are_refused(change: str, match: str) -> N
         parse_plot(plot, "t")
 
 
-def test_annotate_1_2_0_accepts_fetcher_1_5_0_files(episode_plot) -> None:
-    assert episode_plot["fetcher_version"] == "1.5.0"
-    _request(episode_plot)  # require_current_ingest: 1.5.0 >= 1.4.0
+def test_annotate_1_2_0_accepts_fetcher_1_5_files(episode_plot) -> None:
+    assert episode_plot["fetcher_version"] == "1.5.1"
+    _request(episode_plot)  # require_current_ingest: 1.5.1 >= 1.4.0
 
 
 def test_gate_accepts_every_shape_the_fetcher_produces() -> None:

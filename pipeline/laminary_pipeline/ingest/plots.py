@@ -4,7 +4,8 @@ One file per title: ``data/plots/<QID>.json`` with ``status`` "ok" (text + a sch
 ``source``) or "skipped" (with ``skip_reason``). A title with a file is not fetched again unless
 ``--refresh`` is given; ``fetch_error`` files (transient network problems) are always retried,
 and so are series skipped as too thin before the season-article fallback (fetcher 1.1.0) or the
-episode-table fallback (fetcher 1.5.0) existed.
+episode-table fallback (fetcher 1.5.0) existed, or, for a series with a run rule
+(``runs.SERIES_RUN_RULES``, Doctor Who), before the rule existed (fetcher 1.5.1).
 
 **Priority series** (DECISIONS 2026-10-02): ten big shows Hari named must not drop out of the
 pilot (``PRIORITY_SERIES``). The report lists any that ended skipped, with the reason, and
@@ -23,6 +24,7 @@ from laminary_pipeline.ingest.candidates import BUCKETS, language_display
 from laminary_pipeline.ingest.episodes import VIA_DETAIL_EPISODE_TABLE
 from laminary_pipeline.ingest.paths import DataPaths, read_json, write_json_atomic
 from laminary_pipeline.ingest.priority import PRIORITY_SERIES
+from laminary_pipeline.ingest.runs import SERIES_RUN_RULES
 from laminary_pipeline.ingest.wikipedia import (
     SKIP_FETCH_ERROR,
     SKIP_NO_SECTION,
@@ -33,6 +35,7 @@ from laminary_pipeline.ingest.wikipedia import (
 )
 
 EPISODE_TABLE_FETCHER = (1, 5, 0)
+RUN_RULE_FETCHER = (1, 5, 1)
 
 
 def existing_status(paths: DataPaths, qid: str) -> dict[str, Any] | None:
@@ -46,6 +49,7 @@ def needs_fetch(paths: DataPaths, qid: str, refresh: bool) -> bool:
     current = existing_status(paths, qid)
     return current is None or current.get("skip_reason") == SKIP_FETCH_ERROR or (
         _thin_series_before_seasons(current) or _thin_series_before_episode_tables(current)
+        or _run_rule_series_before_rules(current)
     )
 
 
@@ -58,12 +62,26 @@ def _thin_series_before_episode_tables(rec: dict[str, Any]) -> bool:
     """A series skipped as thin (or with a season article over the ceiling) after trying season
     articles, by a fetcher older than the episode-table fallback (1.5.0): fetched again so the
     fallback can run. Not when the season-article lookup was disabled for that run."""
+    return (_thin_series_tried_seasons(rec)
+            and _version(rec.get("fetcher_version")) < EPISODE_TABLE_FETCHER)
+
+
+def _run_rule_series_before_rules(rec: dict[str, Any]) -> bool:
+    """A series with a run rule (``runs.py``, Doctor Who) skipped after trying season articles
+    by a fetcher older than the rules (1.5.1): fetched again so the rule can apply."""
+    return (
+        rec.get("qid") in SERIES_RUN_RULES
+        and _thin_series_tried_seasons(rec)
+        and _version(rec.get("fetcher_version")) < RUN_RULE_FETCHER
+    )
+
+
+def _thin_series_tried_seasons(rec: dict[str, Any]) -> bool:
     return (
         rec.get("skip_reason") in (SKIP_TOO_SHORT, SKIP_NO_SECTION, SKIP_SEASON_TOO_LONG)
         and (rec.get("candidate") or {}).get("media_type") == "tv_series"
         and "season_articles" in rec
         and (rec.get("season_articles") or {}).get("status") != "disabled"
-        and _version(rec.get("fetcher_version")) < EPISODE_TABLE_FETCHER
     )
 
 

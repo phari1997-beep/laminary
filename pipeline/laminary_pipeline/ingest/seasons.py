@@ -56,6 +56,11 @@ and how many seasons the series has, so the annotation request can say "Summary 
 (P2437, from the candidate's detail query) when it is a whole number at least as large as every
 verified season page; otherwise the highest season number among the verified season pages
 found (pages left out over the cap and pages with no plot text count, unverified pages don't).
+
+**Series run rules** (fetcher 1.5.1, ``runs.py``): for a series with an entry in
+``SERIES_RUN_RULES`` (Doctor Who: the 2005 revival only), season and episode-list pages of the
+other numbering run are left out before verification (listed in ``SeasonResult.run_ignored``),
+and the coverage total never uses P2437.
 """
 
 from __future__ import annotations
@@ -66,6 +71,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any
 
+from laminary_pipeline.ingest.runs import SeriesRunRule, run_rule_for
 from laminary_pipeline.ingest.sections import normalize_heading
 from laminary_pipeline.ingest.text import word_count
 from laminary_pipeline.ingest.wikidata import PREFIXES, SPARQL_URL
@@ -99,7 +105,7 @@ SEASON_OVERVIEW_HEADINGS = frozenset({"overview", "season overview", "series ove
 
 QID_RE = re.compile(r"^Q[1-9][0-9]*$")  # checked before any id goes into SPARQL or int()
 _DISAMBIGUATOR = re.compile(r"\s+\([^()]*\)$")
-_SEASON_NUMBER = re.compile(r"\b(?:season|series)\s+(\d{1,2})\)?$", re.IGNORECASE)
+_SEASON_NUMBER = re.compile(r"\b(season|series)\s+(\d{1,2})\)?$", re.IGNORECASE)
 
 
 def series_base(page_title: str) -> str:
@@ -112,7 +118,16 @@ def season_number(title: str, base: str) -> int | None:
     if not title.casefold().startswith(base.casefold()):
         return None
     m = _SEASON_NUMBER.search(title)
-    return int(m.group(1)) if m and int(m.group(1)) >= 1 else None
+    return int(m.group(2)) if m and int(m.group(2)) >= 1 else None
+
+
+def season_numbering(title: str, base: str) -> str | None:
+    """"season" or "series": the word a season article title of this series numbers by
+    ("Doctor Who series 4" -> "series"), else None. For per-title run rules (``runs.py``)."""
+    if season_number(title, base) is None:
+        return None
+    m = _SEASON_NUMBER.search(title)
+    return m.group(1).casefold() if m else None
 
 
 # Episode-list pages split by a year range or a numbered part (fetcher 1.5.0): the suffix after
@@ -239,17 +254,20 @@ COVERAGE_BASES = ("wikidata_P2437", "verified_season_pages")
 
 
 def season_coverage(
-    used: list[int | None], verified: list[int], wikidata_total: Any
+    used: list[int | None], verified: list[int], wikidata_total: Any, *,
+    use_wikidata_total: bool = True,
 ) -> dict[str, Any] | None:
     """Which seasons a season-article text covers and the series' season total (see the module
-    docstring). None when a used page has no season number (an episode-list page)."""
+    docstring). None when a used page has no season number (an episode-list page).
+    ``use_wikidata_total=False`` (a series run rule, ``runs.py``) never uses P2437: the total is
+    the highest verified page or heading of the run, and a P2437 value is recorded as ignored."""
     if not used or any(whole_seasons(s) is None for s in used):
         return None
     seasons = sorted(int(s) for s in used if s is not None)
     pages = [n for n in verified if whole_seasons(n) is not None]
     highest = max([*pages, *seasons])
     out: dict[str, Any] = {"seasons": seasons}
-    wd_total = whole_seasons(wikidata_total)
+    wd_total = whole_seasons(wikidata_total) if use_wikidata_total else None
     if wd_total is not None and wd_total >= highest:
         out.update(total_seasons=wd_total, total_seasons_basis="wikidata_P2437")
     else:
@@ -293,6 +311,9 @@ class SeasonResult:
     # pages with a unique season number, in season order, and episode-list pages
     season_pages: list[Page] = field(default_factory=list)
     list_pages: list[Page] = field(default_factory=list)
+    # a per-title series run rule (fetcher 1.5.1, ``runs.py``) and the pages it ignored
+    run_rule: SeriesRunRule | None = None
+    run_ignored: list[dict[str, str]] = field(default_factory=list)
 
     @property
     def words(self) -> int:
@@ -381,6 +402,8 @@ class SeasonFinder:
                                       "is not a Wikidata item id"}], [], False)
         titles = self.linked_titles(revid, base, page_title) + guessed_titles(base, page_title)
         skipped: list[dict[str, str]] = []
+        rule = run_rule_for(series_qid)
+        ignored: list[dict[str, str]] = []
         raw_pages = [p for p in self.resolve(titles) if int(p["pageid"]) != page_id]
         pages: list[Page] = []
         for p in raw_pages:
@@ -389,6 +412,16 @@ class SeasonFinder:
             if number is None and not is_episode_list(title, base, page_title):
                 skipped.append({"title": title, "reason": "not a season or episode-list page"})
                 continue
+            if rule is not None:
+                # a per-title run rule (runs.py): pages of the other run are left out before
+                # verification, so they never claim a season or count for the total
+                if number is not None and not rule.season_page_ok(season_numbering(title, base)):
+                    ignored.append({"title": title, "reason": rule.season_page_reason()})
+                    continue
+                if number is None and not rule.list_page_ok(
+                        episode_list_order(title, base, page_title)):
+                    ignored.append({"title": title, "reason": rule.list_page_reason()})
+                    continue
             item = (p.get("pageprops") or {}).get("wikibase_item")
             if item is not None and not (isinstance(item, str) and QID_RE.match(item)):
                 skipped.append({"title": title, "reason": f"malformed Wikidata item {item!r}"})
@@ -438,6 +471,8 @@ class SeasonFinder:
         result.verified_seasons = verified_seasons
         result.season_pages = seasons
         result.list_pages = lists
+        result.run_rule = rule
+        result.run_ignored = ignored
         return result
 
     def _season_text(self, page: Page) -> SeasonText | None:
