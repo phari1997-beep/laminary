@@ -42,6 +42,16 @@ with 41 (cached SPARQL, 2026-10-02), after the classic seasons 1–26. The plain
 (26 for Doctor Who) states that convention: a revival "series N" page passes only when its
 ordinal is exactly N + 26 (or it has none), so the check is as strict as before, just against
 Wikidata's numbering. A page whose ordinal is anything else is still skipped.
+
+**CID** (Q252118, DECISIONS 2026-10-02, Hari's option "a"; fetcher 1.5.5). Its four verified
+episode-list pages ("List of CID episodes: 1998–2009", "2010–2014", "2015–2018",
+"2024–present") have no season headings: each year is an h2 ("1998", "1999" ... "2025") over
+its episode table. The rule ``cid_years`` (numbering "year") treats each year heading as one
+"season" numbered by its year, in year order across the split pages (which sort by their start
+year), with the same episode-table caps and episode-boundary stop. Every episode-list form is
+allowed (plain or split); season pages and "Season N" headings are ignored (CID has none).
+Sources then carry ``year`` instead of ``season``, episode markers read "1998E5", and the
+coverage line states years: "Summary covers 1998–1999 of 1998–2025." (``seasons.year_coverage``).
 """
 
 from __future__ import annotations
@@ -49,13 +59,16 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-NUMBERINGS = ("season", "series")
+NUMBERINGS = ("season", "series", "year")
+YEAR = "year"
 
 
 @dataclass(frozen=True)
 class SeriesRunRule:
     name: str  # recorded in the plot file as ``series_run_rule``
-    numbering: str  # "season" or "series": the word the run's page titles and headings use
+    # "season" or "series": the word the run's page titles and headings use; "year": list-page
+    # year headings ("1998") are the run's units and season pages are not used
+    numbering: str
     list_pages_from: int  # episode-list pages used: split by a year range starting this year+
     description: str
     # Wikidata's series ordinal (P179 P1545) for the run's season N is N + ordinal_offset
@@ -73,7 +86,10 @@ class SeriesRunRule:
 
     def list_page_ok(self, order: tuple[int, int] | None) -> bool:
         """An episode-list page, by its ``seasons.episode_list_order`` key: only a page split
-        by a year range (kind 1) starting in or after ``list_pages_from``."""
+        by a year range (kind 1) starting in or after ``list_pages_from``; with numbering
+        "year", any episode-list page of the series."""
+        if self.numbering == YEAR:
+            return order is not None
         return order is not None and order[0] == 1 and order[1] >= self.list_pages_from
 
     def heading_ok(self, numbering: str | None) -> bool:
@@ -81,6 +97,9 @@ class SeriesRunRule:
         return numbering == self.numbering
 
     def season_page_reason(self) -> str:
+        if self.numbering == YEAR:
+            return (f"outside the {self.name} run: only year headings on episode-list pages "
+                    "are used (series run rule)")
         return (f"outside the {self.name} run: only '{self.numbering} N' season pages are "
                 "used (series run rule)")
 
@@ -89,6 +108,9 @@ class SeriesRunRule:
                 f"from {self.list_pages_from} are used (series run rule)")
 
     def heading_reason(self) -> str:
+        if self.numbering == YEAR:
+            return (f"outside the {self.name} run: only year headings are used (series run "
+                    "rule)")
         return (f"outside the {self.name} run: only '{self.numbering} N' headings are used "
                 "(series run rule)")
 
@@ -107,6 +129,14 @@ SERIES_RUN_RULES: dict[str, SeriesRunRule] = {
         "classic 1963-1989 'Season N' run is ignored (DECISIONS 2026-10-02)",
         ordinal_offset=26,  # Wikidata: series 1 is the 27th season of Q34316
         since=(1, 5, 4),
+    ),
+    "Q252118": SeriesRunRule(
+        name="cid_years",
+        numbering=YEAR,
+        list_pages_from=0,  # not used with numbering "year": every episode-list page counts
+        description="CID: each year heading on its verified episode-list pages is one "
+        "'season', in year order; the coverage line states years (DECISIONS 2026-10-02)",
+        since=(1, 5, 5),
     ),
 }
 

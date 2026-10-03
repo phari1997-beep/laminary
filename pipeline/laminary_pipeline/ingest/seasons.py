@@ -320,6 +320,25 @@ def whole_seasons(value: Any) -> int | None:
 COVERAGE_BASES = ("wikidata_P2437", "verified_season_pages")
 
 
+YEAR_UNIT = "year"
+YEAR_COVERAGE_BASIS = "verified_list_headings"
+
+
+def year_coverage(used: list[int], listed: list[int], partial_year: int | None) -> dict[str, Any]:
+    """Coverage of an episode-table text numbered by year (a run rule, fetcher 1.5.5, CID):
+    the years used, and the span of every year heading on the verified list pages read
+    (``first_year``..``last_year``), from which the line "Summary covers 1998–1999 of
+    1998–2025." is built. Such a text always gets the line (annotate-1.3.0)."""
+    years = sorted(used)
+    span = [*listed, *years]
+    out: dict[str, Any] = {"unit": YEAR_UNIT, "years": years, "first_year": min(span),
+                           "last_year": max(span), "total_basis": YEAR_COVERAGE_BASIS,
+                           "partial": years != sorted(set(span)) or partial_year is not None}
+    if partial_year is not None:
+        out["partial_year"] = partial_year
+    return out
+
+
 def season_coverage(
     used: list[int | None], verified: list[int], wikidata_total: Any, *,
     use_wikidata_total: bool = True,

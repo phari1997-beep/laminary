@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:laminary:schema:annotation:1.2.0",
+  "$id": "urn:laminary:schema:annotation:1.3.0",
   "title": "Laminary title annotation",
-  "description": "Version 1.2.0. Stored contract for one title's narrative annotation (movie, or whole TV series at series level). Definitions: docs/NARRATIVE_SCHEMA.md. Display rule: text under any 'safe_text' key may always be shown; text under any 'spoiler_text' key is hidden unless the viewer opts in; labels carry the levels in 'x-laminary-spoiler-levels'. The model-facing output schema is derived from this file by laminary_pipeline.model_output.",
+  "description": "Version 1.3.0. Stored contract for one title's narrative annotation (movie, or whole TV series at series level). Definitions: docs/NARRATIVE_SCHEMA.md. Display rule: text under any 'safe_text' key may always be shown; text under any 'spoiler_text' key is hidden unless the viewer opts in; labels carry the levels in 'x-laminary-spoiler-levels'. The model-facing output schema is derived from this file by laminary_pipeline.model_output.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -15,7 +15,7 @@
   "properties": {
     "schema_version": {
       "description": "Schema version the record conforms to.",
-      "const": "1.2.0"
+      "const": "1.3.0"
     },
     "record_kind": {
       "$ref": "#/$defs/record_kind"
@@ -672,7 +672,19 @@
           "type": "integer",
           "minimum": 1,
           "maximum": 100
+        },
+        "year": {
+          "description": "Broadcast year when the source is one year's episode summaries from an episode-list page whose units are years (schema 1.3.0; a run rule, CID; sources are in year order). Never together with season.",
+          "type": "integer",
+          "minimum": 1900,
+          "maximum": 2100
         }
+      },
+      "not": {
+        "required": [
+          "season",
+          "year"
+        ]
       }
     },
     "provenance": {
@@ -768,9 +780,8 @@
         "coverage": {
           "type": "object",
           "additionalProperties": false,
-          "description": "Seasons the summary covers, when a series summary built from per-season articles leaves seasons out (schema 1.2.0, prompt annotate-1.2.0 on). Absent when the summary is not known to be partial. 'statement' is the exact line the annotator saw.",
+          "description": "What the summary covers, when a series summary built from per-season articles or episode tables leaves seasons out (schema 1.2.0, prompt annotate-1.2.0 on), or, for a series whose episode lists are organised by year, which broadcast years it covers (schema 1.3.0, prompt annotate-1.3.0 on). Absent when the summary is not known to be partial. 'statement' is the exact line the annotator saw.",
           "required": [
-            "seasons",
             "statement"
           ],
           "properties": {
@@ -794,13 +805,50 @@
             "total_seasons_basis": {
               "$ref": "#/$defs/season_total_basis"
             },
+            "years": {
+              "description": "Broadcast years covered, in increasing order; equal to the sources' year fields (schema 1.3.0).",
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "minimum": 1900,
+                "maximum": 2100
+              },
+              "minItems": 1,
+              "maxItems": 20
+            },
+            "first_year": {
+              "description": "First year the series' verified episode lists name (schema 1.3.0).",
+              "type": "integer",
+              "minimum": 1900,
+              "maximum": 2100
+            },
+            "last_year": {
+              "description": "Last year the series' verified episode lists name (schema 1.3.0).",
+              "type": "integer",
+              "minimum": 1900,
+              "maximum": 2100
+            },
             "statement": {
-              "description": "The header line, e.g. 'Summary covers seasons 1–4 of 7.'",
+              "description": "The header line, e.g. 'Summary covers seasons 1–4 of 7.' or 'Summary covers 1998–1999 of 1998–2025.'",
               "type": "string",
               "minLength": 1,
               "maxLength": 200
             }
-          }
+          },
+          "oneOf": [
+            {
+              "required": [
+                "seasons"
+              ]
+            },
+            {
+              "required": [
+                "years",
+                "first_year",
+                "last_year"
+              ]
+            }
+          ]
         }
       }
     },

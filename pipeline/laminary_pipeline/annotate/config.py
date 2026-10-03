@@ -20,7 +20,7 @@ ANNOTATIONS_DIR = DATA_DIR / "annotations"
 
 API_KEY_ENV = "ANTHROPIC_API_KEY"
 
-DEFAULT_PROMPT_VERSION = "annotate-1.2.0"  # DECISIONS 2026-10-02: season coverage line
+DEFAULT_PROMPT_VERSION = "annotate-1.3.0"  # DECISIONS 2026-10-02: coverage by year (CID)
 # Phase 1 annotates with this model only (DECISIONS.md). Other models in MODELS stay for
 # offline estimates; using one for a run needs an explicit override flag.
 PHASE1_MODEL = "claude-opus-5-5"

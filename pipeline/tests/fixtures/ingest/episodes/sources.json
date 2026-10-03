@@ -14,5 +14,21 @@
   "permalink": "https://en.wikipedia.org/w/index.php?title=Shrinking&oldid=1376646576",
   "license": "CC-BY-SA-4.0",
   "note": "section 6 (Episodes) of the cached parse; series overview table removed, seasons 1 and 2 cut to their first 2 episodes, season 3 kept whole (a rowspan continuation row, 9 episodes without a summary); each summary cut to its first 2 sentences; styles removed; markup otherwise as served"
+ },
+ "cid_list_1998_2009": {
+  "title": "List of CID episodes: 1998–2009",
+  "section": "whole page",
+  "revision": "1374865182",
+  "permalink": "https://en.wikipedia.org/w/index.php?title=List_of_CID_episodes:_1998%E2%80%932009&oldid=1374865182",
+  "license": "CC-BY-SA-4.0",
+  "note": "whole-page parse from the cache; only the 1998 and 1999 year headings kept, their episode tables cut to the first 3 and 2 episodes (summaries whole); styles removed; markup otherwise as served"
+ },
+ "cid_list_2024_present": {
+  "title": "List of CID episodes: 2024–present",
+  "section": "whole page",
+  "revision": "1337101470",
+  "permalink": "https://en.wikipedia.org/w/index.php?title=List_of_CID_episodes:_2024%E2%80%93present&oldid=1337101470",
+  "license": "CC-BY-SA-4.0",
+  "note": "whole-page parse from the cache; only the 2024 and 2025 year headings kept, each episode table cut to its first 2 episodes (summaries whole); styles removed; markup otherwise as served"
  }
 }

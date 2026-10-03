@@ -55,6 +55,7 @@ from laminary_pipeline.annotate.inputs import (
     parse_coverage,
     parse_partial_season,
     parse_via_detail,
+    parse_year_coverage,
 )
 from laminary_pipeline.annotate.prompt import labeler_coverage, labeler_text
 from laminary_pipeline.gold.columns import (
@@ -94,6 +95,8 @@ README_LINES = [
     "   you can't see (guide rule on partial coverage). The model gets the same line.",
     "   Some series files are episode summaries, one per paragraph ('S2E5 \"Title\": ...');",
     "   '(season 3 only in part; ...)' in summary_coverage means that season stops early.",
+    "   A series without seasons may be covered by year ('Summary covers 1998–1999 of",
+    "   1998–2025.', episodes marked '1998E5'): each year counts as a season.",
     "3. Fill every white column: primary_plot, the 9 plot_ columns (Y/N), blueprint,",
     "   the 12 stage_ columns (Y/N), arc_shape (or all 11 arc_t points), the 10 tag_",
     "   columns (Y/N) and confidence. notes is optional.",
@@ -126,9 +129,11 @@ def _gated(plot: dict[str, Any]) -> GatedInput:
     via = ingest_via(plot)
     via_detail = parse_via_detail(plot, via, origin)
     partial = parse_partial_season(plot.get("coverage"), sources, via_detail, origin)
+    span, partial_year = parse_year_coverage(plot.get("coverage"), sources, via_detail, origin)
     return gate(PlotInput(title, tuple(sources), origin, via=via,
                           season_total=total, season_total_basis=basis,
-                          via_detail=via_detail, partial_season=partial))
+                          via_detail=via_detail, partial_season=partial,
+                          year_span=span, partial_year=partial_year))
 
 
 def labeler_text_for(plot: dict[str, Any]) -> str:
@@ -177,7 +182,9 @@ def template_rows(
             summary_text_file=text_file_name(sel["qid"]),
             wikipedia_revision_link=MULTI_SEP.join(links),
             plot_section=(
-                f"Episode tables ({len(sources)} seasons)" if episodes
+                f"Episode tables ({len(sources)} "
+                f"{'years' if (plot.get('coverage') or {}).get('unit') == 'year' else 'seasons'})"
+                if episodes
                 else f"Season articles ({len(sources)})" if seasons
                 else plot["section"]["heading"].capitalize()
             ),

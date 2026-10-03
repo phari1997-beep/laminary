@@ -143,7 +143,7 @@ def test_doctor_who_has_the_revival_rule_and_is_a_priority_series() -> None:
     assert rule is not None and rule.name == "doctor_who_revival"
     assert (rule.numbering, rule.list_pages_from) == ("series", 2005)
     assert PRIORITY_SERIES[DW] == "Doctor Who"
-    assert list(SERIES_RUN_RULES) == [DW]  # an explicit per-title table, not a heuristic
+    assert list(SERIES_RUN_RULES) == [DW, "Q252118"]  # explicit per-title table: DW, CID
     assert run_rule_for("Q23733") is None  # Seinfeld: no rule
 
 

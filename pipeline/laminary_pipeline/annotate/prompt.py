@@ -68,8 +68,10 @@ from laminary_pipeline.annotate.inputs import (
     PlotInput,
     check_text,
     gate,
+    latest_coverage_year,
 )
 from laminary_pipeline.annotation import wikipedia_article_title as _article_title
+from laminary_pipeline.ingest.episodes import MIN_YEAR
 from laminary_pipeline.ingest.seasons import MAX_SEASON_NUMBER
 from laminary_pipeline.ingest.wikipedia import VIA_SEASON_ARTICLES
 from laminary_pipeline.model_output import model_output_schema
@@ -81,6 +83,8 @@ class PinnedPrompt(NamedTuple):
     sends_release_year: bool  # the user-message header carries "Release year: <year>"
     # the header carries "Summary covers seasons ..." for a partial series summary
     sends_coverage: bool = False
+    # ground rule 8 explains coverage stated in broadcast years (annotate-1.3.0 on, CID)
+    sends_year_coverage: bool = False
 
 
 # prompt_version -> pinned file. Editing a prompt without adding a new version here fails
@@ -101,6 +105,13 @@ PINNED_PROMPTS: dict[str, PinnedPrompt] = {
         "ca27e8eb20e6e55dd65f034487a691394caa74a1732477dcb31f230ed4545b85",
         sends_release_year=True,
         sends_coverage=True,
+    ),
+    "annotate-1.3.0": PinnedPrompt(
+        "annotate_v1_3.md",
+        "37b681761dcec626f30c3b890a347c081e610558a5f1a30f95c10c3b9977e257",
+        sends_release_year=True,
+        sends_coverage=True,
+        sends_year_coverage=True,
     ),
 }
 MIN_RELEASE_YEAR = 1880
@@ -241,14 +252,63 @@ def format_seasons(seasons: list[int]) -> str:
     return ("season " if len(seasons) == 1 else "seasons ") + joined
 
 
+def format_years(years: list[int]) -> str:
+    """[1998, 1999] -> "1998–1999"; [2003] -> "2003"; [1998, 1999, 2001] -> "1998–1999 and
+    2001"."""
+    runs: list[list[int]] = []
+    for y in years:
+        if runs and y == runs[-1][-1] + 1:
+            runs[-1].append(y)
+        else:
+            runs.append([y])
+    parts = [f"{r[0]}–{r[-1]}" if len(r) > 1 else str(r[0]) for r in runs]
+    return parts[0] if len(parts) == 1 else ", ".join(parts[:-1]) + " and " + parts[-1]
+
+
+def year_prompt_coverage(plot: PlotInput) -> dict[str, Any]:
+    """The coverage line for episode-table input numbered by year (fetcher 1.5.5, CID), from
+    validated ints only: "Summary covers 1998–1999 of 1998–2025.", plus "(1999 only in part;
+    the summary stops before that year ends)" for a partly included last year. Such input
+    always gets the line. Raises GateError unless the sources' years are plain ints in
+    increasing order inside first_year..last_year, within MIN_YEAR..the current year + 2, and
+    a partial year is the last one."""
+    raw = [src.meta.get("year") for src in plot.sources]
+    assert plot.year_span is not None
+    first, last = plot.year_span
+    latest = latest_coverage_year()
+    if not all(_plain_int(y) for y in raw) or not all(_plain_int(v) for v in (first, last)):
+        raise GateError(f"{plot.key}: years {raw!r} / {first!r}–{last!r} are not whole years")
+    years = [int(y) for y in raw]
+    if any(b <= a for a, b in zip(years, years[1:], strict=False)):
+        raise GateError(f"{plot.key}: years {years} are not in increasing order")
+    if not MIN_YEAR <= first <= years[0] or not years[-1] <= last <= latest:
+        raise GateError(f"{plot.key}: years {years} don't fit {first}–{last} within "
+                        f"{MIN_YEAR}–{latest}")
+    partial = plot.partial_year
+    if partial is not None and not (_plain_int(partial) and partial == years[-1]):
+        raise GateError(f"{plot.key}: partial year {partial!r} is not the last year "
+                        f"{years[-1]}")
+    span = f"{first}–{last}" if first != last else str(first)
+    statement = f"Summary covers {format_years(years)} of {span}"
+    if partial is not None:
+        statement += (f" ({partial} only in part; the summary stops before that year ends)")
+    return {"years": years, "first_year": first, "last_year": last,
+            "statement": statement + "."}
+
+
 def prompt_coverage(plot: PlotInput) -> dict[str, Any] | None:
     """The season coverage to state for a partial series summary, or None (see the module
-    docstring). Returns {"seasons", "total_seasons", "total_seasons_basis", "statement"}.
-    Raises GateError on season numbers that aren't plain ints in increasing order from 1 to
-    MAX_SEASON_NUMBER, on a missing total (a stale plot file), or a total below the highest
-    season."""
+    docstring). Returns {"seasons", "total_seasons", "total_seasons_basis", "statement"}, or
+    for input numbered by year {"years", "first_year", "last_year", "statement"}
+    (``year_prompt_coverage``). Raises GateError on season numbers that aren't plain ints in
+    increasing order from 1 to MAX_SEASON_NUMBER, on a missing total (a stale plot file), or a
+    total below the highest season."""
     if plot.via != VIA_SEASON_ARTICLES:
         return None
+    if plot.year_span is not None:
+        return year_prompt_coverage(plot)
+    if any("year" in src.meta for src in plot.sources):
+        raise GateError(f"{plot.key}: sources carry years without year coverage")
     raw = [src.meta.get("season") for src in plot.sources]
     if all(s is None for s in raw):
         return None  # an episode-list page: no season numbers
@@ -291,6 +351,11 @@ def _header(gated: GatedInput, prompt: Prompt) -> str:
             lines.append(f"Release year: {year}")
     if prompt.sends_coverage:
         coverage = prompt_coverage(plot)
+        if coverage is not None and "years" in coverage and not (
+                PINNED_PROMPTS[prompt.version].sends_year_coverage):
+            # this prompt's rule 8 speaks only of seasons (CID needs annotate-1.3.0)
+            raise GateError(f"{plot.key}: coverage by year needs a prompt that explains it "
+                            f"(annotate-1.3.0 or later), not {prompt.version}")
         if coverage is not None:
             lines.append(coverage["statement"])
     lines.append(f"The plot summary follows in {n} part{'s' if n > 1 else ''}.")

@@ -10,8 +10,9 @@ from __future__ import annotations
 from laminary_pipeline.annotation import load_schema
 
 # Version of docs/GOLD_LABELING_GUIDE.md. Stored as provenance.annotator.guide_version.
-GUIDE_VERSION = "1.5.0"  # 1.4.0: summary_coverage column, partial-coverage rule; 1.5.0:
-# series files may be episode-table summaries, "(season N only in part)" (DECISIONS 2026-10-02)
+GUIDE_VERSION = "1.6.0"  # 1.4.0: summary_coverage column, partial-coverage rule; 1.5.0:
+# series files may be episode-table summaries, "(season N only in part)" (DECISIONS 2026-10-02);
+# 1.6.0: coverage by broadcast year for a series without seasons (CID, DECISIONS 2026-10-02)
 
 
 def _enum(name: str) -> list[str]:
@@ -131,7 +132,8 @@ def help_row() -> dict[str, str]:
         "tables, captions and notes the model never sees"
     )
     h["summary_coverage"] = (
-        "If filled (e.g. 'Summary covers seasons 1–4 of 7.'), the summary stops before the "
+        "If filled (e.g. 'Summary covers seasons 1–4 of 7.', or by year 'Summary covers "
+        "1998–1999 of 1998–2025.'), the summary stops before the "
         "series does: label only what it covers and don't judge an ending you can't see. The "
         "model gets the same line"
     )

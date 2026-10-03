@@ -157,8 +157,8 @@ def test_schema_is_valid_draft_2020_12() -> None:
     schema = load_schema()
     assert schema["$schema"] == "https://json-schema.org/draft/2020-12/schema"
     Draft202012Validator.check_schema(schema)
-    assert schema["properties"]["schema_version"]["const"] == "1.2.0"
-    assert schema["$id"] == "urn:laminary:schema:annotation:1.2.0"
+    assert schema["properties"]["schema_version"]["const"] == "1.3.0"
+    assert schema["$id"] == "urn:laminary:schema:annotation:1.3.0"
 
 
 def test_there_are_examples() -> None:

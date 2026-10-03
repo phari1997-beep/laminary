@@ -65,6 +65,11 @@ _LIST_SEASON_HEADING = re.compile(r"^(season|series)\s+(\d{1,3})\b")
 # headings whose tables are out of a season's order (season pages): specials and extras
 _SKIP_TABLE_HEADING = re.compile(r"\b(?:specials?|webisodes?|minisodes?|mobisodes?|shorts?)\b")
 _PLAIN_INT = re.compile(r"^\d{1,3}$")
+# year headings ("1998", "2024 (part 1)"), used only under a run rule with numbering "year"
+# (fetcher 1.5.5, CID: DECISIONS 2026-10-02)
+_YEAR_HEADING = re.compile(r"^(\d{4})\b")
+MIN_YEAR, MAX_YEAR = 1900, 2100  # a year heading outside this range is not a year
+UNIT_SEASON, UNIT_YEAR = "season", "year"
 ROW_HEADER = " th"  # marks a <th> cell in the parser's class sets (never a real class name)
 
 
@@ -221,7 +226,8 @@ def table_heading(path: tuple[str, ...]) -> str:
     """The heading that decides a table, from its enclosing headings (outermost first): the
     nearest one that names specials or a season, else the nearest one ("" with none)."""
     for text in reversed(path):
-        if _SKIP_TABLE_HEADING.search(text) or _LIST_SEASON_HEADING.match(text):
+        if (_SKIP_TABLE_HEADING.search(text) or _LIST_SEASON_HEADING.match(text)
+                or _YEAR_HEADING.match(text)):
             return text
     return path[-1] if path else ""
 
@@ -241,10 +247,19 @@ class Episode:
     title: str  # the title cell as text ("" when there is none)
     summary: str  # the description cell as text
     row: int = 0  # the episode row's position in its season (1-based), with or without summary
+    # "season", or "year" when ``season`` is a broadcast year (a run rule, fetcher 1.5.5)
+    unit: str = UNIT_SEASON
+
+    @property
+    def marker(self) -> str:
+        """"S2E5" for season 2 episode 5; "1998E5" for the fifth episode of year 1998."""
+        if self.unit == UNIT_YEAR:
+            return f"{self.season}E{self.number}"
+        return f"S{self.season}E{self.number}"
 
     @property
     def paragraph(self) -> str:
-        marker = f"S{self.season}E{self.number}"
+        marker = self.marker
         if self.title:
             marker = f"{marker} {self.title}"
         return f"{marker}: {self.summary}"
@@ -284,8 +299,11 @@ def _episode_number(cells: tuple[str, ...], position: int) -> int:
     return position
 
 
-def season_episodes(season: int, tables: list[RawTable]) -> SeasonEpisodes:
-    """One season's episodes with a summary, in table order."""
+def season_episodes(
+    season: int, tables: list[RawTable], unit: str = UNIT_SEASON
+) -> SeasonEpisodes:
+    """One season's (or, with ``unit="year"``, one year's) episodes with a summary, in table
+    order."""
     out: list[Episode] = []
     position = 0
     for table in tables:
@@ -297,7 +315,7 @@ def season_episodes(season: int, tables: list[RawTable]) -> SeasonEpisodes:
                 continue
             number = _episode_number(row.number_cells, position)
             out.append(Episode(season, number, _title_text(row.title_html), summary,
-                               position))
+                               position, unit))
     return SeasonEpisodes(season, out, position)
 
 
@@ -322,7 +340,11 @@ def list_page_seasons(
     in page order, and the skipped tables with a reason. Seasons must rise down the page; the
     first table under a repeated or lower season number stops the page. With a series run rule
     (fetcher 1.5.1, ``runs.py``), a heading in the other run's numbering ("Season 3" when the
-    rule uses "Series N") is skipped before the rising check."""
+    rule uses "Series N") is skipped before the rising check. With a rule numbering by year
+    (fetcher 1.5.5, CID), each year heading ("1998") is one "season" numbered by its year, and
+    the same rising order applies to years; season headings are then skipped."""
+    if rule is not None and rule.numbering == UNIT_YEAR:
+        return _list_page_years(tables, rule)
     seasons: list[tuple[int, list[RawTable]]] = []
     skipped: list[dict[str, str]] = []
     for i, t in enumerate(tables):
@@ -347,6 +369,35 @@ def list_page_seasons(
             break
         seasons.append((n, [t]))
     return seasons, skipped
+
+
+def _list_page_years(
+    tables: list[RawTable], rule: SeriesRunRule
+) -> tuple[list[tuple[int, list[RawTable]]], list[dict[str, str]]]:
+    """``list_page_seasons`` for a run rule numbering by year: tables grouped by the year
+    heading above them, years rising down the page."""
+    years: list[tuple[int, list[RawTable]]] = []
+    skipped: list[dict[str, str]] = []
+    for i, t in enumerate(tables):
+        m = _YEAR_HEADING.match(t.heading)
+        if not m or _SKIP_TABLE_HEADING.search(t.heading):
+            reason = (rule.heading_reason() if _LIST_SEASON_HEADING.match(t.heading)
+                      else "not under a year heading")
+            skipped.append({"heading": t.heading, "reason": reason})
+            continue
+        year = int(m.group(1))
+        if not MIN_YEAR <= year <= MAX_YEAR:
+            skipped.append({"heading": t.heading, "reason": f"{year} is not a plausible year"})
+            continue
+        if years and year == years[-1][0]:
+            years[-1][1].append(t)
+            continue
+        if years and year < years[-1][0]:
+            skipped += [{"heading": r.heading, "reason": f"year {year} after {years[-1][0]}: "
+                         "the page's years go back; stopped here"} for r in tables[i:]]
+            break
+        years.append((year, [t]))
+    return years, skipped
 
 
 @dataclass

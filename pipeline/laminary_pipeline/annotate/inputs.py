@@ -16,7 +16,9 @@ Interface with ingestion (files under ``pipeline/data/plots/``, one JSON object 
    fetcher 1.5.0 such a file may also carry ``"via_detail": "episode_table"`` (DECISIONS
    2026-10-02): the sources are per-episode summaries from episode tables, one per season,
    and ``coverage.partial_season`` may name the last season when only some of its episodes
-   fit under the cap.
+   fit under the cap. Fetcher 1.5.5 (a run rule numbering by year, CID): each source carries
+   ``year`` instead of ``season`` and ``coverage`` is ``{"unit": "year", "years",
+   "first_year", "last_year", "partial_year"?}`` (``parse_year_coverage``).
 
 2. Generic: ``{"title": {<the schema's title object>}, "sources": [{<source>, "text": ...}]}``.
 
@@ -45,13 +47,14 @@ import hashlib
 import json
 from collections.abc import Iterator
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from jsonschema import Draft202012Validator
 
 from laminary_pipeline.annotation import format_checker, load_schema, require_wikipedia_sources
-from laminary_pipeline.ingest.episodes import VIA_DETAIL_EPISODE_TABLE
+from laminary_pipeline.ingest.episodes import MIN_YEAR, UNIT_YEAR, VIA_DETAIL_EPISODE_TABLE
 from laminary_pipeline.ingest.seasons import (
     COVERAGE_BASES,
     LEAD_BLOCK_CEILING,
@@ -113,6 +116,10 @@ class PlotInput:
     # episode-table input: the last season, when only some of its episodes fit under the cap
     # (validated in parse_plot: a plain int equal to the last source's season)
     partial_season: int | None = None
+    # episode-table input numbered by year (fetcher 1.5.5, CID): the span of years the list
+    # pages name, (first, last), and the last year when it is only partly included
+    year_span: tuple[int, int] | None = None
+    partial_year: int | None = None
 
     @property
     def key(self) -> str:
@@ -179,6 +186,53 @@ def parse_coverage(
 
 
 MIN_FETCHER_FOR_EPISODE_TABLES = (1, 5, 0)
+MAX_YEARS_AHEAD = 2  # a coverage year may be at most this far past the current year
+
+
+def latest_coverage_year() -> int:
+    return datetime.now(UTC).year + MAX_YEARS_AHEAD
+
+
+def parse_year_coverage(
+    coverage: Any, sources: list[PlotSource], via_detail: str | None, origin: str
+) -> tuple[tuple[int, int] | None, int | None]:
+    """Year coverage (fetcher 1.5.5, CID): ``((first_year, last_year), partial_year)``, or
+    ``(None, None)`` when neither the coverage nor any source is by year. Raises
+    InputFormatError unless it is episode-table input whose every source has a ``year`` and
+    no ``season``, ``coverage.years`` equals the sources' years in increasing order, the span
+    is plain ints with MIN_YEAR <= first_year <= the first year, the last year <= last_year <=
+    the current year + 2, and ``partial_year`` is absent or the last source's year."""
+    unit = coverage.get("unit") if isinstance(coverage, dict) else None
+    by_year = [("year" in s.meta) for s in sources]
+    if unit is None and not any(by_year):
+        return None, None
+    if unit != UNIT_YEAR or not isinstance(coverage, dict):
+        raise InputFormatError(f"{origin}: sources with a year need coverage.unit 'year' "
+                               f"(got {unit!r})")
+    if via_detail != VIA_DETAIL_EPISODE_TABLE:
+        raise InputFormatError(f"{origin}: year coverage without episode-table input")
+    if not all(by_year) or any("season" in s.meta for s in sources):
+        raise InputFormatError(f"{origin}: with year coverage every source needs a year and "
+                               "none a season")
+    years = [s.meta["year"] for s in sources]
+    if coverage.get("years") != years:
+        raise InputFormatError(f"{origin}: coverage.years {coverage.get('years')!r} doesn't "
+                               f"match the sources' years {years}")
+    if any(type(y) is not int for y in years) or any(
+            b <= a for a, b in zip(years, years[1:], strict=False)):
+        raise InputFormatError(f"{origin}: years {years} are not whole years in increasing "
+                               "order")
+    first, last = coverage.get("first_year"), coverage.get("last_year")
+    latest = latest_coverage_year()
+    if not (type(first) is int and type(last) is int
+            and MIN_YEAR <= first <= years[0] and years[-1] <= last <= latest):
+        raise InputFormatError(f"{origin}: coverage years {first!r}–{last!r} don't hold "
+                               f"{years[0]}–{years[-1]} within {MIN_YEAR}–{latest}")
+    partial = coverage.get("partial_year")
+    if partial is not None and (type(partial) is not int or partial != years[-1]):
+        raise InputFormatError(f"{origin}: coverage.partial_year {partial!r} is not the last "
+                               "source's year")
+    return (first, last), partial
 
 
 def parse_via_detail(obj: dict[str, Any], via: Any, origin: str) -> str | None:
@@ -275,11 +329,13 @@ def parse_plot(obj: Any, origin: str) -> PlotInput:
     fetcher = obj.get("fetcher_version")
     via_detail = parse_via_detail(obj, via, origin)
     partial = parse_partial_season(obj.get("coverage"), parsed, via_detail, origin)
+    span, partial_year = parse_year_coverage(obj.get("coverage"), parsed, via_detail, origin)
     return PlotInput(title=title, sources=tuple(parsed), origin=origin,
                      via=via if isinstance(via, str) else None,
                      season_total=total, season_total_basis=basis,
                      fetcher_version=fetcher if isinstance(fetcher, str) else None,
-                     via_detail=via_detail, partial_season=partial)
+                     via_detail=via_detail, partial_season=partial,
+                     year_span=span, partial_year=partial_year)
 
 
 def iter_plot_files(plots_dir: Path) -> Iterator[tuple[Any, str]]:
@@ -396,9 +452,10 @@ def check_source_limits(plot: PlotInput, total: int) -> None:
     has_season = any("season" in s.meta for s in plot.sources)
     via_seasons = plot.via == VIA_SEASON_ARTICLES
     if plot.via_detail == VIA_DETAIL_EPISODE_TABLE:
-        if not via_seasons or not all("season" in s.meta for s in plot.sources):
+        unit = "year" if plot.year_span is not None else "season"
+        if not via_seasons or not all(unit in s.meta for s in plot.sources):
             raise GateError(f"{plot.key}: episode-table input must be season-article input "
-                            "with a season on every source")
+                            f"with a {unit} on every source")
         limit, what = SEASON_WORD_CAP, "episode-table cap"
     elif not (via_seasons or n > 1 or has_season):
         return  # a single main article

@@ -81,15 +81,17 @@ from laminary_pipeline.ingest.seasons import (
     MAX_SEASON_SOURCES,
     SEASON_WORD_CAP,
     STUB_SEASON_WORDS,
+    YEAR_UNIT,
     Page,
     SeasonFinder,
     SeasonResult,
     season_coverage,
+    year_coverage,
 )
 from laminary_pipeline.ingest.sections import SectionFilter, filter_section, normalize_heading
 from laminary_pipeline.ingest.text import html_to_text, sha256_text, word_count
 
-FETCHER_VERSION = "1.5.4"  # 1.1.0: per-season articles for thin series; 1.2.0: lead block
+FETCHER_VERSION = "1.5.5"  # 1.1.0: per-season articles for thin series; 1.2.0: lead block
 # of stub seasons (under STUB_SEASON_WORDS, 500) before the first full season; 1.3.0: stubs
 # alone when the lead block is over the 6,000-word ceiling; 1.4.0 (DECISIONS 2026-10-02):
 # non-plot subsections dropped (sections.py), MediaWiki "Cite error" text stripped, Wikidata
@@ -100,7 +102,8 @@ FETCHER_VERSION = "1.5.4"  # 1.1.0: per-season articles for thin series; 1.2.0: 
 # Wikidata states nothing (seasons.py), and richer text for thin priority series; 1.5.3
 # (QA): the list page must link back to the main article, only a P179/P361 to a TV series
 # rejects it, list titles match case-sensitively after the first letter; 1.5.4: run rules may
-# offset Wikidata's series ordinal (Doctor Who: series N is ordinal N + 26)
+# offset Wikidata's series ordinal (Doctor Who: series N is ordinal N + 26); 1.5.5: a run
+# rule may number by year (CID: list-page year headings; sources carry ``year``)
 MIN_WORDS = 150
 # A priority series whose main-article text passes with fewer words than this also tries the
 # season-article / episode-table path and keeps the longer text (fetcher 1.5.2, DECISIONS
@@ -467,6 +470,8 @@ class PlotFetcher:
         cap = self.season_word_cap
         collected: list[tuple[Page, SeasonEpisodes]] = []
         words = 0
+        # a run rule numbering by year (CID, fetcher 1.5.5): list-page year headings are the units
+        unit = YEAR_UNIT if found.run_rule and found.run_rule.numbering == YEAR_UNIT else "season"
         for i, page in enumerate(found.season_pages):
             if words > cap or len(collected) >= MAX_SEASON_SOURCES:
                 report["pages_not_fetched"] = [p.title for p in found.season_pages[i:]]
@@ -495,6 +500,14 @@ class PlotFetcher:
         used: list[int] = []  # seasons with summaries, in order: these must keep rising
         listed_before: list[int] = []  # season headings on earlier pages (restart check)
         for i, page in enumerate(found.list_pages):
+            if (words > cap or len(collected) >= MAX_SEASON_SOURCES) and unit == YEAR_UNIT:
+                # years: the later pages' headings still set the span the coverage line
+                # states ("of 1998–2025"), so they are read for headings only, never for text
+                years, _ = list_page_seasons(parse_tables(self.page_html(page.revid)),
+                                             found.run_rule)
+                listed += [n for n, _ in years]
+                report.setdefault("pages_read_for_years_only", []).append(page.title)
+                continue
             if words > cap or len(collected) >= MAX_SEASON_SOURCES:
                 report["pages_not_fetched"] = [p.title for p in found.list_pages[i:]]
                 break
@@ -503,7 +516,7 @@ class PlotFetcher:
             report["tables_skipped"] += [{"title": page.title, **t} for t in skipped_tables]
             used_here = 0
             for n, tables in seasons:
-                if n > MAX_SEASON_NUMBER:
+                if unit != YEAR_UNIT and n > MAX_SEASON_NUMBER:  # years: checked by heading
                     report["tables_skipped"].append({"title": page.title,
                                                      "heading": f"season {n}",
                                                      "reason": "season number over 100"})
@@ -513,7 +526,7 @@ class PlotFetcher:
                         "title": page.title, "heading": f"season {n}",
                         "reason": f"season {n} after season {used[-1]} on an earlier page"})
                     continue
-                se = season_episodes(n, tables)
+                se = season_episodes(n, tables, unit)
                 report["episodes_without_summary"] += se.without_summary
                 if se.episodes and listed_before and n <= max(listed_before):
                     # an earlier page (without summaries) already numbered a season this high:
@@ -588,6 +601,11 @@ class PlotFetcher:
             detail = (f"{skipped['skip_detail']}; episode tables: "
                       f"{report['episodes_used']} episodes with {joined.words} words{restart}")
             return {**skipped, "skip_detail": detail[:300], "episode_tables": report}
+        if found.run_rule is not None and found.run_rule.numbering == YEAR_UNIT:
+            report["unit"] = YEAR_UNIT
+            coverage = year_coverage([s.season for s in joined.seasons], listed,
+                                     joined.partial_season)
+            return self._ok_episodes(skipped, main, joined, page_for, report, coverage)
         coverage = season_coverage(
             [s.season for s in joined.seasons], sorted({*found.verified_seasons, *listed}),
             (skipped.get("candidate") or {}).get("number_of_seasons"),
@@ -608,6 +626,7 @@ class PlotFetcher:
         coverage: dict[str, Any],
     ) -> dict[str, Any]:
         parts = []
+        unit_key = "year" if coverage.get("unit") == YEAR_UNIT else "season"
         for s in joined.seasons:
             page = page_for[s.season]
             text = season_text(s)
@@ -615,7 +634,7 @@ class PlotFetcher:
                 "page_title": page.title,
                 "permalink": permalink(page.title, page.revid),
                 "via_detail": VIA_DETAIL_EPISODE_TABLE,
-                "episodes": [f"S{e.season}E{e.number}" for e in s.episodes],
+                "episodes": [e.marker for e in s.episodes],
                 "source": {
                     "kind": "wikipedia_plot",
                     "ref": article_url(page.title),
@@ -624,7 +643,7 @@ class PlotFetcher:
                     "license": license_for(page.timestamp),
                     "word_count": word_count(text),
                     "content_sha256": sha256_text(text),
-                    "season": s.season,
+                    unit_key: s.season,
                 },
                 "text": text,
             })

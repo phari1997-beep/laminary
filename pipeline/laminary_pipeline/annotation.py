@@ -148,11 +148,25 @@ def validator() -> Draft202012Validator:
 
 def coverage_errors(prov: dict[str, Any]) -> list[str]:
     """Schema 1.2.0 ``provenance.coverage``: seasons in increasing order and equal to the
-    sources' season numbers; a total at least the highest season and given with its basis."""
+    sources' season numbers; a total at least the highest season and given with its basis.
+    Schema 1.3.0: or years in increasing order, equal to the sources' years, inside
+    first_year..last_year."""
     cov = prov.get("coverage")
     if cov is None:
         return []
     errors = []
+    if "years" in cov:
+        years = cov["years"]
+        if any(b <= a for a, b in zip(years, years[1:], strict=False)):
+            errors.append(f"coverage years {years} are not in increasing order")
+        if years != [src.get("year") for src in prov["sources"]]:
+            errors.append(f"coverage years {years} don't match the sources' years")
+        first, last = cov.get("first_year"), cov.get("last_year")
+        if first is None or last is None or not first <= min(years) <= max(years) <= last:
+            errors.append(f"coverage years {years} are not inside {first}–{last}")
+        if "seasons" in cov or "total_seasons" in cov:
+            errors.append("coverage by year has no seasons or season total")
+        return errors
     seasons = cov["seasons"]
     if any(b <= a for a, b in zip(seasons, seasons[1:], strict=False)):
         errors.append(f"coverage seasons {seasons} are not in increasing order")

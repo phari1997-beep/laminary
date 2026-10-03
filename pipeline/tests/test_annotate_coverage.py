@@ -287,7 +287,7 @@ def record_for(plot_obj: dict[str, Any], version: str) -> dict[str, Any]:
 
 def test_records_carry_the_coverage_the_model_saw() -> None:
     rec = record_for(series_plot([1, 2, 3, 4], 7), "annotate-1.2.0")
-    assert rec["schema_version"] == "1.2.0"
+    assert rec["schema_version"] == "1.3.0"
     assert rec["provenance"]["coverage"] == {
         "seasons": [1, 2, 3, 4], "total_seasons": 7, "total_seasons_basis": "wikidata_P2437",
         "statement": "Summary covers seasons 1–4 of 7.",
