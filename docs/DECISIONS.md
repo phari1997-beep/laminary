@@ -70,3 +70,7 @@
 | 2026-10-02 | Doctor Who revival numbering includes series 14–15 (2023 relaunch continues the numbering); total 15 | Hari approved |
 | 2026-10-02 | CID: per-title run rule treating each year heading on its verified episode-list pages as one "season", in year order; coverage line states years (e.g. "Summary covers 1998–1999 of 1998–2024") | Hari's call (coordinator recommendation); CID's lists have no season headings |
 | 2026-10-02 | Doctor Who season pages verify against Wikidata's own continuous numbering: revival series N must carry ordinal exactly N+26 (or none); scoped to Doctor Who only | Hari confirmed; Wikidata numbers revival series 27–41 after the 26 classic seasons |
+| 2026-10-02 | Seinfeld uses its episode summaries (per-title override for priority series), not its commentary-heavy main article | Hari approved the coordinator's recommendation |
+| 2026-10-02 | Trivia in episode summaries (e.g. "Note(s):", "Montage music:", awards/TV Guide mentions, "X also appear(s)") is separated from the plot text sent to the model and labelers, and stored in the plot file as trivia (with source, revision, CC BY-SA attribution) — not discarded | Hari's call: keep it for a future "trivia" delighter feature (added to PLAN Phase 4) |
+| 2026-10-02 | CID's one-line teaser summaries are accepted as gold input (labelers may skip under guide rule 4) | Hari approved |
+| 2026-10-02 | Episodes under "Pilot" headings are included as episode 0 of the first season (e.g. Midsomer's Badger's Drift) | Hari approved |

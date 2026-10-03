@@ -158,6 +158,7 @@ Top risks: availability cost/licensing; tag accuracy; low willingness to pay; in
 - [ ] Store launch [sre + qa]
 - [ ] Pro tier [backend + frontend] **[OPEN]** pricing
 - [ ] Season-level TV arcs; more countries; books
+- [ ] Trivia delighter: show episode/production trivia already stored by ingest (CC BY-SA, attributed) [frontend + backend] (DECISIONS 2026-10-02)
 
 ---
 
