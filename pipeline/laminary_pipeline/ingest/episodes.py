@@ -100,7 +100,13 @@ _MONTAGE = re.compile(r"^montage music\s*:", re.IGNORECASE)
 _TIMELINE = re.compile(r"^timeline\s*:", re.IGNORECASE)  # never "Timeline 1950:" (the plot)
 # award bodies by their full names: a character called Emmy is not an award (QA)
 _AWARD_BODY = re.compile(r"\b(?:Emmy Awards?|(?:Primetime|Daytime) Emmy|Emmy-nominated|"
-                         r"Golden Globe|Peabody|BAFTA|(?:Writers|Directors) Guild|TV Guide)\b")
+                         r"Golden Globe|Peabody|BAFTA|(?:Writers|Directors) Guild|TV Guide|"
+                         r"ACE Eddie)\b")
+_MUSIC = re.compile(r"^music\s*:", re.IGNORECASE)  # "Music: Gilligan's Island theme" (1.5.9)
+# "<Name Name>[, who ...,] has a small role as ..." (1.5.9): two or more name words first
+_SMALL_ROLE = re.compile(r"^[A-Z][\w'’.-]*(?: [A-Z][\w'’.-]*)+(?:,[^.]*?)?\s+has an? "
+                         r"(?:small|minor|brief|cameo) role as\b")
+_INITIAL = re.compile(r"^[A-Z]\.$")  # "Fred W. Berger": never a sentence end (1.5.9)
 _AWARD_WORD = re.compile(r"\b(?:award|nominat\w*|won|ranked|ranking|list)\b", re.IGNORECASE)
 _FIRST = re.compile(r"\bfirst appearance\b|\bfirst episode (?:to|without|with|in which)\b|"
                     r"\bmakes? (?:his|her|their) first appearance\b", re.IGNORECASE)
@@ -378,7 +384,7 @@ def split_sentences(paragraph: str) -> list[str]:
     start = 0
     for m in _SENTENCE_END.finditer(paragraph):
         last_word = paragraph[start:m.start()].rsplit(" ", 1)[-1]
-        if last_word in _ABBREVIATIONS:
+        if last_word in _ABBREVIATIONS or _INITIAL.match(last_word):
             continue
         out.append(paragraph[start:m.start()])
         start = m.end()
@@ -406,6 +412,8 @@ def trivia_rule(sentence: str) -> str | None:
         return "montage_music"
     if _TIMELINE.match(sentence):
         return "timeline"
+    if _MUSIC.match(sentence):
+        return "music"
     if _GUEST_START.match(sentence):
         return "guest_star"
     bare = " ".join(_PARENS.sub(" ", sentence).split())
@@ -413,6 +421,8 @@ def trivia_rule(sentence: str) -> str | None:
         return "award"
     if _FIRST.search(bare):
         return "first_appearance"
+    if _SMALL_ROLE.match(bare):
+        return "small_role"
     for rule, pattern in (("also_appears", _ALSO_APPEAR), ("guest_star", _GUEST_STARS)):
         m = pattern.match(bare)
         # only names before "also appear(s)" / "guest star(s)", nothing after but "as ...";
@@ -426,8 +436,8 @@ def trivia_rule(sentence: str) -> str | None:
     return None
 
 
-TRIVIA_RULES = ("note", "montage_music", "timeline", "guest_star", "award",
-                "first_appearance", "also_appears")
+TRIVIA_RULES = ("note", "montage_music", "timeline", "music", "guest_star", "award",
+                "first_appearance", "small_role", "also_appears")
 
 
 def split_trivia(text: str) -> tuple[str, list[tuple[str, str]]]:

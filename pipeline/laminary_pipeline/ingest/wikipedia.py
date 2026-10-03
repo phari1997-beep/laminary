@@ -92,7 +92,7 @@ from laminary_pipeline.ingest.seasons import (
 from laminary_pipeline.ingest.sections import SectionFilter, filter_section, normalize_heading
 from laminary_pipeline.ingest.text import html_to_text, sha256_text, word_count
 
-FETCHER_VERSION = "1.5.8"  # 1.1.0: per-season articles for thin series; 1.2.0: lead block
+FETCHER_VERSION = "1.5.9"  # 1.1.0: per-season articles for thin series; 1.2.0: lead block
 # of stub seasons (under STUB_SEASON_WORDS, 500) before the first full season; 1.3.0: stubs
 # alone when the lead block is over the 6,000-word ceiling; 1.4.0 (DECISIONS 2026-10-02):
 # non-plot subsections dropped (sections.py), MediaWiki "Cite error" text stripped, Wikidata
@@ -110,7 +110,8 @@ FETCHER_VERSION = "1.5.8"  # 1.1.0: per-season articles for thin series; 1.2.0: 
 # 1.5.7 (QA): a two-part episode row (rowspan="2" title cell) keeps its title and both
 # numbers ("S1E1–2"), instead of "S1E2:" with no title; 1.5.8 (DECISIONS 2026-10-02):
 # episode-summary trivia stored apart from the plot (``trivia``), a single pilot is episode 0
-# of the first season, and per-title episode-text overrides (Seinfeld)
+# of the first season, and per-title episode-text overrides (Seinfeld); 1.5.9 (QA): trivia
+# rules "Music:", "<Name> has a small role as", the ACE Eddie award; no split after "W."
 MIN_WORDS = 150
 # A priority series whose main-article text passes with fewer words than this also tries the
 # season-article / episode-table path and keeps the longer text (fetcher 1.5.2, DECISIONS

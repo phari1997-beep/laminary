@@ -26,7 +26,7 @@ from typing import Any
 
 from laminary_pipeline.annotate.ready import not_annotatable_reason
 from laminary_pipeline.ingest.candidates import BUCKETS, language_display
-from laminary_pipeline.ingest.episodes import VIA_DETAIL_EPISODE_TABLE
+from laminary_pipeline.ingest.episodes import VIA_DETAIL_EPISODE_TABLE, split_trivia
 from laminary_pipeline.ingest.paths import DataPaths, read_json, write_json_atomic
 from laminary_pipeline.ingest.priority import PREFER_EPISODE_TEXT, PRIORITY_SERIES
 from laminary_pipeline.ingest.runs import SERIES_RUN_RULES
@@ -52,6 +52,8 @@ EPISODE_MARKER_FIX_FETCHER = (1, 5, 7)  # two-part rows lost their title ("S1E2:
 # 1.5.8: trivia moved out of episode summaries, a single pilot is episode 0
 EPISODE_TEXT_FETCHER = (1, 5, 8)
 PREFER_EPISODE_TEXT_FETCHER = (1, 5, 8)
+TRIVIA_RULES_FETCHER = (1, 5, 9)  # "Music:", "has a small role as", ACE Eddie, initials
+_EPISODE_MARKER = re.compile(r'^(?:S\d+|\d{4})E\d+(?:–\d+)?(?: "[^"]*"| “[^”]*”)?: ')
 
 
 def existing_status(paths: DataPaths, qid: str) -> dict[str, Any] | None:
@@ -74,6 +76,7 @@ def needs_fetch(paths: DataPaths, qid: str, refresh: bool) -> bool:
         or _episode_text_before_marker_fix(current)
         or _episode_tables_before_trivia_and_pilots(current)
         or _episode_text_override_before_rule(current)
+        or _episode_text_with_new_trivia(current)
     )
 
 
@@ -163,6 +166,20 @@ def _episode_tables_before_trivia_and_pilots(rec: dict[str, Any]) -> bool:
     (more words; a skipped series may now pass)."""
     return ("episode_tables" in rec
             and _version(rec.get("fetcher_version")) < EPISODE_TEXT_FETCHER)
+
+
+def _episode_text_with_new_trivia(rec: dict[str, Any]) -> bool:
+    """A passing episode-table file from before 1.5.9 whose text the 1.5.9 trivia rules would
+    change: some episode paragraph (marker removed) now yields trivia. Only those files are
+    fetched again; the others' text is the same under 1.5.9."""
+    if not (rec.get("status") == "ok" and rec.get("via_detail") == VIA_DETAIL_EPISODE_TABLE
+            and _version(rec.get("fetcher_version")) < TRIVIA_RULES_FETCHER):
+        return False
+    for part in rec.get("sources") or []:
+        for para in str(part.get("text") or "").split("\n\n"):
+            if split_trivia(_EPISODE_MARKER.sub("", para, count=1))[1]:
+                return True
+    return False
 
 
 def _episode_text_override_before_rule(rec: dict[str, Any]) -> bool:

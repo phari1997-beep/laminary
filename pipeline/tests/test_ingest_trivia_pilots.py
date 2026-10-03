@@ -69,6 +69,13 @@ from laminary_pipeline.ingest.wikipedia import FETCHER_VERSION
     ("Special Guest Star: Brian Dennehy as Luther Frick", "guest_star"),
     ("Guest stars include Bernard Cribbins and June Whitfield.", "guest_star"),
     ("Hayley Mills guest stars.", "guest_star"),
+    # 1.5.9 (real: M*A*S*H S3, Baywatch)
+    ("Fred W. Berger and Stanford Tischler won the ACE Eddie Award for this episode.",
+     "award"),
+    ("Music: Gilligan’s Island theme", "music"),
+    ("Brian Austin Green, who would later go on to star on Beverly Hills, 90210 has a small "
+     "role as Brian, a boy on the beach in this episode.", "small_role"),
+    ("John Sherrod has a small role as life guard Owen in this episode.", "small_role"),
     ("Polat Bilgin guest stars as Molla Kabiz.", "guest_star"),
     ("Michael Rooker and Reginald VelJohnson guest star.", "guest_star"),
     ("Edward Winter guest stars as Captain Halloran and would return in several episodes as "
@@ -104,12 +111,24 @@ def test_trivia_sentences_are_recognised(sentence: str, rule: str) -> None:
     "Timeline 1950: Hawkeye and Trapper arrive at the 4077th.",  # the plot, not a timeline
     "At the charity gala the guest stars panic when the lights go out.",
     "Guest stars arrive at the gala before the storm.",
+    "Hobie has a small role as an extra in the beach movie.",  # one name word: plot
+    "The music: loud enough to wake the dead.",
+    "Agent B. Rivers asks Mitch for help.",
     # real Baywatch: a guest star whose "as" describes the plot role keeps the sentence
     "Comedian Jeff Altman guest stars as an annoying medical supplies salesman who drives the "
     "lifeguards crazy while they are quarantined at headquarters.",
 ])
 def test_plot_sentences_stay(sentence: str) -> None:
     assert trivia_rule(sentence) is None
+
+
+def test_sentences_do_not_split_after_initials() -> None:
+    assert split_sentences("Fred W. Berger and Stanford Tischler won the ACE Eddie Award. "
+                           "Hawkeye is drafted.") == [
+        "Fred W. Berger and Stanford Tischler won the ACE Eddie Award.", "Hawkeye is drafted."]
+    plot, trivia = split_trivia("Radar is promoted. Fred W. Berger and Stanford Tischler won "
+                                "the ACE Eddie Award for this episode.")
+    assert plot == "Radar is promoted." and trivia[0][0] == "award"
 
 
 def test_sentences_do_not_split_after_titles() -> None:
@@ -168,7 +187,8 @@ def test_baywatch_pilot_movie_is_episode_0_and_notes_and_music_are_trivia() -> N
     assert [e.marker for e in se.episodes] == ["S1E0", "S1E1", "S1E2"]
     # the italic, unquoted title cell is quoted like the others
     assert se.episodes[0].paragraph.startswith('S1E0 "Panic at Malibu Pier": Mitch Buchannon')
-    assert {t.rule for t in se.trivia} == {"note", "montage_music"}
+    assert {t.rule for t in se.trivia} == {"note", "montage_music", "small_role"}
+    assert "has a small role" not in se.episodes[0].summary  # QA 1.5.9: John Sherrod
     for e in se.episodes:
         assert "Montage" not in e.summary and not e.summary.startswith("Notes")
 
@@ -275,6 +295,23 @@ def test_without_the_override_a_long_main_article_is_kept(monkeypatch) -> None:
 # --- re-fetch ---------------------------------------------------------------------------------
 
 
+def test_1_5_8_files_are_fetched_again_only_when_the_new_rules_change_their_text(
+        tmp_path: Path) -> None:
+    paths = DataPaths.resolve(str(tmp_path))
+    base = {"status": "ok", "via_detail": "episode_table", "episode_tables": {},
+            "fetcher_version": "1.5.8", "candidate": {"media_type": "tv_series"}}
+    changed = {**base, "qid": "Q223320", "sources": [{"text": (
+        'S1E1 "In Deep": Hobie skips summer school.\n\nS1E2 "Heat Wave": Mitch helps an '
+        "old friend. John Sherrod has a small role as life guard Owen in this episode.")}]}
+    same = {**base, "qid": "Q16290", "sources": [{"text": (
+        'S1E3 "The Naked Now": The crew falls prey to a mysterious intoxication.')}]}
+    for rec, expected in ((changed, True), (same, False)):
+        write_json_atomic(paths.plot_file(rec["qid"]), rec)
+        assert needs_fetch(paths, rec["qid"], False) is expected, rec["qid"]
+    write_json_atomic(paths.plot_file("Q223320"), {**changed, "fetcher_version": "1.5.9"})
+    assert not needs_fetch(paths, "Q223320", False)
+
+
 def test_episode_table_files_and_seinfeld_from_before_1_5_8_are_fetched_again(
         tmp_path: Path) -> None:
     paths = DataPaths.resolve(str(tmp_path))
@@ -286,5 +323,5 @@ def test_episode_table_files_and_seinfeld_from_before_1_5_8_are_fetched_again(
         old = {**rec, "fetcher_version": "1.5.7", "candidate": {"media_type": "tv_series"}}
         write_json_atomic(paths.plot_file(rec["qid"]), old)
         assert needs_fetch(paths, rec["qid"], False), rec["qid"]
-        write_json_atomic(paths.plot_file(rec["qid"]), {**old, "fetcher_version": "1.5.8"})
+        write_json_atomic(paths.plot_file(rec["qid"]), {**old, "fetcher_version": "1.5.9"})
         assert not needs_fetch(paths, rec["qid"], False), rec["qid"]
