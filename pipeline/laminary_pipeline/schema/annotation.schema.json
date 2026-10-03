@@ -839,14 +839,47 @@
             {
               "required": [
                 "seasons"
-              ]
+              ],
+              "not": {
+                "anyOf": [
+                  {
+                    "required": [
+                      "first_year"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "last_year"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "years"
+                    ]
+                  }
+                ]
+              }
             },
             {
               "required": [
                 "years",
                 "first_year",
                 "last_year"
-              ]
+              ],
+              "not": {
+                "anyOf": [
+                  {
+                    "required": [
+                      "total_seasons"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "total_seasons_basis"
+                    ]
+                  }
+                ]
+              }
             }
           ]
         }

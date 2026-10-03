@@ -300,7 +300,8 @@ def test_verification_is_not_loosened_for_the_rule() -> None:
     # fallback (fetcher 1.5.2) doesn't rescue it
     fake.data["sparql"]["list_statements"] = {"results": {"bindings": [
         {"item": {"value": f"http://www.wikidata.org/entity/{LISTS[REVIVAL_LIST][2]}"},
-         "prop": {"value": "P361"}, "value": {"value": "http://www.wikidata.org/entity/Q999"}}]}}
+         "prop": {"value": "P361"}, "value": {"value": "http://www.wikidata.org/entity/Q999"},
+         "tv": {"value": "true"}}]}}  # Q999: a separate revival series item
     rec = fetch(fake)
     assert rec["status"] == "skipped"
     assert rec["series_run_rule"] == "doctor_who_revival"

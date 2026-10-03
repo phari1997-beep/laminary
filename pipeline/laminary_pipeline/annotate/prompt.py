@@ -349,15 +349,25 @@ def _header(gated: GatedInput, prompt: Prompt) -> str:
         year = prompt_release_year(plot.title)
         if year is not None:
             lines.append(f"Release year: {year}")
-    if prompt.sends_coverage:
+    pinned = PINNED_PROMPTS[prompt.version]
+    if plot.year_span is not None and not pinned.sends_year_coverage:
+        # QA: refused whatever else the prompt sends; its rule 8 speaks only of seasons, and
+        # before annotate-1.2.0 there is no coverage line at all (CID needs annotate-1.3.0)
+        raise GateError(f"{plot.key}: coverage by year needs a prompt that explains it "
+                        f"(annotate-1.3.0 or later), not {prompt.version}")
+    if pinned.sends_coverage or plot.season_total is not None:
+        # validates, and is None unless the summary is partial. A prompt without the line
+        # still builds a stale file without a season total (unknown coverage), as before.
         coverage = prompt_coverage(plot)
-        if coverage is not None and "years" in coverage and not (
-                PINNED_PROMPTS[prompt.version].sends_year_coverage):
-            # this prompt's rule 8 speaks only of seasons (CID needs annotate-1.3.0)
-            raise GateError(f"{plot.key}: coverage by year needs a prompt that explains it "
-                            f"(annotate-1.3.0 or later), not {prompt.version}")
-        if coverage is not None:
-            lines.append(coverage["statement"])
+    else:
+        coverage = None
+    if coverage is not None and not pinned.sends_coverage:
+        # QA: a partial summary sent without its coverage line would read as the whole series
+        raise GateError(f"{plot.key}: summary covers only part of the series ("
+                        f"{coverage['statement']!r}) and {prompt.version} can't say so; use "
+                        "annotate-1.2.0 or later")
+    if coverage is not None:
+        lines.append(coverage["statement"])
     lines.append(f"The plot summary follows in {n} part{'s' if n > 1 else ''}.")
     return "\n".join(lines)
 

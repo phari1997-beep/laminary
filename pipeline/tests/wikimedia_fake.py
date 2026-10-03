@@ -89,9 +89,12 @@ class FakeWikimedia:
         assert params.get("format") == "json" and params.get("formatversion") == "2"
         wiki = self.data["wikipedia"]
         if params["action"] == "query" and params.get("prop") == "redirects":
-            # fetcher 1.5.3: titles redirecting to a main article ("redirects:<title>")
-            return wiki.get(f"redirects:{params['titles']}",
-                            {"batchcomplete": True, "query": {"pages": []}})
+            # fetcher 1.5.3: titles redirecting to a main article ("redirects:<title>", then
+            # "redirects:<title>:<rdcontinue>" for continued pages)
+            key = f"redirects:{params['titles']}"
+            if params.get("rdcontinue"):
+                key += f":{params['rdcontinue']}"
+            return wiki.get(key, {"batchcomplete": True, "query": {"pages": []}})
         if params["action"] == "query":
             key = f"query:{params['titles']}"
             if key in wiki:
@@ -114,6 +117,9 @@ class FakeWikimedia:
             return out
         assert params["action"] == "parse"
         if params.get("prop") == "links":
+            if "section" in params:  # fetcher 1.5.6: a list page's lead links only
+                return wiki.get(f"links:{params['oldid']}:{params['section']}",
+                                {"parse": {"links": []}})
             return wiki.get(f"links:{params['oldid']}", {"parse": {"links": []}})
         if params.get("prop") == "sections":
             return wiki[f"sections:{params['oldid']}"]

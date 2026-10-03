@@ -210,7 +210,7 @@ The importer checks every row and names the column. The usual ones:
 - **1.2.0** (2026-10-01): two-part Phase 1 exit check; `label_slot` and double labeling of 25 titles; label independently (rule 6); text files in the Drive Laminary folder with a manifest; series joined from season articles. Label definitions unchanged.
 - **1.3.0** (2026-10-01): rule 1 notes that a series file may hold only short season articles when the first full season is too long to join them (DECISIONS 2026-10-01). Label definitions unchanged.
 - **1.4.0** (2026-10-02): new grey column `summary_coverage` and golden rule 7: when a series file covers only some seasons, label only the covered run and never judge an ending you can't see; the model gets the same line in its request (prompt annotate-1.2.0, DECISIONS 2026-10-02). Series files no longer include production, ratings or broadcast subsections, or "Cite error" messages. Label definitions unchanged.
-- **1.6.0** (2026-10-02): `summary_coverage` may state broadcast years for a series without seasons (CID; rule 7), and such files mark episodes "1998E5" (DECISIONS 2026-10-02). Label definitions unchanged.
 - **1.5.0** (2026-10-02): a series file may be per-episode summaries from Wikipedia's episode tables (rule 1), and `summary_coverage` may say a season is included only in part (rule 7) (DECISIONS 2026-10-02: big series must not drop out). Label definitions unchanged.
+- **1.6.0** (2026-10-02): `summary_coverage` may state broadcast years for a series without seasons (CID; rule 7), and such files mark episodes "1998E5" (DECISIONS 2026-10-02). Label definitions unchanged.
 
 Changing a definition here changes what a label means. That needs a new guide version, and labels made under the old version stay tagged with it.

@@ -42,7 +42,8 @@ EPISODE_TABLE_FETCHER = (1, 5, 0)
 RUN_RULE_FETCHER = (1, 5, 1)
 LIST_LINK_FETCHER = (1, 5, 2)
 RICHER_TEXT_FETCHER = (1, 5, 2)
-LINK_HARDENING_FETCHER = (1, 5, 3)
+LINK_HARDENING_FETCHER = (1, 5, 6)  # 1.5.3 back-link; 1.5.6 lead-only back-link
+YEAR_HEADING_FIX_FETCHER = (1, 5, 6)  # 1.5.5's table_heading read years for every series
 
 
 def existing_status(paths: DataPaths, qid: str) -> dict[str, Any] | None:
@@ -60,6 +61,7 @@ def needs_fetch(paths: DataPaths, qid: str, refresh: bool) -> bool:
         or _unverified_list_page_before_link_fallback(current)
         or _thin_priority_series_before_richer_text(current)
         or _link_fallback_before_hardening(current)
+        or _episode_tables_from_1_5_5(current)
     )
 
 
@@ -118,11 +120,20 @@ def _thin_priority_series_before_richer_text(rec: dict[str, Any]) -> bool:
     )
 
 
+def _episode_tables_from_1_5_5(rec: dict[str, Any]) -> bool:
+    """A file from fetcher 1.5.5 that tried episode tables: that version's ``table_heading``
+    let a year subheading decide a table on every series ("Season 1" > "2005" was skipped,
+    "Specials" > "2010" was not). Fetched again with the fix (1.5.6, QA)."""
+    return ("episode_tables" in rec
+            and _version(rec.get("fetcher_version")) == (1, 5, 5)
+            and rec.get("qid") not in SERIES_RUN_RULES)  # rule titles: their own ``since``
+
+
 def _link_fallback_before_hardening(rec: dict[str, Any]) -> bool:
-    """A file from fetcher 1.5.2 shaped by the main-article link fallback before its hardening
-    (1.5.3: the list page must link back; only a TV series rejects): one built from a
-    link-verified list page, or one with a list page rejected for a statement to any other
-    item. Fetched again so the stricter and the looser checks both apply."""
+    """A file shaped by the main-article link fallback before its hardening (1.5.3: the list
+    page must link back; only a TV series rejects; 1.5.6: only the lead's links count as the
+    back-link): one built from a link-verified list page, or one with a list page rejected
+    for a statement to another item. Fetched again so the current checks apply."""
     if _version(rec.get("fetcher_version")) >= LINK_HARDENING_FETCHER:
         return False
     evidence = [*((rec.get("season_articles") or {}).get("evidence") or []),
@@ -130,7 +141,7 @@ def _link_fallback_before_hardening(rec: dict[str, Any]) -> bool:
     skipped = (rec.get("season_articles") or {}).get("skipped") or []
     return (
         any(isinstance(e, dict) and e.get("basis") == "main_article_link" for e in evidence)
-        or any(isinstance(s, dict) and "in another series" in str(s.get("reason", ""))
+        or any(isinstance(s, dict) and "in another" in str(s.get("reason", ""))
                for s in skipped)
     )
 

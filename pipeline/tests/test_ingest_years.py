@@ -79,7 +79,7 @@ def cid_fake(*, middle: dict[int, tuple[int, int]] | None = None) -> FakeWikimed
         w[f"sections:{rev}"] = sections(title, ["Series overview"])
         w[f"text:{rev}:1"] = {"parse": {"text": "<div><table><tr><td>1</td></tr></table></div>"}}
         w[f"page:{rev}"] = {"parse": {"text": html[title]}}
-        w[f"links:{rev}"] = {"parse": {"links": [{"ns": 0, "title": MAIN, "exists": True}]}}
+        w[f"links:{rev}:0"] = {"parse": {"links": [{"ns": 0, "title": MAIN, "exists": True}]}}
     return fake
 
 
@@ -169,7 +169,7 @@ def test_format_years(years: list[int], text: str) -> None:
 
 def test_years_join_in_order_across_split_pages(cid_plot) -> None:
     rec = cid_plot
-    assert rec["fetcher_version"] == FETCHER_VERSION == "1.5.5"
+    assert rec["fetcher_version"] == FETCHER_VERSION
     assert rec["via_detail"] == "episode_table" and rec["series_run_rule"] == "cid_years"
     assert [(p["page_title"], p["source"]["year"]) for p in rec["sources"]] == [
         ("List of CID episodes: 1998–2009", 1998), ("List of CID episodes: 1998–2009", 1999),
@@ -241,9 +241,28 @@ def test_malformed_year_coverage_is_refused(partial_plot, change, match) -> None
         gate(parse_plot(rec, "t"))
 
 
-def test_a_prompt_without_the_year_rule_refuses_year_coverage(cid_plot) -> None:
+@pytest.mark.parametrize("version", ["annotate-1.0.0", "annotate-1.1.0", "annotate-1.2.0"])
+def test_a_prompt_without_the_year_rule_refuses_year_coverage(cid_plot, version) -> None:
+    """QA: refused under every prompt without ``sends_year_coverage``, including 1.0.0 and
+    1.1.0, which send no coverage line at all."""
     with pytest.raises(GateError, match="annotate-1.3.0"):
-        _request(cid_plot, "annotate-1.2.0")
+        _request(cid_plot, version)
+
+
+def test_year_headings_are_read_from_the_path_only_by_the_year_rule() -> None:
+    """QA: ``table_heading`` ignores years, so pages without the rule are unchanged; the year
+    rule finds the nearest year heading itself, passing over a "Part 1" subheading and
+    skipping a nearer specials heading."""
+    rule = run_rule_for(CID)
+    html = (heading(2, "1998") + heading(3, "Part 1") + table(ep_rows(1998, 1, 10))
+            + heading(2, "1999") + heading(3, "Specials") + table(ep_rows(1999, 1, 10))
+            + heading(2, "2000") + table(ep_rows(2000, 1, 10)))
+    tables = parse_tables(html)
+    assert [t.heading for t in tables] == ["part 1", "specials", "2000"]
+    years, skipped = list_page_seasons(tables, rule)
+    assert [y for y, _ in years] == [1998, 2000]
+    assert skipped == [{"heading": "specials",
+                        "reason": "specials or extras, out of the year's order"}]
 
 
 def test_record_stores_the_year_coverage(partial_plot) -> None:
@@ -267,6 +286,22 @@ def test_record_stores_the_year_coverage(partial_plot) -> None:
     bad = copy.deepcopy(rec)
     bad["provenance"]["coverage"]["years"] = [1998, 2010, 1999]
     assert any("years" in e for e in validate_record(bad))
+    # schema: the season form takes no year fields, and the year form no season total
+    from jsonschema import Draft202012Validator
+
+    from laminary_pipeline.annotation import load_schema
+
+    schema = load_schema()
+    cov = Draft202012Validator({"$defs": schema["$defs"], **schema["$defs"]["provenance"][
+        "properties"]["coverage"]})
+    season_form = {"seasons": [1, 2], "statement": "Summary covers seasons 1–2 of 3."}
+    assert cov.is_valid(season_form)
+    assert not cov.is_valid({**season_form, "first_year": 1998})
+    assert not cov.is_valid({**season_form, "last_year": 2025})
+    year_form = rec["provenance"]["coverage"]
+    assert cov.is_valid(year_form)
+    assert not cov.is_valid({**year_form, "total_seasons": 3,
+                             "total_seasons_basis": "wikidata_P2437"})
     both = copy.deepcopy(rec)
     both["provenance"]["sources"][0]["season"] = 1
     assert validate_record(both)  # a source has a season or a year, never both

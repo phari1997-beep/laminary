@@ -23,8 +23,9 @@ story there; the main article holds only a premise.
    main page title with or without its disambiguator) without such a statement is accepted
    when the main article, at the pinned revision, links to it (by its title or a redirect to
    it) and (fetcher 1.5.3) the list page, at its fetched revision, links back to the main
-   article (its title or a redirect to it), unless Wikidata states P179/P361 to another
-   television series (P31 Q5398426 or a subclass; ``list_statements_sparql``). Its evidence is
+   article (its title or a redirect to it) in its lead (section 0, fetcher 1.5.6: navboxes and
+   body text link related shows), unless Wikidata states P179/P361 to another television
+   series (P31 Q5398426 or Q15416, or a subclass; ``list_statements_sparql``). Its evidence is
    recorded as ``{"basis": "main_article_link", "linked_from", "linked_from_revision",
    "links_back_via", "list_revision", "other_statements"}``. Season pages always need the
    Wikidata statement. The matched statement (property, series QID, ordinal) is kept per
@@ -103,6 +104,7 @@ MAX_SEASON_NUMBER = 100  # the schema's source.season maximum
 MAX_SEASONS = 20  # season numbers guessed by title
 MAX_SEASON_SOURCES = 20  # also the schema's provenance.sources maxItems
 QUERY_BATCH = 50  # MediaWiki's limit on titles per query
+MAX_REDIRECT_PAGES = 10  # rdcontinue pages followed (500 redirects each)
 MIN_OVERVIEW_WORDS = 20  # an overview with less prose than this is a table remnant
 SEASON_CHECK_TTL = 7 * 24 * 3600
 
@@ -150,11 +152,12 @@ _LIST_SPLITS: tuple[tuple[int, re.Pattern[str]], ...] = (
     (3, re.compile(r"^\s*\(part\s+(\d{1,2})\)$", re.IGNORECASE)),  # " (part 1)"
 )
 
+MAX_LIST_PARTS = 4  # "List of <X> episodes (part N)" titles guessed
+
 
 def ucfirst(title: str) -> str:
     """MediaWiki's title rule: only the first letter is case-insensitive."""
     return title[:1].upper() + title[1:]
-MAX_LIST_PARTS = 4  # "List of <X> episodes (part N)" titles guessed
 
 
 def episode_list_order(title: str, base: str, page_title: str) -> tuple[int, int] | None:
@@ -220,12 +223,14 @@ SELECT ?item ?prop ?ordinal WHERE {{
 
 
 TELEVISION_SERIES = "Q5398426"
+TELEVISION_PROGRAM = "Q15416"  # also counts (QA nit): some series items use it
 
 
 def list_statements_sparql(items: list[str]) -> str:
     """Every "part of the series" (P179) and "part of" (P361) value of the given items, to
     catch an episode-list page that Wikidata places in a different series (fetcher 1.5.2), and
-    whether that value is a television series (P31 Q5398426 or a subclass; fetcher 1.5.3)."""
+    whether that value is a television series (P31 Q5398426 or a subclass; fetcher 1.5.3) or
+    a television program (Q15416 or a subclass; fetcher 1.5.6)."""
     bad = [q for q in items if not QID_RE.match(q)]
     if bad:
         raise ValueError(f"not Wikidata item ids: {bad}")
@@ -236,7 +241,8 @@ SELECT ?item ?prop ?value ?tv WHERE {{
   {{ ?item wdt:P179 ?value . BIND("P179" AS ?prop) }}
   UNION
   {{ ?item wdt:P361 ?value . BIND("P361" AS ?prop) }}
-  BIND(EXISTS {{ ?value wdt:P31/wdt:P279* wd:{TELEVISION_SERIES} }} AS ?tv)
+  BIND(EXISTS {{ VALUES ?tvclass {{ wd:{TELEVISION_SERIES} wd:{TELEVISION_PROGRAM} }}
+                ?value wdt:P31/wdt:P279* ?tvclass }} AS ?tv)
 }}
 """
 
@@ -514,32 +520,41 @@ class SeasonFinder:
                 kind.append(f"{prop} {value}")
         return out
 
-    def page_links(self, revid: int) -> set[str]:
-        """Main-namespace link targets of a page at a pinned revision."""
+    def lead_links(self, revid: int) -> set[str]:
+        """Main-namespace link targets in the lead (section 0) of a page at a pinned revision
+        (fetcher 1.5.6, QA): navboxes and body text can link related shows (La Femme Nikita's
+        list links the remake "Nikita (TV series)" in its navbox), so only the lead counts."""
         data = self.fetcher._api(
-            {"action": "parse", "oldid": str(revid), "prop": "links"}, cache_ttl=None
+            {"action": "parse", "oldid": str(revid), "prop": "links", "section": "0"},
+            cache_ttl=None,
         )
         return {link.get("title", "") for link in data.get("parse", {}).get("links", [])
                 if link.get("ns") == 0}
 
     def redirects_to(self, title: str) -> set[str]:
-        """Main-namespace titles that redirect to ``title``."""
-        data = self.fetcher._api(
-            {"action": "query", "titles": title, "prop": "redirects", "rdnamespace": "0",
-             "rdlimit": "max"}, cache_ttl=SEASON_CHECK_TTL,
-        )
+        """Main-namespace titles that redirect to ``title``, following ``rdcontinue``."""
         out: set[str] = set()
-        for page in data.get("query", {}).get("pages", []):
-            for r in page.get("redirects") or []:
-                if isinstance(r, dict) and r.get("title"):
-                    out.add(r["title"])
+        cont: dict[str, str] = {}
+        for _ in range(MAX_REDIRECT_PAGES):
+            data = self.fetcher._api(
+                {"action": "query", "titles": title, "prop": "redirects", "rdnamespace": "0",
+                 "rdlimit": "max", **cont}, cache_ttl=SEASON_CHECK_TTL,
+            )
+            for page in data.get("query", {}).get("pages", []):
+                for r in page.get("redirects") or []:
+                    if isinstance(r, dict) and r.get("title"):
+                        out.add(r["title"])
+            nxt = (data.get("continue") or {}).get("rdcontinue")
+            if not isinstance(nxt, str) or not nxt:
+                break
+            cont = {"rdcontinue": nxt}
         return out
 
     def back_link(self, page: Page, main_title: str, main_redirects: list[set[str]]) -> str:
         """The title through which ``page`` links back to the main article (its title, or a
         redirect to it), or "" when it doesn't. ``main_redirects`` caches the redirect lookup
         (one request per series, only when a page has no direct link)."""
-        links = self.page_links(page.revid)
+        links = self.lead_links(page.revid)
         if main_title in links:
             return main_title
         if not main_redirects:

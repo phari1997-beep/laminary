@@ -33,6 +33,7 @@ from laminary_pipeline.ingest.seasons import (
     TELEVISION_SERIES,
     list_statements_sparql,
 )
+from laminary_pipeline.ingest.wikipedia import FETCHER_VERSION
 
 LIST = "List of Tidewater episodes"
 LIST_REV = "92100"
@@ -61,7 +62,7 @@ def plain_list_fake(*, item: str | None = "Q9200010", back: tuple[str, ...] = (M
     w = fake.data["wikipedia"]
     fake.data["sparql"]["season_check:" + SERIES] = {"results": {"bindings": []}}
     w["links:92000"] = _links(*main_links)
-    w[f"links:{LIST_REV}"] = _links(*back)
+    w[f"links:{LIST_REV}:0"] = _links(*back)  # the lead's links
     if item is None:
         w[f"query:{LIST}"] = page(LIST, 9210, 92100, None)
     return fake
@@ -87,7 +88,7 @@ def test_linked_split_list_pages_that_link_back_are_accepted() -> None:
     queries = [dict(urllib.parse.parse_qsl((r.data or b"").decode())).get("query", "")
                for r in fake.requests]
     assert any("# laminary list-page statements" in q and TELEVISION_SERIES in q
-               for q in queries)
+               and "Q15416" in q for q in queries)  # television program counts too
 
 
 def test_plain_list_page_linked_both_ways_is_accepted() -> None:
@@ -194,14 +195,51 @@ def test_a_linked_page_whose_title_does_not_match_is_rejected() -> None:
 
 def test_a_differently_cased_series_name_is_not_a_match() -> None:
     """Titles match case-sensitively after the first letter: "List of TideWater episodes" is
-    another page."""
+    another page. It links both ways and has episode tables, so before fetcher 1.5.3
+    (case-insensitive) it would have been used."""
+    from laminary_pipeline.ingest.seasons import episode_list_order
+
+    assert episode_list_order("List of TideWater episodes", "Tidewater", MAIN) is None
+    assert episode_list_order("list of Tidewater episodes", "Tidewater", MAIN) == (0, 0)
     fake = plain_list_fake(main_links=("List of TideWater episodes",))
     w = fake.data["wikipedia"]
     w["query:List of TideWater episodes"] = page("List of TideWater episodes", 9212, 92120,
                                                  "Q9200012")
+    w["sections:92120"] = sections("List of TideWater episodes", ["Series overview"])
+    w["links:92120:0"] = _links(MAIN)
+    w["page:92120"] = {"parse": {"text": list_page_html({1: (3, 60), 2: (3, 60)})}}
     rec = fetch(fake)
-    assert "List of TideWater episodes" not in {p.get("page_title") for p in
-                                                rec.get("sources", [])}
+    assert rec["status"] == "skipped"
+    assert "92120" not in page_requests(fake)
+
+
+def test_a_back_link_outside_the_lead_does_not_count() -> None:
+    """QA: La Femme Nikita's list page links the remake "Nikita (TV series)" only in its
+    navbox, Mr. Bean's links the animated series in its body. Only the lead's links (section
+    0) are asked for, so the remake is rejected."""
+    fake = plain_list_fake(back=("Harbor Lights",))  # the lead links only another show
+    fake.data["wikipedia"][f"links:{LIST_REV}"] = _links(MAIN, "Harbor Lights")  # whole page
+    rec = fetch(fake)
+    assert rec["status"] == "skipped"
+    assert _reasons(rec)[LIST].endswith(f"the page doesn't link back to {MAIN!r}")
+    lead_requests = [r.url for r in fake.requests
+                     if "prop=links" in r.url and f"oldid={LIST_REV}" in r.url]
+    assert lead_requests and all("section=0" in u for u in lead_requests)
+
+
+def test_redirect_lookups_follow_continuation() -> None:
+    """A main article with more than 500 redirects: the back-link through a redirect on the
+    second page of ``prop=redirects`` still counts."""
+    fake = plain_list_fake(back=("Tidewater (1989 TV series)",))
+    w = fake.data["wikipedia"]
+    w[f"redirects:{MAIN}"] = {"continue": {"rdcontinue": "9200|1"}, "query": {"pages": [
+        {"pageid": 9200, "ns": 0, "title": MAIN, "redirects": [{"title": "Tidewater show"}]}]}}
+    w[f"redirects:{MAIN}:9200|1"] = {"batchcomplete": True, "query": {"pages": [
+        {"pageid": 9200, "ns": 0, "title": MAIN,
+         "redirects": [{"title": "Tidewater (1989 TV series)"}]}]}}
+    rec = fetch(fake)
+    assert rec["status"] == "ok"
+    assert rec["episode_tables"]["evidence"][0]["links_back_via"] == "Tidewater (1989 TV series)"
 
 
 def test_wikidata_naming_another_tv_series_still_rejects_a_linked_list_page() -> None:
@@ -223,7 +261,7 @@ def test_season_pages_get_no_link_fallback() -> None:
     pages = {**TWO_SEASONS, 3: season_page_html(3, 3, 40)}
     fake = episode_fake(season_pages=pages)
     fake.data["wikipedia"]["links:92000"] = _links("Tidewater season 3")
-    fake.data["wikipedia"]["links:92030"] = _links(MAIN)
+    fake.data["wikipedia"]["links:92030:0"] = _links(MAIN)
     rec = fetch(fake)
     assert [p["source"]["season"] for p in rec["sources"]] == [1, 2, 4]
     assert _reasons(rec)["Tidewater season 3"] == (
@@ -280,9 +318,20 @@ def test_link_verified_records_from_1_5_2_are_fetched_again(tmp_path) -> None:
                                            "basis": "main_article_link"}]}}
     _write(paths, "Q751917", ok)
     assert needs_fetch(paths, "Q751917", False)
-    _write(paths, "Q751917", {**ok, "fetcher_version": "1.5.3"})
+    for older in ("1.5.3", "1.5.5"):  # 1.5.6: the back-link must be in the lead
+        _write(paths, "Q751917", {**ok, "fetcher_version": older})
+        assert needs_fetch(paths, "Q751917", False), older
+    _write(paths, "Q751917", {**ok, "fetcher_version": FETCHER_VERSION})
     assert not needs_fetch(paths, "Q751917", False)
-    other = {"qid": "Q1", "status": "skipped", "skip_reason": "too_short",
+    # 1.5.5 episode-table files (its table_heading read years for every series)
+    plain_tables = {"qid": "Q5", "status": "ok", "fetcher_version": "1.5.5",
+                    "candidate": {"media_type": "tv_series"},
+                    "episode_tables": {"evidence": [{"property": "P179"}]}}
+    _write(paths, "Q5", plain_tables)
+    assert needs_fetch(paths, "Q5", False)
+    _write(paths, "Q5", {**plain_tables, "fetcher_version": "1.5.4"})
+    assert not needs_fetch(paths, "Q5", False)
+    other ={"qid": "Q1", "status": "skipped", "skip_reason": "too_short",
              "fetcher_version": "1.5.2", "candidate": {"media_type": "tv_series"},
              "season_articles": {"used": [], "skipped": [
                  {"title": "List of X episodes",

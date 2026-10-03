@@ -226,8 +226,7 @@ def table_heading(path: tuple[str, ...]) -> str:
     """The heading that decides a table, from its enclosing headings (outermost first): the
     nearest one that names specials or a season, else the nearest one ("" with none)."""
     for text in reversed(path):
-        if (_SKIP_TABLE_HEADING.search(text) or _LIST_SEASON_HEADING.match(text)
-                or _YEAR_HEADING.match(text)):
+        if _SKIP_TABLE_HEADING.search(text) or _LIST_SEASON_HEADING.match(text):
             return text
     return path[-1] if path else ""
 
@@ -375,14 +374,25 @@ def _list_page_years(
     tables: list[RawTable], rule: SeriesRunRule
 ) -> tuple[list[tuple[int, list[RawTable]]], list[dict[str, str]]]:
     """``list_page_seasons`` for a run rule numbering by year: tables grouped by the year
-    heading above them, years rising down the page."""
+    heading above them, years rising down the page. The year comes from the table's enclosing
+    headings (``RawTable.path``), nearest first, so only this rule reads year headings
+    (``table_heading`` ignores them): a nearer specials heading skips the table, a nearer
+    season heading is outside the run, and other headings ("Part 1") are passed over."""
     years: list[tuple[int, list[RawTable]]] = []
     skipped: list[dict[str, str]] = []
     for i, t in enumerate(tables):
-        m = _YEAR_HEADING.match(t.heading)
-        if not m or _SKIP_TABLE_HEADING.search(t.heading):
-            reason = (rule.heading_reason() if _LIST_SEASON_HEADING.match(t.heading)
-                      else "not under a year heading")
+        m, reason = None, "not under a year heading"
+        for text in reversed(t.path):
+            if _SKIP_TABLE_HEADING.search(text):
+                reason = "specials or extras, out of the year's order"
+                break
+            if _LIST_SEASON_HEADING.match(text):
+                reason = rule.heading_reason()
+                break
+            m = _YEAR_HEADING.match(text)
+            if m:
+                break
+        if m is None:
             skipped.append({"heading": t.heading, "reason": reason})
             continue
         year = int(m.group(1))

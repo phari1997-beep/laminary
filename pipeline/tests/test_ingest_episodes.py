@@ -896,7 +896,7 @@ def split_list_fake(*, verified: tuple[str, ...] = ("Q9200030", "Q9200031")) -> 
         w[f"text:{rev}:1"] = {"parse": {"text": "<div><table><tr><td>1</td></tr></table></div>"}}
         w[f"page:{rev}"] = {"parse": {"text": list_page_html(seasons)}}
         # each list page links back to the main article (fetcher 1.5.3 link fallback)
-        w[f"links:{rev}"] = {"parse": {"links": [{"ns": 0, "title": MAIN, "exists": True}]}}
+        w[f"links:{rev}:0"] = {"parse": {"links": [{"ns": 0, "title": MAIN, "exists": True}]}}
     fake.data["sparql"]["season_check:" + SERIES] = {"results": {"bindings": [
         {"item": {"value": f"http://www.wikidata.org/entity/{q}"}} for q in verified]}}
     return fake
@@ -974,6 +974,27 @@ def test_missing_summary_tail_reaches_the_coverage_line() -> None:
     gated, params = _request(rec)
     assert params["messages"][0]["content"][0]["text"].splitlines()[2] == (
         f"Summary covers seasons 1–2 of 9 (season 2 only in part{TAIL}")
+
+
+@pytest.mark.parametrize(("path", "decides"), [
+    (("season 1", "2005"), "season 1"),  # a year subheading inside a season: still season 1
+    (("specials", "2010"), "specials"),  # a year subheading inside specials: still skipped
+    (("episodes", "2010"), "2010"),  # no season or specials heading: the nearest one
+])
+def test_year_subheadings_do_not_decide_a_table(path: tuple[str, ...], decides: str) -> None:
+    """QA: years are not season headings for ``table_heading`` (only the year rule reads
+    them, from the path)."""
+    from laminary_pipeline.ingest.episodes import table_heading
+
+    assert table_heading(path) == decides
+
+
+def test_season_and_specials_tables_with_year_subheadings_keep_their_meaning() -> None:
+    html = (heading(2, "Season 1") + heading(3, "2005") + table(ep_rows(1, 2, 20))
+            + heading(2, "Specials") + heading(3, "2010") + table(ep_rows(9, 1, 20)))
+    seasons, skipped = list_page_seasons(parse_tables(html))
+    assert [(n, len(ts)) for n, ts in seasons] == [(1, 1)]
+    assert [s["heading"] for s in skipped] == ["specials"]
 
 
 def test_part_subheadings_inside_a_season_keep_the_season() -> None:

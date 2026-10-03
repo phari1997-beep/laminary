@@ -170,9 +170,17 @@ def test_gold_template_skips_stale_season_files() -> None:
     assert skipped == [] and rows[0]["summary_coverage"] == "Summary covers seasons 1–4 of 7."
 
 
-def test_annotate_1_1_0_header_is_unchanged() -> None:
-    assert header(series_plot([1, 2, 3, 4], 7), "annotate-1.1.0") == (
+def test_annotate_1_1_0_header_is_unchanged_for_whole_series() -> None:
+    assert header(series_plot([1, 2, 3, 4], 4), "annotate-1.1.0") == (
         f"{SERIES_TYPE}\nRelease year: 2019\nThe plot summary follows in 4 parts.")
+
+
+@pytest.mark.parametrize("version", ["annotate-1.0.0", "annotate-1.1.0"])
+def test_prompts_without_the_line_refuse_partial_series(version: str) -> None:
+    """QA: before annotate-1.2.0 a partial summary would be sent without its coverage line,
+    so it would read as the whole series. Refused before any call."""
+    with pytest.raises(GateError, match="only part of the series"):
+        request(series_plot([1, 2, 3, 4], 7), version)
 
 
 def test_format_seasons() -> None:
