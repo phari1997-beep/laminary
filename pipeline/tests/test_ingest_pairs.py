@@ -342,7 +342,8 @@ def test_pairs_then_plots_pairs_end_to_end(data_dir: Path) -> None:
                    for r in fake.requests)
     assert "UNRESOLVED: Nowhere Film" in out  # still reported after the fetch
 
-    # the pilot's files are untouched
+    # the pairs commands don't write pilot files (byte-level check with real files:
+    # test_pairs_commands_leave_pilot_and_gold_files_untouched)
     assert (data_dir / "pilot_candidates.jsonl").read_bytes() == candidates_before
     assert not (data_dir / "pilot_effective.jsonl").exists()
     assert not (data_dir / "reports" / "plots_summary.json").exists()
@@ -360,6 +361,46 @@ def test_pairs_then_plots_pairs_end_to_end(data_dir: Path) -> None:
     assert json.loads((data_dir / "plots" / "Q9000001.json").read_text()) == pilot_file
     summary = json.loads((data_dir / "reports" / "pairs_summary.json").read_text())
     assert {p["pair_id"]: p["scorable"] for p in summary["pair_status"]}["M01"] is True
+
+
+def test_pairs_commands_leave_pilot_and_gold_files_untouched(data_dir: Path) -> None:
+    """QA S3: with an effective pilot, a pilot report, gold files and a pilot-role title whose
+    plot was skipped (it joins the pairs set: Ted Lasso, Death Note, Shrinking), neither
+    ``pairs`` nor ``plots --pairs`` (even with --refresh) changes a byte of them."""
+    skipped = {"fetcher_version": "1.5.9", "qid": "Q9000001", "status": "skipped",
+               "skip_reason": "too_short", "skip_detail": "premise has 84 words"}
+    write_json_atomic(data_dir / "plots" / "Q9000001.json", skipped)
+    (data_dir / "pilot_effective.jsonl").write_text(
+        '{"qid": "Q9000099", "title": "Other", "bucket": "film:english", "role": "pilot"}\n',
+        encoding="utf-8")
+    (data_dir / "reports").mkdir(exist_ok=True)
+    (data_dir / "reports" / "plots_summary.json").write_text('{"fetched": 560}\n',
+                                                             encoding="utf-8")
+    (data_dir / "gold" / "texts").mkdir(parents=True)
+    (data_dir / "gold" / "gold_selection.jsonl").write_text('{"qid": "Q9000001"}\n',
+                                                           encoding="utf-8")
+    (data_dir / "gold" / "texts" / "Q9000001.txt").write_text("gold text\n", encoding="utf-8")
+    guarded = ["pilot_candidates.jsonl", "pilot_effective.jsonl", "reports/plots_summary.json",
+               "gold/gold_selection.jsonl", "gold/texts/Q9000001.txt", "plots/Q9000001.json"]
+    before = {p: (data_dir / p).read_bytes() for p in guarded}
+
+    code, out = run(data_dir, "pairs", fake=_fake())
+    assert code == 0, out
+    rows = {r["qid"]: r for r in read_jsonl(data_dir / "pairs_candidates.jsonl")}
+    # the skipped pilot title is in the pairs set, with its pilot role kept aside
+    assert rows["Q9000001"]["role"] == "pairs" and rows["Q9000001"]["candidate_role"] == "pilot"
+    for argv in (("plots", "--pairs"), ("plots", "--pairs", "--refresh"),
+                 ("plots", "--pairs", "--refresh", "--qid", "Q9000001")):
+        code, out = run(data_dir, *argv, fake=FakeWikimedia())
+        assert code == 0, out
+        assert "not fetched for the pairs: Q9000001" in out
+    assert {p: (data_dir / p).read_bytes() for p in guarded} == before
+    summary = json.loads((data_dir / "reports" / "pairs_summary.json").read_text())
+    m01 = [p for p in summary["pair_status"] if p["pair_id"] == "M01"][0]
+    assert m01["scorable"] is False
+    assert any("Q9000001): skipped: too_short" in p for p in m01["problems"])
+    assert json.loads((data_dir / "plots" / "Q9000003.json").read_text())["fetched_for"] == (
+        "pairs")
 
 
 def test_pairs_files_never_move_the_pilot(tmp_path: Path) -> None:
