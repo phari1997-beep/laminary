@@ -14,6 +14,15 @@ and priority series that passed on a main article under 500 words before the ric
 pilot (``PRIORITY_SERIES``). The report lists any that ended skipped, with the reason, and
 backfill never replaces one: its pilot slot is held (left empty in the effective pilot) and a
 warning for Hari is printed instead.
+
+**Files fetched for the similarity pairs** (``plots --pairs``, QA S2 2026-10-03) share
+``data/plots/`` but carry ``fetched_for: "pairs"``. Every pilot view (``existing_status``,
+``needs_fetch``, ``_is_ok``, so the report, the effective pilot, backfill and the priority check)
+treats such a file as not fetched, so the pilot is exactly what it would be without the pairs:
+a reserve fetched for a pair never fills a slot ahead of better-ranked reserves, and backfill
+fetches it afresh (unmarked) only when it reaches it in rank order. ``plots --pairs`` never
+fetches a pilot-role row, and never overwrites a candidate's file the pilot run fetched (even
+with ``--refresh``); ``pairs_owned`` decides.
 """
 
 from __future__ import annotations
@@ -56,15 +65,48 @@ TRIVIA_RULES_FETCHER = (1, 5, 9)  # "Music:", "has a small role as", ACE Eddie, 
 _EPISODE_MARKER = re.compile(r'^(?:S\d+|\d{4})E\d+(?:–\d+)?(?: "[^"]*"| “[^”]*”)?: ')
 
 
-def existing_status(paths: DataPaths, qid: str) -> dict[str, Any] | None:
+FETCHED_FOR_PAIRS = "pairs"  # plot-file ``fetched_for`` of a ``plots --pairs`` fetch (QA S2)
+
+# (path, mtime_ns, size) -> the file's ``fetched_for``; files are rewritten atomically
+_FETCHED_FOR: dict[tuple[str, int, int], str | None] = {}
+
+
+def fetched_for(paths: DataPaths, qid: str) -> str | None:
+    """The plot file's ``fetched_for`` ("pairs" for a ``plots --pairs`` fetch), else None."""
     path = paths.plot_file(qid)
-    return read_json(path) if path.exists() else None
+    if not path.exists():
+        return None
+    st = path.stat()
+    key = (str(path), st.st_mtime_ns, st.st_size)
+    if key not in _FETCHED_FOR:
+        _FETCHED_FOR[key] = read_json(path).get("fetched_for")
+    return _FETCHED_FOR[key]
 
 
-def needs_fetch(paths: DataPaths, qid: str, refresh: bool) -> bool:
+def existing_status(
+    paths: DataPaths, qid: str, *, include_pairs: bool = False,
+) -> dict[str, Any] | None:
+    """The title's plot file, or None. A file fetched only for the pairs counts as absent for
+    the pilot unless ``include_pairs``."""
+    path = paths.plot_file(qid)
+    if not path.exists():
+        return None
+    if not include_pairs and fetched_for(paths, qid) == FETCHED_FOR_PAIRS:
+        return None
+    return read_json(path)
+
+
+def pairs_owned(paths: DataPaths, qid: str) -> bool:
+    """May ``plots --pairs`` write this title's plot file: none yet, or one it wrote itself.
+    (Titles that aren't candidates at all are the caller's call.)"""
+    return (not paths.plot_file(qid).exists()
+            or fetched_for(paths, qid) == FETCHED_FOR_PAIRS)
+
+
+def needs_fetch(paths: DataPaths, qid: str, refresh: bool, *, include_pairs: bool = False) -> bool:
     if refresh:
         return True
-    current = existing_status(paths, qid)
+    current = existing_status(paths, qid, include_pairs=include_pairs)
     return current is None or current.get("skip_reason") == SKIP_FETCH_ERROR or (
         _before_current_ingest(current)
         or _thin_series_before_seasons(current) or _thin_series_before_episode_tables(current)
@@ -243,10 +285,13 @@ def run_plots(
     backfill: bool = False,
     dry_run: bool = False,
     log: Callable[[str], None] = print,
+    for_pairs: bool = False,
 ) -> PlotRun:
+    """Fetch the pilot-role rows that need it (then backfill). ``for_pairs``: a ``plots
+    --pairs`` run; its files are marked ``fetched_for: "pairs"`` and it never backfills."""
     run = PlotRun()
     pilot = [c for c in candidates if c.get("role", "pilot") == "pilot"]
-    todo = [c for c in pilot if needs_fetch(paths, c["qid"], refresh)]
+    todo = [c for c in pilot if needs_fetch(paths, c["qid"], refresh, include_pairs=for_pairs)]
     run.skipped_existing = len(pilot) - len(todo)
     if limit is not None:
         todo = todo[:limit]
@@ -262,11 +307,13 @@ def run_plots(
     assert fetcher is not None
     for i, c in enumerate(todo, 1):
         record = fetcher.fetch(c)
+        if for_pairs:
+            record = {**record, "fetched_for": FETCHED_FOR_PAIRS}
         write_json_atomic(paths.plot_file(c["qid"]), record)
         run.fetched += 1
         status = record["status"] if record["status"] == "ok" else record["skip_reason"]
         log(f"[{i}/{len(todo)}] {c['qid']} {c.get('title')!r}: {status}")
-    if backfill and (limit is None or run.fetched < limit):
+    if backfill and not for_pairs and (limit is None or run.fetched < limit):
         budget = None if limit is None else limit - run.fetched
         run.backfilled = _backfill(paths, candidates, fetcher, budget, log)
     return run
@@ -340,8 +387,9 @@ def _record_annotatable(paths: DataPaths, qid: str) -> bool:
 def _is_ok(paths: DataPaths, qid: str) -> bool:
     """A title fills a pilot slot only when its plot file is annotatable (QA, 2026-10-02), not
     merely ``status: ok``: a pre-1.4.0 file passes the 150-word rule but is refused by every
-    current prompt."""
-    return _record_annotatable(paths, qid)
+    current prompt. A file fetched only for the pairs fills nothing (QA S2)."""
+    return (fetched_for(paths, qid) != FETCHED_FOR_PAIRS
+            and _record_annotatable(paths, qid))
 
 
 def held_priority(paths: DataPaths, rows: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:

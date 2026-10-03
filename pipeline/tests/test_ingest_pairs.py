@@ -14,13 +14,22 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from annotate_support import ingest_plot
 from wikimedia_fake import FakeWikimedia
 
 from laminary_pipeline.evaluate.pairs import load_pairs as load_resolved
 from laminary_pipeline.gold.pairs import Pair, resolve_pairs
 from laminary_pipeline.ingest import pairs as ps
 from laminary_pipeline.ingest.__main__ import main
-from laminary_pipeline.ingest.paths import read_jsonl
+from laminary_pipeline.ingest.paths import DataPaths, read_jsonl, write_json_atomic
+from laminary_pipeline.ingest.plots import (
+    effective_pilot,
+    existing_status,
+    not_annotatable,
+    pairs_owned,
+    plots_report,
+    run_plots,
+)
 
 NOW = "2026-10-03T12:00:00Z"
 
@@ -318,13 +327,15 @@ def test_pairs_then_plots_pairs_end_to_end(data_dir: Path) -> None:
     fake = FakeWikimedia()
     code, out = run(data_dir, "plots", "--pairs", fake=fake)
     assert code == 0, out
-    for qid in ("Q9000001", "Q9000003"):
-        assert json.loads((data_dir / "plots" / f"{qid}.json").read_text())["status"] == "ok"
+    # QA S2: a pilot-role title's plot file belongs to the pilot run; --pairs leaves it alone
+    assert "not fetched for the pairs: Q9000001" in out
+    assert not (data_dir / "plots" / "Q9000001.json").exists()
+    harbor_file = json.loads((data_dir / "plots" / "Q9000003.json").read_text())
+    assert harbor_file["status"] == "ok" and harbor_file["fetched_for"] == "pairs"
     summary = json.loads((data_dir / "reports" / "pairs_summary.json").read_text())
-    assert summary["pairs_set_plots"]["fetched"] == 2
+    assert summary["pairs_set_plots"]["fetched"] == 1
     scorable = {p["pair_id"]: p["scorable"] for p in summary["pair_status"]}
-    annotatable = summary["pairs_set_plots"]["annotatable"]
-    assert annotatable == 2 and scorable["M01"] is True
+    assert summary["pairs_set_plots"]["annotatable"] == 1 and scorable["M01"] is False
     assert not scorable["N01"] and not scorable["N02"]
     # the report re-resolves from the HTTP cache: the lookups are not repeated on the network
     assert not any(r.host == "query.wikidata.org" and b"gold-seed" in (r.data or b"")
@@ -339,6 +350,73 @@ def test_pairs_then_plots_pairs_end_to_end(data_dir: Path) -> None:
     again = FakeWikimedia()
     assert run(data_dir, "plots", "--pairs", fake=again)[0] == 0
     assert again.requests == []  # resumable: nothing fetched twice
+
+    # the pilot run fetches its own title; the pairs report then sees it
+    assert run(data_dir, "plots", "--qid", "Q9000001", fake=FakeWikimedia())[0] == 0
+    pilot_file = json.loads((data_dir / "plots" / "Q9000001.json").read_text())
+    assert pilot_file["status"] == "ok" and "fetched_for" not in pilot_file
+    code, out = run(data_dir, "plots", "--pairs", "--refresh", fake=FakeWikimedia())
+    assert code == 0 and "not fetched for the pairs: Q9000001" in out
+    assert json.loads((data_dir / "plots" / "Q9000001.json").read_text()) == pilot_file
+    summary = json.loads((data_dir / "reports" / "pairs_summary.json").read_text())
+    assert {p["pair_id"]: p["scorable"] for p in summary["pair_status"]}["M01"] is True
+
+
+def test_pairs_files_never_move_the_pilot(tmp_path: Path) -> None:
+    """QA S2: a reserve fetched for a pair (Home Alone, rank 1 in film:english) is invisible
+    to the pilot: the report doesn't count it, it fills no slot, and backfill fetches it afresh
+    only when it reaches it in rank order."""
+    paths = DataPaths.resolve(str(tmp_path))
+    rows = [{"qid": q, "title": f"Film {q}", "year": 2019, "media_type": "movie",
+             "region": "english", "language": "english", "decade": "2010s",
+             "bucket": "film:english", "role": role, "bucket_rank": rank}
+            for q, role, rank in (("Q11", "pilot", 1), ("Q12", "pilot", 2),
+                                  ("Q21", "reserve", 1), ("Q22", "reserve", 2))]
+    write_json_atomic(paths.plot_file("Q11"), ok_plot("Q11"))
+    write_json_atomic(paths.plot_file("Q12"), {"qid": "Q12", "status": "skipped",
+                                               "skip_reason": "too_short",
+                                               "fetcher_version": "1.5.9"})
+    write_json_atomic(paths.plot_file("Q22"), {**ok_plot("Q22"), "fetched_for": "pairs"})
+    assert not_annotatable(paths, "Q22") is None  # the pairs can use it
+    assert existing_status(paths, "Q22") is None  # the pilot can't see it
+    assert existing_status(paths, "Q22", include_pairs=True) is not None
+    assert [r["qid"] for r in effective_pilot(paths, rows)] == ["Q11"]
+    assert plots_report(paths, rows)["fetched"] == 2
+    assert not pairs_owned(paths, "Q11") and pairs_owned(paths, "Q22")
+    assert pairs_owned(paths, "Q99")  # no file yet
+
+    class Fetcher:
+        def __init__(self, skip: set[str]) -> None:
+            self.skip, self.fetched = skip, []
+
+        def fetch(self, c: dict[str, Any]) -> dict[str, Any]:
+            self.fetched.append(c["qid"])
+            if c["qid"] in self.skip:
+                return {"qid": c["qid"], "status": "skipped", "skip_reason": "too_short",
+                        "fetcher_version": "1.5.9"}
+            return ok_plot(c["qid"])
+
+    # backfill takes the better-ranked reserve first; the pairs file is left as it is
+    f = Fetcher(set())
+    run_plots(paths, rows, f, backfill=True, log=lambda m: None)
+    assert f.fetched == ["Q21"]
+    assert [r["qid"] for r in effective_pilot(paths, rows)] == ["Q11", "Q21"]
+    assert existing_status(paths, "Q22", include_pairs=True)["fetched_for"] == "pairs"
+    # when backfill does reach it, it is fetched afresh for the pilot (no marker)
+    write_json_atomic(paths.plot_file("Q21"), {"qid": "Q21", "status": "skipped",
+                                               "skip_reason": "too_short",
+                                               "fetcher_version": "1.5.9"})
+    f = Fetcher(set())
+    run_plots(paths, rows, f, backfill=True, log=lambda m: None)
+    assert f.fetched == ["Q22"]
+    assert "fetched_for" not in existing_status(paths, "Q22")
+    assert [r["qid"] for r in effective_pilot(paths, rows)] == ["Q11", "Q22"]
+
+
+def ok_plot(qid: str) -> dict[str, Any]:
+    return {**ingest_plot(qid, tmdb_id=int(qid[1:])), "fetcher_version": "1.5.9",
+            "word_count": 200, "section": {"heading": "plot"},
+            "permalink": f"https://en.wikipedia.org/w/index.php?title={qid}&oldid=1"}
 
 
 def test_pairs_dry_run_and_guards(data_dir: Path) -> None:

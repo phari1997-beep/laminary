@@ -14,7 +14,10 @@
         --pairs fetches the pairs set (data/pairs_candidates.jsonl) instead of the candidates,
         with the same fetcher and rules, and prints the pairs report (reports/pairs_summary.json)
         instead of the pilot report: plots_summary.json and pilot_effective.jsonl are not
-        rewritten. --qid narrows it; --backfill is refused.
+        rewritten. --qid narrows it; --backfill is refused. Its files carry
+        fetched_for: "pairs", which every pilot view ignores (QA S2), and it never fetches a
+        pilot-role title or overwrites a candidate file the pilot run fetched, even with
+        --refresh.
     report
         Print and write reports/plots_summary.json: pass rates by type, region, language and
         decade.
@@ -53,6 +56,7 @@ from laminary_pipeline.ingest.plots import (
     effective_pilot,
     format_report,
     not_annotatable,
+    pairs_owned,
     plots_report,
     run_plots,
 )
@@ -190,11 +194,26 @@ def _plots_pairs(
     if args.qid:
         wanted = set(args.qid)
         rows = [r for r in rows if r["qid"] in wanted]
+    # QA S2: the pairs share data/plots/ with the pilot. A pilot-role title's file belongs to
+    # the pilot run, and so does any candidate's file the pilot run fetched (a backfilled
+    # reserve): never fetched or refreshed here.
+    candidates = _load_candidates(paths, log)
+    if candidates is None:
+        return 2
+    cand_qids = {c["qid"] for c in candidates}
+    own = []
+    for r in rows:
+        if r.get("candidate_role") == "pilot" or (
+                r["qid"] in cand_qids and not pairs_owned(paths, r["qid"])):
+            log(f"  pilot run's plot file, not fetched for the pairs: {r['qid']} "
+                f"{r.get('title')!r} (candidate role {r.get('candidate_role')})")
+            continue
+        own.append(r)
     # run_plots fetches pilot-role rows only; the pairs set's own role stays in the file
-    rows = [{**r, "role": "pilot"} for r in rows]
+    rows = [{**r, "role": "pilot"} for r in own]
     fetcher = None if args.dry_run else PlotFetcher(client(False), clock=clock)
     run_plots(paths, rows, fetcher, limit=args.limit, refresh=args.refresh, backfill=False,
-              dry_run=args.dry_run, log=log)
+              dry_run=args.dry_run, log=log, for_pairs=True)
     if args.dry_run:
         return 0
     return _pairs_report(paths, client, log)
