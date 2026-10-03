@@ -198,6 +198,25 @@ def test_build_routes_an_alias_hit_back_to_its_candidate() -> None:
     assert "same QID as Se7en" in (built.titles[1].detail or "")
 
 
+def test_an_excluded_qid_is_reported_and_left_out() -> None:
+    """QA S1: Q4384067's enwiki article is the Code Geass compilation films, not the series."""
+    assert "Q4384067" in ps.EXCLUDED and "Q207981" in ps.EXCLUDED["Q4384067"]
+    geass = item("Q4384067", "Code Geass Lelouch of the Rebellion", 2006, "tv_series",
+                 seed_labels=["Code Geass"])
+    pairs = [pair("M19", ("Death Note", 2006, "tv_series"), ("Code Geass", 2006, "tv_series"))]
+    for cands, items in (([], {"Q4384067": geass}), ([{**geass, "role": "reserve"}], {})):
+        built = ps.build(pairs, cands, items, in_pilot=lambda q: False)
+        t = [t for t in built.titles if t.key[0] == "Code Geass"][0]
+        assert (t.status, t.qid) == ("excluded", "Q4384067")
+        assert all(r["qid"] != "Q4384067" for r in built.rows)
+        assert ("Code Geass", 2006, "tv_series") not in built.qids
+        scored = ps.scorability(pairs, built.qids, lambda q: None, built.excluded)
+        assert scored[0]["scorable"] is False
+        assert "Code Geass (2006): Q4384067 excluded" in scored[0]["problems"]
+        assert "EXCLUDED: Code Geass" in ps.format_summary(ps.summary(built, scored))
+        assert ps.resolved_pairs(pairs, built.qids) == []
+
+
 def test_resolved_csv_loads_in_the_evaluator(tmp_path: Path) -> None:
     rows = [{"title_a": "Q1", "title_b": "Q2", "expectation": "should_match",
              "note": "M1: A (2000) / B, the sequel (2001)"}]

@@ -24,6 +24,9 @@ Per pair title (in pairs-file order, each distinct title once):
    the candidate rules exclude (no TMDB id, several TMDB ids, a non-narrative genre, no enwiki
    article) is **ineligible**.
    Nothing is guessed: those titles are reported and left out.
+3. A resolved QID in ``EXCLUDED`` is **excluded**: its enwiki article was checked by hand and is
+   not about this title, so its plot file must not be annotated for the pairs. It gets no row
+   and no QID, so its pairs are reported not scorable.
 
 Resolved rows have the candidate row shape (``candidates._row``: bucket, language, series
 status, TMDB and IMDb ids, source) with ``role: "pairs"`` plus ``pair_title``, ``pair_year``,
@@ -48,10 +51,19 @@ from laminary_pipeline.gold.pairs import Pair, pins
 from laminary_pipeline.ingest import candidates as cand
 from laminary_pipeline.ingest.wikidata import Wikidata
 
-PAIRS_VERSION = "1.1.0"  # 1.1.0: QID pins from the pairs file
+PAIRS_VERSION = "1.2.0"  # 1.1.0: QID pins from the pairs file; 1.2.0: EXCLUDED QIDs
 ROLE = "pairs"
 EXPECTATION = {"match": "should_match", "no_match": "should_not_match"}
 RESOLVED_COLUMNS = ["title_a", "title_b", "expectation", "note"]
+
+# QIDs whose enwiki article is known not to be about the item (QA, checked by hand). The pair
+# resolution never uses them; the reason is reported.
+EXCLUDED: dict[str, str] = {
+    "Q4384067": "Wikidata's enwiki sitelink for this anime series (TMDB tv 31724) is the "
+                "compilation-film article ('Three-part film by Gorō Taniguchi'), whose plot "
+                "section describes the films; the series article 'Code Geass' belongs to the "
+                "franchise item Q207981 (no TMDB id, no year). QA S1, 2026-10-03",
+}
 
 TitleKey = tuple[str, int, str]  # (title, year, media_type) as written in the pairs file
 
@@ -61,7 +73,7 @@ class TitleResolution:
     key: TitleKey
     pair_ids: list[str]
     status: str  # in_pilot | candidate_outside_pilot | resolved | ambiguous | unresolved |
-    #              ineligible
+    #              ineligible | excluded
     qid: str | None = None
     detail: str | None = None
     hits: list[dict[str, Any]] = field(default_factory=list)
@@ -183,6 +195,7 @@ class PairsSet:
     rows: list[dict[str, Any]]
     titles: list[TitleResolution]
     qids: dict[TitleKey, str]  # every pair title with a QID (candidates and the pairs set)
+    excluded: dict[TitleKey, str] = field(default_factory=dict)  # title -> "QID: reason"
 
 
 def build(
@@ -221,6 +234,10 @@ def build(
                     else "no Wikidata film/series with this English label or alias, type and "
                          "year (within 1) and an enwiki article"))
                 continue
+            elif hit["qid"] in EXCLUDED:
+                titles.append(TitleResolution(key, pair_ids, "excluded", hit["qid"],
+                                              EXCLUDED[hit["qid"]], [_hit_summary(hit)]))
+                continue
             else:
                 reason = cand.excluded_reason(hit)
                 if reason:
@@ -236,6 +253,10 @@ def build(
                 qids[key] = hit["qid"]
                 continue
         # a candidate
+        if hit["qid"] in EXCLUDED:
+            titles.append(TitleResolution(key, pair_ids, "excluded", hit["qid"],
+                                          EXCLUDED[hit["qid"]], [_hit_summary(hit)]))
+            continue
         qids[key] = hit["qid"]
         if in_pilot(hit["qid"]):
             titles.append(TitleResolution(key, pair_ids, "in_pilot", hit["qid"],
@@ -248,7 +269,8 @@ def build(
                                       f"candidate role {hit.get('role')}, not in the "
                                       "effective pilot"))
     _flag_shared_qids(titles)
-    return PairsSet(rows, titles, qids)
+    excluded = {t.key: f"{t.qid} excluded" for t in titles if t.status == "excluded"}
+    return PairsSet(rows, titles, qids, excluded)
 
 
 def _flag_shared_qids(titles: list[TitleResolution]) -> None:
@@ -285,6 +307,7 @@ def resolved_csv(rows: Sequence[dict[str, str]]) -> str:
 
 def scorability(
     pairs: Sequence[Pair], qids: dict[TitleKey, str], not_annotatable: Callable[[str], str | None],
+    excluded: dict[TitleKey, str] | None = None,
 ) -> list[dict[str, Any]]:
     """Per pair: scorable once embeddings exist when both titles have a QID and an annotatable
     plot file (``annotate.ready``); else why not, per side."""
@@ -294,7 +317,8 @@ def scorability(
         for side in (p.a, p.b):
             qid = qids.get(side)
             if qid is None:
-                problems.append(f"{side[0]} ({side[1]}): no QID")
+                why = (excluded or {}).get(side, "no QID")
+                problems.append(f"{side[0]} ({side[1]}): {why}")
                 continue
             reason = not_annotatable(qid)
             if reason is not None:
@@ -331,7 +355,7 @@ def format_summary(s: dict[str, Any]) -> str:
         f"scorable now (both annotatable): {s['pairs_scorable']}/{s['pairs']}",
     ]
     for t in s["titles"]:
-        if t["status"] in ("ambiguous", "unresolved", "ineligible"):
+        if t["status"] in ("ambiguous", "unresolved", "ineligible", "excluded"):
             hits = ", ".join(f"{h['qid']} {h['title']!r} ({h['year']})" for h in t["hits"])
             lines.append(f"  {t['status'].upper()}: {t['title']} ({t['year']}, "
                          f"{t['media_type']}) in {','.join(t['pair_ids'])}: {t['detail']}"

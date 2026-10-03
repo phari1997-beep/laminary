@@ -240,7 +240,8 @@ def _pairs(args: argparse.Namespace, paths: DataPaths, client: Any, clock: Any, 
     built = pairs_set.build(pairs, candidates, items,
                             in_pilot=_effective_qids(paths, log).__contains__,
                             retrieved_at=clock())
-    scored = pairs_set.scorability(pairs, built.qids, lambda q: not_annotatable(paths, q))
+    scored = pairs_set.scorability(pairs, built.qids, lambda q: not_annotatable(paths, q),
+                                    built.excluded)
     summary = pairs_set.summary(built, scored)
     if args.dry_run:
         log("[dry-run] nothing written.")
@@ -276,7 +277,8 @@ def _pairs_report(paths: DataPaths, client: Any, log: Any) -> int:
     built = pairs_set.build(pairs, candidates, items,
                             in_pilot=_effective_qids(paths, log).__contains__)
     built.rows = rows
-    scored = pairs_set.scorability(pairs, built.qids, lambda q: not_annotatable(paths, q))
+    scored = pairs_set.scorability(pairs, built.qids, lambda q: not_annotatable(paths, q),
+                                    built.excluded)
     summary = pairs_set.summary(built, scored)
     fetched = [{"qid": r["qid"], "title": r["title"], "pair_ids": r["pair_ids"],
                 "annotatable": not_annotatable(paths, r["qid"]) is None,
