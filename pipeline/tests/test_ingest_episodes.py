@@ -354,7 +354,7 @@ def test_join_respects_the_source_limit() -> None:
 def test_series_with_failing_prose_uses_episode_tables_in_order() -> None:
     fake = episode_fake(season_pages=TWO_SEASONS)
     rec = fetch(fake)
-    assert rec["status"] == "ok" and rec["fetcher_version"] == FETCHER_VERSION == "1.5.2"
+    assert rec["status"] == "ok" and rec["fetcher_version"] == FETCHER_VERSION == "1.5.3"
     assert rec["via"] == "season_articles" and rec["via_detail"] == "episode_table"
     assert rec["section"] == {"heading": "episode tables", "index": None}
     assert rec["main_article"]["skip_reason"] == "too_short"
@@ -440,7 +440,7 @@ def test_too_little_episode_text_stays_too_short_with_the_report() -> None:
     assert rec["status"] == "skipped" and rec["skip_reason"] == "too_short"
     assert "episode tables: 2 episodes with" in rec["skip_detail"]
     assert rec["episode_tables"]["episodes_used"] == 2
-    assert rec["fetcher_version"] == "1.5.2"
+    assert rec["fetcher_version"] == FETCHER_VERSION
 
 
 def test_no_pages_at_all_still_records_the_attempt() -> None:
@@ -657,8 +657,8 @@ def test_malformed_episode_table_files_are_refused(change: str, match: str) -> N
 
 
 def test_annotate_1_2_0_accepts_fetcher_1_5_files(episode_plot) -> None:
-    assert episode_plot["fetcher_version"] == "1.5.2"
-    _request(episode_plot)  # require_current_ingest: 1.5.2 >= 1.4.0
+    assert episode_plot["fetcher_version"] == FETCHER_VERSION
+    _request(episode_plot)  # require_current_ingest: 1.5.x >= 1.4.0
 
 
 def test_gate_accepts_every_shape_the_fetcher_produces() -> None:
@@ -855,7 +855,7 @@ def test_priority_series_skipped_by_an_older_fetcher_are_fetched_again(tmp_path:
         ("List of CID episodes (series 6–10)", (2, 6)),
         ("List of CID episodes (part 2)", (3, 2)),
         ("List of CID (Indian TV series) episodes: 1998–2009", (1, 1998)),
-        ("list of cid episodes: 1998–2009", (1, 1998)),
+        ("list of CID episodes: 1998–2009", (1, 1998)),  # only the first letter is free
     ],
 )
 def test_split_episode_list_names_are_recognised(title: str, key: tuple[int, int]) -> None:
@@ -869,7 +869,7 @@ def test_split_episode_list_names_are_recognised(title: str, key: tuple[int, int
     "List of CID episodes: highlights", "List of CID episodes (1998)",
     "List of CID characters", "List of CID Special Bureau episodes",
     "List of CID episodes (seasons 1–5) extra", "List of CID episodes: 98–09",
-    "CID episodes: 1998–2009",
+    "CID episodes: 1998–2009", "List of Cid episodes", "list of cid episodes: 1998–2009",
 ])
 def test_other_titles_are_not_episode_lists(title: str) -> None:
     from laminary_pipeline.ingest.seasons import is_episode_list
@@ -895,6 +895,8 @@ def split_list_fake(*, verified: tuple[str, ...] = ("Q9200030", "Q9200031")) -> 
         w[f"sections:{rev}"] = sections(title, ["Series overview"])
         w[f"text:{rev}:1"] = {"parse": {"text": "<div><table><tr><td>1</td></tr></table></div>"}}
         w[f"page:{rev}"] = {"parse": {"text": list_page_html(seasons)}}
+        # each list page links back to the main article (fetcher 1.5.3 link fallback)
+        w[f"links:{rev}"] = {"parse": {"links": [{"ns": 0, "title": MAIN, "exists": True}]}}
     fake.data["sparql"]["season_check:" + SERIES] = {"results": {"bindings": [
         {"item": {"value": f"http://www.wikidata.org/entity/{q}"}} for q in verified]}}
     return fake
@@ -923,13 +925,14 @@ def test_unverified_split_list_page_is_skipped() -> None:
     fake = split_list_fake(verified=("Q9200030",))
     fake.data["sparql"]["list_statements"] = {"results": {"bindings": [
         {"item": {"value": "http://www.wikidata.org/entity/Q9200031"},
-         "prop": {"value": "P179"}, "value": {"value": "http://www.wikidata.org/entity/Q77"}}]}}
+         "prop": {"value": "P179"}, "value": {"value": "http://www.wikidata.org/entity/Q77"},
+         "tv": {"value": "true"}}]}}
     rec = fetch(fake, seasons_total=None)
     assert [p["source"]["season"] for p in rec["sources"]] == [1, 2]
     reasons = {s["title"]: s["reason"] for s in rec["season_articles"]["skipped"]}
     assert reasons["List of Tidewater episodes: 2010–present"] == (
-        "unverified: Wikidata places item Q9200031 in another series (P179 Q77), not "
-        "Q9200000")
+        "unverified: Wikidata places item Q9200031 in another television series (P179 Q77), "
+        "not Q9200000")
 
 
 def test_split_list_pages_must_keep_seasons_rising() -> None:

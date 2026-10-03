@@ -89,7 +89,7 @@ from laminary_pipeline.ingest.seasons import (
 from laminary_pipeline.ingest.sections import SectionFilter, filter_section, normalize_heading
 from laminary_pipeline.ingest.text import html_to_text, sha256_text, word_count
 
-FETCHER_VERSION = "1.5.2"  # 1.1.0: per-season articles for thin series; 1.2.0: lead block
+FETCHER_VERSION = "1.5.3"  # 1.1.0: per-season articles for thin series; 1.2.0: lead block
 # of stub seasons (under STUB_SEASON_WORDS, 500) before the first full season; 1.3.0: stubs
 # alone when the lead block is over the 6,000-word ceiling; 1.4.0 (DECISIONS 2026-10-02):
 # non-plot subsections dropped (sections.py), MediaWiki "Cite error" text stripped, Wikidata
@@ -97,7 +97,9 @@ FETCHER_VERSION = "1.5.2"  # 1.1.0: per-season articles for thin series; 1.2.0: 
 # (DECISIONS 2026-10-02): episode-table fallback for series (episodes.py); 1.5.1 (DECISIONS
 # 2026-10-02): per-title series run rules (runs.py; Doctor Who uses its 2005 revival only);
 # 1.5.2 (DECISIONS 2026-10-02): episode-list pages verified by a main-article link when
-# Wikidata states nothing (seasons.py), and richer text for thin priority series
+# Wikidata states nothing (seasons.py), and richer text for thin priority series; 1.5.3
+# (QA): the list page must link back to the main article, only a P179/P361 to a TV series
+# rejects it, list titles match case-sensitively after the first letter
 MIN_WORDS = 150
 # A priority series whose main-article text passes with fewer words than this also tries the
 # season-article / episode-table path and keeps the longer text (fetcher 1.5.2, DECISIONS
@@ -383,8 +385,11 @@ class PlotFetcher:
         }
         if chosen is other:
             return {**other, "richer_text": report}
-        extra = {k: other[k] for k in ("series_run_rule", "series_run_ignored") if k in other}
-        return {**ok, **extra, "richer_text": report}
+        if "series_run_rule" in other:
+            # the rule shaped only the text that was not used (QA nit): noted in the report,
+            # not as the record's own series_run_rule
+            report["alternative_series_run_rule"] = other["series_run_rule"]
+        return {**ok, "richer_text": report}
 
     # ---------- series: per-season articles ----------
 

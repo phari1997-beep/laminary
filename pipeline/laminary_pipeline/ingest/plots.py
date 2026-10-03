@@ -8,7 +8,7 @@ episode-table fallback (fetcher 1.5.0) existed, or, for a series with a run rule
 (``runs.SERIES_RUN_RULES``, Doctor Who), before the rule existed (fetcher 1.5.1), or with an
 episode-list page skipped as unverified before the main-article link fallback (fetcher 1.5.2),
 and priority series that passed on a main article under 500 words before the richer-text rule
-(fetcher 1.5.2).
+(fetcher 1.5.2), and files shaped by the link fallback before its hardening (fetcher 1.5.3).
 
 **Priority series** (DECISIONS 2026-10-02): ten big shows Hari named must not drop out of the
 pilot (``PRIORITY_SERIES``). The report lists any that ended skipped, with the reason, and
@@ -42,6 +42,7 @@ EPISODE_TABLE_FETCHER = (1, 5, 0)
 RUN_RULE_FETCHER = (1, 5, 1)
 LIST_LINK_FETCHER = (1, 5, 2)
 RICHER_TEXT_FETCHER = (1, 5, 2)
+LINK_HARDENING_FETCHER = (1, 5, 3)
 
 
 def existing_status(paths: DataPaths, qid: str) -> dict[str, Any] | None:
@@ -58,6 +59,7 @@ def needs_fetch(paths: DataPaths, qid: str, refresh: bool) -> bool:
         or _run_rule_series_before_rules(current)
         or _unverified_list_page_before_link_fallback(current)
         or _thin_priority_series_before_richer_text(current)
+        or _link_fallback_before_hardening(current)
     )
 
 
@@ -110,6 +112,23 @@ def _thin_priority_series_before_richer_text(rec: dict[str, Any]) -> bool:
         and rec.get("via") is None
         and isinstance(words, int) and words < RICHER_TEXT_WORDS
         and _version(rec.get("fetcher_version")) < RICHER_TEXT_FETCHER
+    )
+
+
+def _link_fallback_before_hardening(rec: dict[str, Any]) -> bool:
+    """A file from fetcher 1.5.2 shaped by the main-article link fallback before its hardening
+    (1.5.3: the list page must link back; only a TV series rejects): one built from a
+    link-verified list page, or one with a list page rejected for a statement to any other
+    item. Fetched again so the stricter and the looser checks both apply."""
+    if _version(rec.get("fetcher_version")) >= LINK_HARDENING_FETCHER:
+        return False
+    evidence = [*((rec.get("season_articles") or {}).get("evidence") or []),
+                *((rec.get("episode_tables") or {}).get("evidence") or [])]
+    skipped = (rec.get("season_articles") or {}).get("skipped") or []
+    return (
+        any(isinstance(e, dict) and e.get("basis") == "main_article_link" for e in evidence)
+        or any(isinstance(s, dict) and "in another series" in str(s.get("reason", ""))
+               for s in skipped)
     )
 
 

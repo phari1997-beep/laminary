@@ -61,7 +61,8 @@ def test_main_article_is_kept_when_it_is_longer() -> None:
     report = rec["richer_text"]
     assert report["chosen"] == "main_article" and report["main_article_words"] == 450
     assert 0 < report["alternative_words"] < 450 and report["alternative_status"] == "ok"
-    assert rec["series_run_rule"] == "doctor_who_revival"
+    assert "series_run_rule" not in rec  # the rule shaped only the unused text
+    assert report["alternative_series_run_rule"] == "doctor_who_revival"
     parse_plot(rec, "t")
 
 

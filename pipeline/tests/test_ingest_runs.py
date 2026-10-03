@@ -200,7 +200,7 @@ def test_coverage_without_wikidata_total_counts_the_run_only() -> None:
 def test_revival_series_pages_are_used_and_classic_pages_ignored() -> None:
     fake = dw_fake()
     rec = fetch(fake)
-    assert rec["fetcher_version"] == FETCHER_VERSION == "1.5.2"
+    assert rec["fetcher_version"] == FETCHER_VERSION == "1.5.3"
     assert rec["status"] == "ok" and rec["via"] == "season_articles"
     assert "via_detail" not in rec
     assert [(p["page_title"], p["source"]["season"]) for p in rec["sources"]] == [

@@ -88,6 +88,10 @@ class FakeWikimedia:
         params = dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(req.url).query))
         assert params.get("format") == "json" and params.get("formatversion") == "2"
         wiki = self.data["wikipedia"]
+        if params["action"] == "query" and params.get("prop") == "redirects":
+            # fetcher 1.5.3: titles redirecting to a main article ("redirects:<title>")
+            return wiki.get(f"redirects:{params['titles']}",
+                            {"batchcomplete": True, "query": {"pages": []}})
         if params["action"] == "query":
             key = f"query:{params['titles']}"
             if key in wiki:

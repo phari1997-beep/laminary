@@ -22,11 +22,14 @@ story there; the main article holds only a premise.
    1.5.2, DECISIONS 2026-10-02): a "List of <X> episodes" page (or a split form; <X> is the
    main page title with or without its disambiguator) without such a statement is accepted
    when the main article, at the pinned revision, links to it (by its title or a redirect to
-   it), unless Wikidata states P179/P361 to another item (``list_statements_sparql``). Its
-   evidence is recorded as ``{"basis": "main_article_link", "linked_from",
-   "linked_from_revision"}``. Season pages always need the Wikidata statement. The matched
-   statement (property, series QID, ordinal) is kept per used page and written to the plot
-   file (``season_articles.evidence``, DECISIONS 2026-10-02).
+   it) and (fetcher 1.5.3) the list page, at its fetched revision, links back to the main
+   article (its title or a redirect to it), unless Wikidata states P179/P361 to another
+   television series (P31 Q5398426 or a subclass; ``list_statements_sparql``). Its evidence is
+   recorded as ``{"basis": "main_article_link", "linked_from", "linked_from_revision",
+   "links_back_via", "list_revision", "other_statements"}``. Season pages always need the
+   Wikidata statement. The matched statement (property, series QID, ordinal) is kept per
+   used page and written to the plot file (``season_articles.evidence``, DECISIONS
+   2026-10-02).
 3. **Text:** for each verified season page, in season order, the top-level plot, summary or
    synopsis sections and a prose season overview, through the same ``html_to_text`` (tables,
    so episode tables, are dropped) and the same non-plot filter as main articles
@@ -142,9 +145,15 @@ _DASH = r"\s*[-–—]\s*"
 _LIST_SPLITS: tuple[tuple[int, re.Pattern[str]], ...] = (
     (1, re.compile(rf"^:\s*(\d{{4}}){_DASH}(?:\d{{4}}|present)$")),  # ": 1998–2009"
     (1, re.compile(rf"^\s*\((\d{{4}}){_DASH}(?:\d{{4}}|present)\)$")),  # " (1998–2009)"
-    (2, re.compile(rf"^\s*\((?:seasons|series)\s+(\d{{1,3}}){_DASH}\d{{1,3}}\)$")),
-    (3, re.compile(r"^\s*\(part\s+(\d{1,2})\)$")),  # " (part 1)"
+    (2, re.compile(rf"^\s*\((?:seasons|series)\s+(\d{{1,3}}){_DASH}\d{{1,3}}\)$",
+                   re.IGNORECASE)),
+    (3, re.compile(r"^\s*\(part\s+(\d{1,2})\)$", re.IGNORECASE)),  # " (part 1)"
 )
+
+
+def ucfirst(title: str) -> str:
+    """MediaWiki's title rule: only the first letter is case-insensitive."""
+    return title[:1].upper() + title[1:]
 MAX_LIST_PARTS = 4  # "List of <X> episodes (part N)" titles guessed
 
 
@@ -152,10 +161,12 @@ def episode_list_order(title: str, base: str, page_title: str) -> tuple[int, int
     """For an episode-list page of this series, its sort key: (0, 0) for the plain "List of
     <X> episodes", else (kind, start) for a page split by a year range (": 1998–2009",
     " (1998–2009)", "–present" too), a season range (" (seasons 1–5)") or a part (" (part 1)"),
-    so split pages sort by their year, season or part. None for any other title."""
-    t = title.casefold()
+    so split pages sort by their year, season or part. None for any other title. The series
+    name is matched case-sensitively, as MediaWiki titles are (fetcher 1.5.3): "List of CSI
+    episodes" is not "List of Csi episodes"; only the first letter of the title may differ."""
+    t = ucfirst(title)
     for name in (base, page_title):
-        prefix = f"list of {name} episodes".casefold()
+        prefix = f"List of {name} episodes"
         if not t.startswith(prefix):
             continue
         rest = t[len(prefix):]
@@ -208,19 +219,24 @@ SELECT ?item ?prop ?ordinal WHERE {{
 """
 
 
+TELEVISION_SERIES = "Q5398426"
+
+
 def list_statements_sparql(items: list[str]) -> str:
     """Every "part of the series" (P179) and "part of" (P361) value of the given items, to
-    catch an episode-list page that Wikidata places in a different series (fetcher 1.5.2)."""
+    catch an episode-list page that Wikidata places in a different series (fetcher 1.5.2), and
+    whether that value is a television series (P31 Q5398426 or a subclass; fetcher 1.5.3)."""
     bad = [q for q in items if not QID_RE.match(q)]
     if bad:
         raise ValueError(f"not Wikidata item ids: {bad}")
     values = " ".join(f"wd:{q}" for q in sorted(set(items), key=lambda q: int(q[1:])))
     return f"""{PREFIXES}# laminary list-page statements
-SELECT ?item ?prop ?value WHERE {{
+SELECT ?item ?prop ?value ?tv WHERE {{
   VALUES ?item {{ {values} }}
   {{ ?item wdt:P179 ?value . BIND("P179" AS ?prop) }}
   UNION
   {{ ?item wdt:P361 ?value . BIND("P361" AS ?prop) }}
+  BIND(EXISTS {{ ?value wdt:P31/wdt:P279* wd:{TELEVISION_SERIES} }} AS ?tv)
 }}
 """
 
@@ -232,17 +248,25 @@ LINK_BASIS = "main_article_link"
 class LinkEvidence:
     """Fallback verification of an episode-list page (fetcher 1.5.2, DECISIONS 2026-10-02):
     no P179/P361 on Wikidata, but its title is "List of <series> episodes" (or a split form)
-    and the series' own main article, at the pinned revision, links to it."""
+    and the series' own main article, at the pinned revision, links to it. Fetcher 1.5.3: the
+    list page, at its fetched revision, must also link back to the main article (its title, or
+    a redirect to it: ``links_back_via``). P179/P361 values that are not television series are
+    kept in ``other_statements`` and don't reject the page."""
 
     item: str | None
     series: str
     linked_from: str  # the main article's title
     linked_from_revision: int
+    links_back_via: str = ""  # the title the list page links to: the main title or a redirect
+    list_revision: int = 0
+    other_statements: tuple[str, ...] = ()  # P179/P361 values that are not TV series
 
     def record(self) -> dict[str, Any]:
         return {"item": self.item, "basis": LINK_BASIS, "series": self.series,
                 "linked_from": self.linked_from,
-                "linked_from_revision": self.linked_from_revision}
+                "linked_from_revision": self.linked_from_revision,
+                "links_back_via": self.links_back_via, "list_revision": self.list_revision,
+                "other_statements": list(self.other_statements)}
 
 
 @dataclass(frozen=True)
@@ -443,9 +467,12 @@ class SeasonFinder:
                 out[qid].append(ev)
         return out
 
-    def other_series(self, series_qid: str, items: list[str]) -> dict[str, list[str]]:
-        """Item -> its P179/P361 values that are not ``series_qid`` ("P361 Q123"), for the
-        items that have any."""
+    def other_series(
+        self, series_qid: str, items: list[str]
+    ) -> dict[str, dict[str, list[str]]]:
+        """Item -> {"tv": [...], "other": [...]}: its P179/P361 values that are not
+        ``series_qid`` ("P361 Q123"), split by whether the value is a television series (P31
+        Q5398426 or a subclass), for the items that have any."""
         if not items:
             return {}
         data = self.fetcher.client.post_form_json(
@@ -455,17 +482,51 @@ class SeasonFinder:
             cache_ttl=SEASON_CHECK_TTL,
         )
         wanted = set(items)
-        out: dict[str, list[str]] = {}
+        out: dict[str, dict[str, list[str]]] = {}
         for b in data["results"]["bindings"]:
             qid = b["item"]["value"].rsplit("/", 1)[-1]
             prop = (b.get("prop") or {}).get("value")
             value = (b.get("value") or {}).get("value", "").rsplit("/", 1)[-1]
             if qid not in wanted or prop not in ("P179", "P361") or value == series_qid:
                 continue
-            shown = f"{prop} {value}"
-            if shown not in out.setdefault(qid, []):
-                out[qid].append(shown)
+            tv = str((b.get("tv") or {}).get("value", "")).lower() in ("true", "1")
+            kind = out.setdefault(qid, {"tv": [], "other": []})["tv" if tv else "other"]
+            if f"{prop} {value}" not in kind:
+                kind.append(f"{prop} {value}")
         return out
+
+    def page_links(self, revid: int) -> set[str]:
+        """Main-namespace link targets of a page at a pinned revision."""
+        data = self.fetcher._api(
+            {"action": "parse", "oldid": str(revid), "prop": "links"}, cache_ttl=None
+        )
+        return {link.get("title", "") for link in data.get("parse", {}).get("links", [])
+                if link.get("ns") == 0}
+
+    def redirects_to(self, title: str) -> set[str]:
+        """Main-namespace titles that redirect to ``title``."""
+        data = self.fetcher._api(
+            {"action": "query", "titles": title, "prop": "redirects", "rdnamespace": "0",
+             "rdlimit": "max"}, cache_ttl=SEASON_CHECK_TTL,
+        )
+        out: set[str] = set()
+        for page in data.get("query", {}).get("pages", []):
+            for r in page.get("redirects") or []:
+                if isinstance(r, dict) and r.get("title"):
+                    out.add(r["title"])
+        return out
+
+    def back_link(self, page: Page, main_title: str, main_redirects: list[set[str]]) -> str:
+        """The title through which ``page`` links back to the main article (its title, or a
+        redirect to it), or "" when it doesn't. ``main_redirects`` caches the redirect lookup
+        (one request per series, only when a page has no direct link)."""
+        links = self.page_links(page.revid)
+        if main_title in links:
+            return main_title
+        if not main_redirects:
+            main_redirects.append(self.redirects_to(main_title))
+        hits = sorted(links & main_redirects[0])
+        return hits[0] if hits else ""
 
     def _linked(self, title: str, linked: set[str]) -> bool:
         """The main article links to this page: by its title or a title redirecting to it."""
@@ -512,20 +573,32 @@ class SeasonFinder:
         # fallback for episode-list pages (fetcher 1.5.2, DECISIONS 2026-10-02): no P179/P361
         # to the series, but a "List of <series> episodes" title linked from the main article.
         # A P179/P361 to another series still rejects the page; season pages get no fallback.
-        by_link = [p for p in pages if p.season is None and not evidence.get(p.item or "")
-                   and self._linked(p.title, set(linked))]
+        # Fetcher 1.5.3 (QA): the list page must also link back to the main article, so a
+        # remake ("Gossip Girl (2021 TV series)") can't take the original's list page, and only
+        # a P179/P361 to a television series rejects it.
+        linked_main = [p for p in pages if p.season is None and not evidence.get(p.item or "")
+                       and self._linked(p.title, set(linked))]
+        main_redirects: list[set[str]] = []
+        back = {p.pageid: self.back_link(p, page_title, main_redirects) for p in linked_main}
+        by_link = [p for p in linked_main if back[p.pageid]]
         elsewhere = self.other_series(series_qid, [p.item for p in by_link if p.item])
         verified: list[Page] = []
         for p in pages:
             statements = evidence.get(p.item or "", [])
             ordinals = sorted({e.ordinal for e in statements if e.ordinal is not None})
-            if not statements and p in by_link and p.item in elsewhere:
+            other = elsewhere.get(p.item or "", {"tv": [], "other": []})
+            if not statements and p in linked_main and p not in by_link:
+                skipped.append({"title": p.title, "reason": f"unverified: Wikidata item {p.item} "
+                                f"is not stated as part of {series_qid} (P179/P361), and the "
+                                f"page doesn't link back to {page_title!r}"})
+            elif not statements and p in by_link and other["tv"]:
                 skipped.append({"title": p.title, "reason": f"unverified: Wikidata places item "
-                                f"{p.item} in another series ({', '.join(elsewhere[p.item])}), "
-                                f"not {series_qid}"})
+                                f"{p.item} in another television series "
+                                f"({', '.join(other['tv'])}), not {series_qid}"})
             elif not statements and p in by_link:
-                verified.append(replace(p, evidence=LinkEvidence(p.item, series_qid, page_title,
-                                                                 revid)))
+                verified.append(replace(p, evidence=LinkEvidence(
+                    p.item, series_qid, page_title, revid, back[p.pageid], p.revid,
+                    tuple(other["other"]))))
             elif p.item is None or not statements:
                 link_note = (" and the main article doesn't link to it" if p.season is None
                              else "")
