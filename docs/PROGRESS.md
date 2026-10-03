@@ -35,7 +35,8 @@ Current phase: **Phase 1 — Narrative data pilot** (started 2026-09-30)
   - Backend to mirror (when tables are built): schema 1.3.0 `source.year`, year form of `provenance.coverage`, `provenance.coverage` (1.2.0).
   - [x] 2026-10-02 — Prep for gold [data-pipeline], QA passed after a fix round, merged (d52e703): pilot counts only annotatable titles (ready.py); pre-1.4.0 files re-fetched; two-part episode markers; Seinfeld uses episode summaries; trivia stored separately (never sent to model/labelers; PLAN Phase 4 delighter); pilots as S1E0; guest-star/Timeline trivia (fetcher 1.5.8).
   - [x] 2026-10-02 — Re-run #6 (free): 498/500 annotatable pilot slots (only tv:korean 13/15 short); films 360/365, series 161/195; 32 series via season articles (27 via episode tables); priority 10/10: Seinfeld 1–3 of 9, TNG 1–5 of 7, M*A*S*H 1–4 of 11, Midsomer 1–6 of 26, GoT 1–2 of 8, Sherlock 4 of 4, NCIS 1–2 of 24, CID 1998–2000, Doctor Who 1–2 of 15, Scrubs main article.
-  - In progress [data-pipeline]: trivia nits (ACE Eddie award line, Baywatch "Music:" / "has a small role as"), fetcher 1.5.9 — then a small re-fetch.
+  - [x] 2026-10-02 — Trivia nits (ACE Eddie, "Music:", small roles; fetcher 1.5.9) — QA passed, merged (8ff91d9); M*A*S*H and Baywatch re-fetched. Pilot: 498/500 annotatable, priority 10/10.
+  - In progress [data-pipeline]: gold selection + sheet/text export for Drive.
   - Next: QA spot-check of run #5, then gold selection.
   - Next: re-run ingestion with `candidates --refresh` and `plots --refresh`, backfill, report; QA spot-check; then gold selection. Nits: test pinning BROAD_MIN_KEPT_SHARE at 50%; gold template should refuse all pre-1.4.0 files.
   - [x] 2026-10-01 — `anthropic` declared as the `annotate` extra; CI installs it [sre] (cf59f64, QA passed, merged).
