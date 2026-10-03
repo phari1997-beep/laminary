@@ -7,7 +7,8 @@ says which run the season-article prose and the episode-table fallback (``season
 entry is handled exactly as before.
 
 **Doctor Who** (Q34316, DECISIONS 2026-10-02, Hari: "revival only"): the classic run is
-numbered "Season 1–26" (1963–1989) and the 2005 revival "Series 1–13". The rule
+numbered "Season 1–26" (1963–1989) and the 2005 revival "Series 1" on, including series 14–15
+of the 2023 relaunch (DECISIONS 2026-10-02: total 15). The rule
 ``doctor_who_revival`` uses the revival only:
 
 - season pages: only "Doctor Who series N" / "Doctor Who (series N)". Every "Doctor Who
@@ -22,7 +23,8 @@ numbered "Season 1–26" (1963–1989) and the 2005 revival "Series 1–13". The
 
 **The 2023 relaunch** (Disney co-production, 2024 on). On English Wikipedia (main article,
 revision 1377232352) its seasons are "Doctor Who series 14" and "series 15", which continue
-the revival numbering, so the rule keeps them like any other revival series. If Wikipedia
+the revival numbering, so the rule keeps them like any other revival series (DECISIONS
+2026-10-02, Hari approved: the total is 15). If Wikipedia
 renames them so the numbering restarts, they drop out without any code change:
 "Doctor Who season 1 (2024)" is not a season-page title at all, and any "season N" page is
 ignored; a "Season 1" heading on the 2005 list page is skipped by the heading rule; a
