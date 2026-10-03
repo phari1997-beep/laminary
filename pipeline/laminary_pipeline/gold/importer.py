@@ -1,4 +1,9 @@
-"""Import a filled gold sheet (CSV exported from Google Sheets) as ``gold_label`` records.
+"""Import a filled gold sheet as ``gold_label`` records: the ``gold_labels.xlsx`` workbook
+(its Labels tab, as filled in Excel, Numbers or Google Sheets and downloaded as .xlsx) or a CSV
+of the Labels tab.
+
+The header row is found among the first rows by its ``qid`` cell, so the workbook's group row
+("Title", "Plot", ...) above the header, or a CSV exported from it, is skipped.
 
 Every problem is reported per row, in plain words, with the column name, so a labeler can fix
 the sheet. A row becomes a record only if it has no errors and the record passes
@@ -341,15 +346,20 @@ def row_to_record(
     return record, errors, warnings
 
 
-def read_rows(text: str) -> list[tuple[int, dict[str, str]]]:
-    """CSV rows keyed by normalized header, with their spreadsheet row numbers."""
-    reader = csv.reader(io.StringIO(text))
-    try:
-        header = [_norm_header(h) for h in next(reader)]
-    except StopIteration:
+HEADER_SEARCH_ROWS = 5  # the header is row 1 in the CSV template, row 2 in the workbook
+
+
+def keyed_rows(cells_by_row: list[list[str]]) -> list[tuple[int, dict[str, str]]]:
+    """Sheet rows (row 1 first) keyed by normalized header, with their spreadsheet row
+    numbers. The header is the first of the top rows with a ``qid`` cell (else row 1); rows
+    above it, blank rows and the ``#`` help row are skipped."""
+    if not cells_by_row:
         return []
+    at = next((i for i, cells in enumerate(cells_by_row[:HEADER_SEARCH_ROWS])
+               if "qid" in (_norm_header(c) for c in cells)), 0)
+    header = [_norm_header(h) for h in cells_by_row[at]]
     rows = []
-    for i, cells in enumerate(reader, start=2):
+    for i, cells in enumerate(cells_by_row[at + 1:], start=at + 2):
         if not cells or not any(c.strip() for c in cells):
             continue
         row = {h: (cells[j] if j < len(cells) else "") for j, h in enumerate(header)}
@@ -361,14 +371,25 @@ def read_rows(text: str) -> list[tuple[int, dict[str, str]]]:
     return rows
 
 
+def read_rows(text: str) -> list[tuple[int, dict[str, str]]]:
+    """CSV rows keyed by normalized header, with their spreadsheet row numbers."""
+    return keyed_rows(list(csv.reader(io.StringIO(text))))
+
+
 def import_csv_text(text: str, *, annotated_at: str | None = None) -> ImportResult:
+    return import_rows(read_rows(text.lstrip("\ufeff")), annotated_at=annotated_at)
+
+
+def import_rows(
+    rows: list[tuple[int, dict[str, str]]], *, annotated_at: str | None = None
+) -> ImportResult:
     stamp = annotated_at or datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     result = ImportResult()
     seen: dict[tuple[str, str], int] = {}
     seen_slot: dict[tuple[str, str], int] = {}
     slot_of: dict[int, str] = {}
     row_of: dict[int, int] = {}
-    for rownum, row in read_rows(text.lstrip("\ufeff")):
+    for rownum, row in rows:
         title = row.get("title", "").strip()
         if not _labeled(row):
             result.skipped_unlabeled += 1
@@ -432,6 +453,23 @@ def _drop_orphan_second_labels(
 
 def import_csv(path: Path, *, annotated_at: str | None = None) -> ImportResult:
     return import_csv_text(path.read_text(encoding="utf-8-sig"), annotated_at=annotated_at)
+
+
+def import_xlsx(path: Path, *, annotated_at: str | None = None) -> ImportResult:
+    """The Labels tab of a filled ``gold_labels.xlsx`` (openpyxl, the ``gold`` extra)."""
+    from laminary_pipeline.gold.workbook import read_workbook_rows
+
+    return import_rows(keyed_rows(read_workbook_rows(path)), annotated_at=annotated_at)
+
+
+XLSX_SUFFIXES = (".xlsx", ".xlsm")
+
+
+def import_sheet(path: Path, *, annotated_at: str | None = None) -> ImportResult:
+    """A filled sheet by its file type: .xlsx (the workbook) or CSV (anything else)."""
+    if path.suffix.lower() in XLSX_SUFFIXES:
+        return import_xlsx(path, annotated_at=annotated_at)
+    return import_csv(path, annotated_at=annotated_at)
 
 
 def format_problems(problems: Iterable[RowProblem]) -> str:

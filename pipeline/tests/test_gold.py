@@ -376,15 +376,36 @@ def test_gold_selector_forces_hard_series_into_double_labels() -> None:
     assert len(got) == 10 and {6, 13, 37} <= got
     lost = set(flagged) - got
     assert all(rows[i]["media_type"] == "movie" for i in lost)
-    expect_lost: set[int] = set()
-    for f in (6, 13, 37):
-        donors = [j for j in flagged if j not in expect_lost and plain[j]["media_type"] == "movie"]
-        expect_lost.add(min(donors, key=lambda j: (abs(j - f), j)))
-    assert lost == expect_lost
+    # QA: hardcoded. 6 sits between 4 and 8 (tie: the earlier film), 13 next to 12, 37 next to 36
+    assert lost == {4, 12, 36}
     # a forced title already flagged, or not picked at all, changes nothing
     again = select_gold(cands, [], n=40, tv_share=0.1, double_label_n=10,
                         force_double=[plain[0]["qid"], "Q99999"])
     assert [i for i, r in enumerate(again) if r["double_label"]] == flagged
+
+
+def _picks(*media_types: str) -> list[dict[str, Any]]:
+    return [{"qid": f"Q{i}", "media_type": m} for i, m in enumerate(media_types, start=1)]
+
+
+def test_force_double_takes_from_a_series_when_no_flagged_film_is_left() -> None:
+    """No flagged non-forced film: the nearest flagged non-forced title gives up its flag."""
+    from laminary_pipeline.gold.select import _force_double
+
+    chosen = _picks("tv_series", "movie", "tv_series", "movie", "tv_series")
+    # flagged: 0 and 4, both series; Q4 (index 3) is forced
+    assert _force_double(chosen, {0, 4}, {"Q4"}) == {0, 3}
+    # a film, even a farther one, is still preferred over a series
+    assert _force_double(chosen, {0, 1, 4}, {"Q4"}) == {0, 3, 4}
+
+
+def test_force_double_stops_when_no_flag_can_be_taken() -> None:
+    """Every flagged title is itself forced: the empty pool ends the loop, the count stays."""
+    from laminary_pipeline.gold.select import _force_double
+
+    chosen = _picks("movie", "movie", "movie")
+    assert _force_double(chosen, {0}, {"Q1", "Q2", "Q3"}) == {0}
+    assert _force_double(chosen, set(), {"Q2"}) == set()
 
 
 def test_gold_selector_tops_up_with_famous_non_seeds() -> None:
@@ -450,7 +471,7 @@ def test_gold_cli_select_template_import(tmp_path: Path) -> None:
         (data / "plots" / f"{c['qid']}.json").write_text(json.dumps(rec))
     log: list[str] = []
     assert gold_main(["--data-dir", str(data), "select", "--n", "5"], log=log.append) == 0
-    selection = list(read_jsonl(data / "gold" / "gold_selection.jsonl"))
+    selection = list(read_jsonl(data / "gold_internal" / "gold_selection.jsonl"))
     assert [s["qid"] for s in selection] == ["Q9000001"]  # the too-short title is excluded
     assert gold_main(["--data-dir", str(data), "template"], log=log.append) == 0
     template = (data / "gold" / "gold_labels_template.csv").read_text()

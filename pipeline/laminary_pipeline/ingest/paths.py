@@ -68,7 +68,14 @@ class DataPaths:
 
     @property
     def gold(self) -> Path:
+        """The upload folder: only files meant for the shared Drive folder (the sheet, its
+        CSV fallbacks, ``texts/``) and the imported labels."""
         return self.root / "gold"
+
+    @property
+    def gold_internal(self) -> Path:
+        """Gold files that stay local: the selection, with the selector's guesses."""
+        return self.root / "gold_internal"
 
     @property
     def gold_seeds(self) -> Path:

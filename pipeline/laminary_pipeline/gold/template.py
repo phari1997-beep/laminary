@@ -1,4 +1,5 @@
-"""Write the gold labeling sheet as CSV files for Google Sheets.
+"""Write the gold labeling sheet as CSV files (the fallback to ``gold_labels.xlsx``, which
+``gold/workbook.py`` writes from the same rows) and the summary texts.
 
 Three files (one per tab; File > Import > "Insert new sheet(s)" for each):
 
@@ -87,7 +88,9 @@ def text_file_name(qid: str) -> str:
 
 README_LINES = [
     f"Laminary gold labeling sheet (guide version {GUIDE_VERSION})",
-    "Full guide: docs/GOLD_LABELING_GUIDE.md (Hari will share it as a Google Doc).",
+    "Full guide: 'Laminary gold labeling guide.docx' (from docs/GOLD_LABELING_GUIDE.md).",
+    "Prefer gold_labels.xlsx: it has the dropdowns, notes and shading built in. These CSVs",
+    "are the fallback.",
     "",
     "1. Pick a row assigned to you. Put your labeler code in labeler_id. Some titles have",
     "   two rows (label_slot 1 and 2) for two different people: label on your own and",
@@ -117,6 +120,11 @@ README_LINES = [
 
 
 MULTI_SEP = " | "  # separates per-source values in the source_* columns
+
+
+def _count(n: int, unit: str) -> str:
+    """'1 season', '3 seasons' (QA nit 2026-10-03: not '1 seasons')."""
+    return f"{n} {unit}{'' if n == 1 else 's'}"
 
 
 def _gated(plot: dict[str, Any]) -> GatedInput:
@@ -182,6 +190,7 @@ def template_rows(
         seasons = plot.get("via") == "season_articles"
         episodes = plot.get("via_detail") == "episode_table"
         links = [p["permalink"] for p in plot["sources"]] if seasons else [plot["permalink"]]
+        unit = "year" if (plot.get("coverage") or {}).get("unit") == "year" else "season"
 
         def joined(field: str, sources: list[dict[str, Any]] = sources) -> str:
             return MULTI_SEP.join(str(src[field]) for src in sources)
@@ -195,8 +204,7 @@ def template_rows(
             summary_text_file=text_file_name(sel["qid"]),
             wikipedia_revision_link=MULTI_SEP.join(links),
             plot_section=(
-                f"Episode tables ({len(sources)} "
-                f"{'years' if (plot.get('coverage') or {}).get('unit') == 'year' else 'seasons'})"
+                f"Episode tables ({_count(len(sources), unit)})"
                 if episodes
                 else f"Season articles ({len(sources)})" if seasons
                 else plot["section"]["heading"].capitalize()

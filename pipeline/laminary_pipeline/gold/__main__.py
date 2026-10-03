@@ -1,10 +1,14 @@
 """CLI: ``python -m laminary_pipeline.gold {select,template,import,pairs}``.
 
-    select [--n 100]       pick gold titles -> data/gold/gold_selection.jsonl (+ summary)
-    template               write the Google Sheets CSVs -> data/gold/gold_labels_*.csv, and
-                           the summary texts + manifest -> data/gold/texts/ (for Drive)
-    import FILLED.csv [--out PATH] [--labeled-at ISO] [--allow-partial]
-                           filled sheet -> data/gold/gold_labels.jsonl (schema-valid records);
+    select [--n 100]       pick gold titles -> data/gold_internal/gold_selection.jsonl
+                           (+ reports/gold_selection_summary.json); kept out of data/gold/,
+                           the folder uploaded to Drive, because it holds the guesses
+    template               write the labeling workbook -> data/gold/gold_labels.xlsx, the CSV
+                           fallbacks -> data/gold/gold_labels_*.csv, and the summary texts +
+                           manifest -> data/gold/texts/ (for Drive)
+    import FILLED.xlsx|FILLED.csv [--out PATH] [--labeled-at ISO] [--allow-partial]
+                           filled sheet (the workbook's Labels tab, or a CSV of it) ->
+                           data/gold/gold_labels.jsonl (schema-valid records);
                            prints every row problem. Writes nothing on errors unless
                            --allow-partial (then only the valid rows are written).
     pairs                  check the similarity pairs and resolve them to QIDs
@@ -20,10 +24,11 @@ import sys
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
-from laminary_pipeline.gold.importer import format_problems, import_csv
+from laminary_pipeline.gold.importer import format_problems, import_sheet
 from laminary_pipeline.gold.pairs import load_pairs, resolve_pairs
 from laminary_pipeline.gold.select import DEFAULT_N, select_gold, summarize_gold
 from laminary_pipeline.gold.template import template_rows, write_template
+from laminary_pipeline.gold.workbook import XLSX_NAME, write_workbook
 from laminary_pipeline.ingest.candidates import load_seeds
 from laminary_pipeline.ingest.paths import (
     DataPaths,
@@ -47,7 +52,8 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--n", type=int, default=DEFAULT_N)
     sub.add_parser("template")
     i = sub.add_parser("import")
-    i.add_argument("csv", type=Path)
+    i.add_argument("sheet", type=Path, metavar="FILLED",
+                   help="the filled gold_labels.xlsx, or a CSV of its Labels tab")
     i.add_argument("--out", type=Path, default=None)
     i.add_argument("--labeled-at", default=None, help="RFC 3339 time; default now")
     i.add_argument("--allow-partial", action="store_true")
@@ -85,10 +91,10 @@ def _select(paths: DataPaths, n: int, log: Callable[[str], None]) -> int:
     ]
     rows = select_gold(pool, load_seeds(paths.gold_seeds), n=n,
                        plot_ok=lambda q: _plot_status(paths, q))
-    write_jsonl_atomic(paths.gold / SELECTION_NAME, rows)
+    write_jsonl_atomic(paths.gold_internal / SELECTION_NAME, rows)
     summary = summarize_gold(rows)
     write_json_atomic(paths.reports / "gold_selection_summary.json", summary)
-    log(f"selected {len(rows)} gold titles -> {paths.gold / SELECTION_NAME}")
+    log(f"selected {len(rows)} gold titles -> {paths.gold_internal / SELECTION_NAME}")
     if not any_plots:
         log("note: no plot files yet, so titles weren't checked against the 150-word rule; "
             "re-run after 'ingest plots'")
@@ -97,9 +103,14 @@ def _select(paths: DataPaths, n: int, log: Callable[[str], None]) -> int:
 
 
 def _template(paths: DataPaths, log: Callable[[str], None]) -> int:
-    sel_path = paths.gold / SELECTION_NAME
+    sel_path = paths.gold_internal / SELECTION_NAME
     if not sel_path.exists():
-        log(f"no gold selection at {sel_path}; run 'gold select' first")
+        legacy = paths.gold / SELECTION_NAME
+        if legacy.exists():
+            log(f"no gold selection at {sel_path}, but one at {legacy} (the upload folder, "
+                f"where it no longer belongs): move it to {paths.gold_internal}/ and run again")
+        else:
+            log(f"no gold selection at {sel_path}; run 'gold select' first")
         return 2
     selection = list(read_jsonl(sel_path))
     plots = {s["qid"]: read_json(paths.plot_file(s["qid"])) for s in selection
@@ -112,13 +123,19 @@ def _template(paths: DataPaths, log: Callable[[str], None]) -> int:
     log(f"{len(rows)} rows in the sheet ({sum(r['label_slot'] == '2' for r in rows)} second-"
         "labeler rows); wrote " + ", ".join(str(w) for w in written[:3])
         + f", {n_texts} summary text files and {written[-1]}")
-    log(f"upload the folder {paths.gold / 'texts'} to the Laminary Drive folder, next to the "
-        "gold sheet; manifest.csv lists each file's sha256")
+    try:
+        book = write_workbook(paths.gold / XLSX_NAME, rows)
+    except RuntimeError as e:  # openpyxl missing: the CSVs above are still usable
+        log(f"no {XLSX_NAME}: {e}")
+        return 1
+    log(f"wrote {book} (Labels, Lists and Read me tabs, with dropdowns)")
+    log(f"upload {book.name} and the folder {paths.gold / 'texts'} to the Laminary Drive "
+        "folder; manifest.csv lists each text file's sha256")
     return 0
 
 
 def _import(paths: DataPaths, args: argparse.Namespace, log: Callable[[str], None]) -> int:
-    result = import_csv(args.csv, annotated_at=args.labeled_at)
+    result = import_sheet(args.sheet, annotated_at=args.labeled_at)
     if result.warnings:
         log("Warnings:\n" + format_problems(result.warnings))
     if result.errors:
