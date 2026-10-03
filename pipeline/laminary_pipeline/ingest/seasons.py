@@ -583,6 +583,11 @@ class SeasonFinder:
         by_link = [p for p in linked_main if back[p.pageid]]
         elsewhere = self.other_series(series_qid, [p.item for p in by_link if p.item])
         verified: list[Page] = []
+
+        def expected(season: int) -> int:
+            """The P179 series ordinal a season page must carry (a run rule may offset it)."""
+            return rule.expected_ordinal(season) if rule is not None else season
+
         for p in pages:
             statements = evidence.get(p.item or "", [])
             ordinals = sorted({e.ordinal for e in statements if e.ordinal is not None})
@@ -604,12 +609,15 @@ class SeasonFinder:
                              else "")
                 skipped.append({"title": p.title, "reason": f"unverified: Wikidata item {p.item} "
                                 f"is not stated as part of {series_qid} (P179/P361){link_note}"})
-            elif p.season is not None and ordinals and p.season not in ordinals:
+            elif p.season is not None and ordinals and expected(p.season) not in ordinals:
                 shown = ", ".join(map(str, ordinals))
+                offset = (f" (expected {expected(p.season)}: the run rule's ordinal offset "
+                          f"{rule.ordinal_offset})" if rule and rule.ordinal_offset else "")
                 skipped.append({"title": p.title, "reason": f"series ordinal {shown} "
-                                f"disagrees with season {p.season} in the title"})
+                                f"disagrees with season {p.season} in the title{offset}"})
             else:
-                verified.append(replace(p, evidence=choose_evidence(statements, p.season)))
+                verified.append(replace(p, evidence=choose_evidence(
+                    statements, None if p.season is None else expected(p.season))))
         seasons = [p for p in verified if p.season is not None]
         counts = Counter(p.season for p in seasons)
         for p in seasons:

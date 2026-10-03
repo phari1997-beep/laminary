@@ -34,6 +34,14 @@ keep rising across pages). Those seasons are out of scope for now and are record
 
 Wikidata verification (P179/P361 with the series QID, ordinals) is unchanged: an allowed page
 is still used only when its item is stated as part of the series.
+
+**Series ordinals** (fetcher 1.5.4). Wikidata numbers Doctor Who's seasons in one run across
+both eras: "Doctor Who series 1" is stated P179 Q34316 with series ordinal (P1545) 27, series 15
+with 41 (cached SPARQL, 2026-10-02), after the classic seasons 1–26. The plain ordinal check
+(ordinal must equal the number in the title) rejected every revival page. ``ordinal_offset``
+(26 for Doctor Who) states that convention: a revival "series N" page passes only when its
+ordinal is exactly N + 26 (or it has none), so the check is as strict as before, just against
+Wikidata's numbering. A page whose ordinal is anything else is still skipped.
 """
 
 from __future__ import annotations
@@ -50,6 +58,14 @@ class SeriesRunRule:
     numbering: str  # "season" or "series": the word the run's page titles and headings use
     list_pages_from: int  # episode-list pages used: split by a year range starting this year+
     description: str
+    # Wikidata's series ordinal (P179 P1545) for the run's season N is N + ordinal_offset
+    ordinal_offset: int = 0
+    # the fetcher version that brought the rule's current form: files from older fetchers are
+    # fetched again (``plots.needs_fetch``)
+    since: tuple[int, int, int] = (1, 5, 1)
+
+    def expected_ordinal(self, season: int) -> int:
+        return season + self.ordinal_offset
 
     def season_page_ok(self, numbering: str | None) -> bool:
         """A season page titled with this numbering word ("series" in "<X> series 4")."""
@@ -78,7 +94,8 @@ class SeriesRunRule:
 
     def record(self) -> dict[str, Any]:
         return {"rule": self.name, "numbering": self.numbering,
-                "list_pages_from": self.list_pages_from, "description": self.description}
+                "list_pages_from": self.list_pages_from, "description": self.description,
+                "ordinal_offset": self.ordinal_offset}
 
 
 SERIES_RUN_RULES: dict[str, SeriesRunRule] = {
@@ -88,6 +105,8 @@ SERIES_RUN_RULES: dict[str, SeriesRunRule] = {
         list_pages_from=2005,
         description="Doctor Who: the 2005 revival only ('Series N' pages and headings); the "
         "classic 1963-1989 'Season N' run is ignored (DECISIONS 2026-10-02)",
+        ordinal_offset=26,  # Wikidata: series 1 is the 27th season of Q34316
+        since=(1, 5, 4),
     ),
 }
 

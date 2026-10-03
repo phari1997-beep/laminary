@@ -19,7 +19,7 @@ from laminary_pipeline.annotate.inputs import parse_plot
 from laminary_pipeline.ingest.paths import DataPaths, write_json_atomic
 from laminary_pipeline.ingest.plots import needs_fetch
 from laminary_pipeline.ingest.priority import PRIORITY_SERIES
-from laminary_pipeline.ingest.wikipedia import RICHER_TEXT_WORDS, STUB_SEASON_WORDS
+from laminary_pipeline.ingest.wikipedia import FETCHER_VERSION, RICHER_TEXT_WORDS, STUB_SEASON_WORDS
 
 
 def _main_words(fake, n: int) -> None:
@@ -105,7 +105,7 @@ def test_thin_priority_series_from_older_fetchers_are_fetched_again(tmp_path: Pa
                "candidate": {"media_type": "tv_series"}}
         write_json_atomic(paths.plot_file(qid), old)
         assert needs_fetch(paths, qid, False), qid
-        write_json_atomic(paths.plot_file(qid), {**old, "fetcher_version": "1.5.2"})
+        write_json_atomic(paths.plot_file(qid), {**old, "fetcher_version": FETCHER_VERSION})
         assert not needs_fetch(paths, qid, False), qid
     # 500+ words, a season-article file, or a non-priority series: not fetched again
     for rec in ({"qid": "Q23733", "word_count": 800},

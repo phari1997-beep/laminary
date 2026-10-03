@@ -273,15 +273,15 @@ def test_link_verified_records_from_1_5_2_are_fetched_again(tmp_path) -> None:
     from laminary_pipeline.ingest.plots import needs_fetch
 
     paths = DataPaths.resolve(str(tmp_path))
-    ok = {"qid": "Q252118", "status": "ok", "fetcher_version": "1.5.2", "word_count": 2900,
+    ok = {"qid": "Q751917", "status": "ok", "fetcher_version": "1.5.2", "word_count": 2900,
           "via": "season_articles", "via_detail": "episode_table",
           "candidate": {"media_type": "tv_series"},
-          "episode_tables": {"evidence": [{"title": "List of CID episodes: 1998–2009",
+          "episode_tables": {"evidence": [{"title": "List of Midsomer Murders episodes",
                                            "basis": "main_article_link"}]}}
-    _write(paths, "Q252118", ok)
-    assert needs_fetch(paths, "Q252118", False)
-    _write(paths, "Q252118", {**ok, "fetcher_version": "1.5.3"})
-    assert not needs_fetch(paths, "Q252118", False)
+    _write(paths, "Q751917", ok)
+    assert needs_fetch(paths, "Q751917", False)
+    _write(paths, "Q751917", {**ok, "fetcher_version": "1.5.3"})
+    assert not needs_fetch(paths, "Q751917", False)
     other = {"qid": "Q1", "status": "skipped", "skip_reason": "too_short",
              "fetcher_version": "1.5.2", "candidate": {"media_type": "tv_series"},
              "season_articles": {"used": [], "skipped": [

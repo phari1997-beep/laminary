@@ -44,9 +44,9 @@ CLASSIC = {
     "Doctor Who season 26": (3426, 340260, "Q9340026", 26),  # linked from the main article
 }
 REVIVAL = {
-    "Doctor Who series 1": (3501, 350010, "Q9350001", 1),
-    "Doctor Who series 2": (3502, 350020, "Q9350002", 2),
-    "Doctor Who series 3": (3503, 350030, "Q9350003", 3),  # no plot section
+    "Doctor Who series 1": (3501, 350010, "Q9350001", 27),  # Wikidata counts on from classic 26
+    "Doctor Who series 2": (3502, 350020, "Q9350002", 28),
+    "Doctor Who series 3": (3503, 350030, "Q9350003", 29),  # no plot section
 }
 LISTS = {
     CLASSIC_LIST: (3600, 360000, "Q9360000", None),
@@ -200,7 +200,7 @@ def test_coverage_without_wikidata_total_counts_the_run_only() -> None:
 def test_revival_series_pages_are_used_and_classic_pages_ignored() -> None:
     fake = dw_fake()
     rec = fetch(fake)
-    assert rec["fetcher_version"] == FETCHER_VERSION == "1.5.3"
+    assert rec["fetcher_version"] == FETCHER_VERSION
     assert rec["status"] == "ok" and rec["via"] == "season_articles"
     assert "via_detail" not in rec
     assert [(p["page_title"], p["source"]["season"]) for p in rec["sources"]] == [
@@ -225,13 +225,24 @@ def test_revival_series_pages_are_used_and_classic_pages_ignored() -> None:
 
 
 def test_without_the_rule_the_two_runs_block_each_other(monkeypatch) -> None:
-    """The behaviour the rule fixes: "season 1" and "series 1" both claim season 1."""
+    """The behaviour the rule fixes. With Wikidata's real ordinals (revival series N is
+    ordinal N + 26) the revival pages fail the plain ordinal check, and only classic seasons
+    are left; with ordinals equal to N, "season 1" and "series 1" both claim season 1."""
     monkeypatch.delitem(runs.SERIES_RUN_RULES, DW)
     rec = fetch(dw_fake())
+    reasons = {s["title"]: s["reason"] for s in rec["season_articles"]["skipped"]}
+    assert reasons["Doctor Who series 1"] == (
+        "series ordinal 27 disagrees with season 1 in the title")
+    assert "series_run_rule" not in rec
+    assert [p["page_title"] for p in rec["sources"]] == [
+        "Doctor Who season 1", "Doctor Who season 2", "Doctor Who season 26"]
+    fake = dw_fake()
+    for b in fake.data["sparql"]["season_check:" + DW]["results"]["bindings"]:
+        if "ordinal" in b and int(b["ordinal"]["value"]) > 26:
+            b["ordinal"] = {"value": str(int(b["ordinal"]["value"]) - 26)}
+    rec = fetch(fake)
     reasons = [s["reason"] for s in rec["season_articles"]["skipped"]]
     assert "two pages claim season 1" in reasons and "two pages claim season 2" in reasons
-    assert "series_run_rule" not in rec
-    assert [p["page_title"] for p in rec["sources"]] == ["Doctor Who season 26"]
 
 
 # --- episode tables -------------------------------------------------------------------------
@@ -310,8 +321,48 @@ def test_doctor_who_skipped_by_an_older_fetcher_is_fetched_again(tmp_path: Path)
            "fetcher_version": "1.5.0"}
     write_json_atomic(paths.plot_file(DW), old)
     assert needs_fetch(paths, DW, False)
-    write_json_atomic(paths.plot_file(DW), {**old, "fetcher_version": "1.5.1"})
+    write_json_atomic(paths.plot_file(DW), {**old, "fetcher_version": "1.5.4"})
     assert not needs_fetch(paths, DW, False)
     # other series are unaffected by the rule's version
     write_json_atomic(paths.plot_file("Q1"), {**old, "qid": "Q1"})
     assert not needs_fetch(paths, "Q1", False)
+
+
+def test_doctor_who_ok_from_a_1_5_2_main_article_is_fetched_again(tmp_path: Path) -> None:
+    """The real 1.5.2 file: ok on the 249-word main article because the revival pages failed
+    the ordinal check. 1.5.4 (ordinal offset) fetches it again."""
+    paths = DataPaths.resolve(str(tmp_path))
+    rec = {"qid": DW, "status": "ok", "word_count": 249, "fetcher_version": "1.5.3",
+           "candidate": {"media_type": "tv_series"},
+           "richer_text": {"chosen": "main_article"}}
+    write_json_atomic(paths.plot_file(DW), rec)
+    assert needs_fetch(paths, DW, False)
+    write_json_atomic(paths.plot_file(DW), {**rec, "fetcher_version": FETCHER_VERSION})
+    assert not needs_fetch(paths, DW, False)
+
+
+# --- Wikidata's series ordinals (fetcher 1.5.4) ------------------------------------------------
+
+
+def test_revival_ordinals_follow_wikidatas_continuing_count() -> None:
+    """Real data: "Doctor Who series 1" is P179 Q34316 with series ordinal 27 (series 15: 41).
+    The rule's offset of 26 accepts exactly N + 26; an ordinal equal to N, which would mean a
+    classic season, is rejected."""
+    rule = run_rule_for(DW)
+    assert rule is not None and rule.ordinal_offset == 26 and rule.expected_ordinal(1) == 27
+    fake = dw_fake()
+    bindings = fake.data["sparql"]["season_check:" + DW]["results"]["bindings"]
+    for b in bindings:
+        if b["item"]["value"].endswith("Q9350002"):
+            b["ordinal"] = {"value": "2"}  # wrong for Wikidata's numbering of the revival
+    rec = fetch(fake)
+    assert [p["page_title"] for p in rec["sources"]] == ["Doctor Who series 1"]
+    assert rec["season_articles"]["evidence"][0]["ordinal"] == 27
+    reasons = {s["title"]: s["reason"] for s in rec["season_articles"]["skipped"]}
+    assert reasons["Doctor Who series 2"] == (
+        "series ordinal 2 disagrees with season 2 in the title (expected 28: the run rule's "
+        "ordinal offset 26)")
+
+
+def test_series_without_an_offset_keep_the_plain_ordinal_check() -> None:
+    assert all(r.ordinal_offset == 0 for q, r in SERIES_RUN_RULES.items() if q != DW)

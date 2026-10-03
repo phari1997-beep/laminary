@@ -354,7 +354,7 @@ def test_join_respects_the_source_limit() -> None:
 def test_series_with_failing_prose_uses_episode_tables_in_order() -> None:
     fake = episode_fake(season_pages=TWO_SEASONS)
     rec = fetch(fake)
-    assert rec["status"] == "ok" and rec["fetcher_version"] == FETCHER_VERSION == "1.5.3"
+    assert rec["status"] == "ok" and rec["fetcher_version"] == FETCHER_VERSION
     assert rec["via"] == "season_articles" and rec["via_detail"] == "episode_table"
     assert rec["section"] == {"heading": "episode tables", "index": None}
     assert rec["main_article"]["skip_reason"] == "too_short"

@@ -77,13 +77,16 @@ def _thin_series_before_episode_tables(rec: dict[str, Any]) -> bool:
 
 
 def _run_rule_series_before_rules(rec: dict[str, Any]) -> bool:
-    """A series with a run rule (``runs.py``, Doctor Who) skipped after trying season articles
-    by a fetcher older than the rules (1.5.1): fetched again so the rule can apply."""
-    return (
-        rec.get("qid") in SERIES_RUN_RULES
-        and _thin_series_tried_seasons(rec)
-        and _version(rec.get("fetcher_version")) < RUN_RULE_FETCHER
-    )
+    """A series with a run rule (``runs.py``) whose file predates its rule's current form
+    (``SeriesRunRule.since``: Doctor Who 1.5.4, the ordinal offset): fetched again so the rule
+    can apply, whether the file is skipped or ok (an ok file may come from a thin main article
+    that the rule's season text could beat, priority series only, fetcher 1.5.2)."""
+    rule = SERIES_RUN_RULES.get(str(rec.get("qid")))
+    if rule is None or (rec.get("candidate") or {}).get("media_type") != "tv_series":
+        return False
+    since = max(RUN_RULE_FETCHER, rule.since)
+    return _version(rec.get("fetcher_version")) < since and rec.get("skip_reason") != (
+        SKIP_FETCH_ERROR)  # fetch errors are retried anyway
 
 
 def _unverified_list_page_before_link_fallback(rec: dict[str, Any]) -> bool:
