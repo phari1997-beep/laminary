@@ -31,11 +31,16 @@ episodes didn't fit under the cap, or when rows after its last used episode have
 carry production trivia after the plot. Conservative sentence-level rules (``TRIVIA_RULES``)
 move it out of the plot text into the plot file's ``trivia`` list (with episode marker, rule,
 source ref, revision and CC BY-SA licence), for a future trivia "delighter" feature (PLAN
-Phase 4): a paragraph or sentence starting "Note:" / "Notes:" / "Note –"; "Montage music:";
-award, guild-nomination and TV Guide sentences; "first appearance" / "first episode to ..."
-sentences; and sentences that only list actors who "also appear(s)". Anything else stays in
-the plot; actor names in parentheses stay. Trivia never reaches the model or the gold texts:
-word counts, the cap and hashes are computed on the plot text only.
+Phase 4): a sentence starting "Note:" / "Notes:" / "Note –" (colon or spaced dash),
+"Montage music:" or "Timeline:"; guest-star lines ("Guest star X as Y.", "Guest star: X",
+"X guest stars."); award, guild-nomination and TV Guide sentences (award bodies by full name:
+"Emmy Award", "Primetime Emmy", "Emmy-nominated"); "first appearance" / "first episode to ..."
+sentences; and sentences that only list two or more actor name words who "also appear(s)".
+The award, first-appearance and cast rules ignore text in parentheses, so "Stephanie Holden
+(Alexandra Paul in her first appearance) becomes ..." stays plot. In a paragraph, the first
+trivia sentence and everything after it is one trivia item (notes and montage lists run on).
+Anything else stays in the plot; actor names in parentheses stay. Trivia never reaches the
+model or the gold texts: word counts, the cap and hashes are computed on the plot text only.
 
 **Pilot episodes** (fetcher 1.5.8, DECISIONS 2026-10-02). On an episode-list page, a single
 episode under a "Pilot" heading ("Pilot (1997)", "Pilot TV movie (1989)") before the first
@@ -89,16 +94,24 @@ _PILOT_HEADING = re.compile(r"^pilots?\b")  # "pilot (1997)", "pilot tv movie (1
 
 # Trivia rules (fetcher 1.5.8): (name, pattern). A paragraph starting with a note marker is
 # trivia whole; the other rules match one sentence.
-_NOTE_START = re.compile(r"^notes?\s*[:–—-]", re.IGNORECASE)
+# a note marker needs a colon or a spaced dash ("Note – ..."), never "Note-perfect"
+_NOTE_START = re.compile(r"^notes?\s*(?::|\s[–—-]\s)", re.IGNORECASE)
 _MONTAGE = re.compile(r"^montage music\s*:", re.IGNORECASE)
-_AWARD_BODY = re.compile(r"\b(?:Emmy|Golden Globe|Peabody|BAFTA|(?:Writers|Directors) Guild|"
-                         r"TV Guide)\b")
+_TIMELINE = re.compile(r"^timeline\s*:", re.IGNORECASE)  # never "Timeline 1950:" (the plot)
+# award bodies by their full names: a character called Emmy is not an award (QA)
+_AWARD_BODY = re.compile(r"\b(?:Emmy Awards?|(?:Primetime|Daytime) Emmy|Emmy-nominated|"
+                         r"Golden Globe|Peabody|BAFTA|(?:Writers|Directors) Guild|TV Guide)\b")
 _AWARD_WORD = re.compile(r"\b(?:award|nominat\w*|won|ranked|ranking|list)\b", re.IGNORECASE)
 _FIRST = re.compile(r"\bfirst appearance\b|\bfirst episode (?:to|without|with|in which)\b|"
-                    r"\bmakes? (?:his|her|their) (?:first|last|final) appearance\b",
-                    re.IGNORECASE)
+                    r"\bmakes? (?:his|her|their) first appearance\b", re.IGNORECASE)
 _ALSO_APPEAR = re.compile(r"^(?P<names>.+?)\s+also appears?\b(?P<rest>.*)$")
+# "Guest star X as Y.", "Guest star: X", "Guest starring X.", "Special Guest Star: ...",
+# "Guest stars include X and Y." (a capitalised name, a colon or "include" must follow)
+_GUEST_START = re.compile(r"^(?:[Ss]pecial )?[Gg]uest[- ][Ss]tar(?:s|ring)?\b\s*"
+                          r"(?::|include\b|(?=[A-Z]))")
+_GUEST_STARS = re.compile(r"^(?P<names>.+?)\s+guest[- ]stars?\b(?P<rest>.*)$")
 _NAME_WORD = re.compile(r"^(?:[A-Z][\w'’.-]*|and|de|van|von|da|du|le|la)$")
+_PARENS = re.compile(r"\([^()]*\)")
 # abbreviations a sentence never ends on ("Dr. Sidney Freedman")
 _ABBREVIATIONS = frozenset({"Dr.", "Mr.", "Mrs.", "Ms.", "Lt.", "Capt.", "Sgt.", "Col.",
                             "Maj.", "Gen.", "St.", "Jr.", "Sr.", "Prof.", "Rev.", "No.",
@@ -373,55 +386,78 @@ def split_sentences(paragraph: str) -> list[str]:
     return [s for s in (x.strip() for x in out) if s]
 
 
+def _names_only(names: str) -> bool:
+    """A list of at least two capitalised name words ("Anna Massey, Joanna David and Una
+    Stubbs"; "Toby Jones"), nothing else."""
+    words = names.replace(",", " ").split()
+    name_words = [w for w in words if w != "and"]
+    return (len(name_words) >= 2 and words[0][:1].isupper()
+            and all(_NAME_WORD.match(w) for w in words))
+
+
 def trivia_rule(sentence: str) -> str | None:
-    """The trivia rule a sentence matches, or None (it stays in the plot)."""
+    """The trivia rule a sentence matches, or None (it stays in the plot). The award,
+    first-appearance and cast rules look at the sentence with its parentheses removed, so a
+    cast note inside a plot sentence ("Stephanie Holden (Alexandra Paul in her first
+    appearance) becomes ...") keeps the sentence in the plot (QA)."""
     if _NOTE_START.match(sentence):
         return "note"
     if _MONTAGE.match(sentence):
         return "montage_music"
-    if _AWARD_BODY.search(sentence) and _AWARD_WORD.search(sentence):
+    if _TIMELINE.match(sentence):
+        return "timeline"
+    if _GUEST_START.match(sentence):
+        return "guest_star"
+    bare = " ".join(_PARENS.sub(" ", sentence).split())
+    if _AWARD_BODY.search(bare) and _AWARD_WORD.search(bare):
         return "award"
-    if _FIRST.search(sentence):
+    if _FIRST.search(bare):
         return "first_appearance"
-    m = _ALSO_APPEAR.match(sentence)
-    if m:
-        # only a list of names before "also appear(s)" ("Anna Massey, Joanna David and Una
-        # Stubbs also appear."), nothing after it but "as ..." / "in ..."
-        rest = m.group("rest").strip(" .")
-        words = m.group("names").replace(",", " ").split()
-        if ((not rest or rest.startswith(("as ", "in "))) and words
-                and words[0][:1].isupper() and all(_NAME_WORD.match(w) for w in words)):
-            return "also_appears"
+    for rule, pattern in (("also_appears", _ALSO_APPEAR), ("guest_star", _GUEST_STARS)):
+        m = pattern.match(bare)
+        # only names before "also appear(s)" / "guest star(s)", nothing after but "as ...";
+        # for a guest star, "as" must name a character ("as Captain Halloran"): "Comedian Jeff
+        # Altman guest stars as an annoying salesman who ..." is the episode's plot
+        if m and _names_only(m.group("names")):
+            rest = m.group("rest").strip(" .")
+            if not rest or (rest.startswith("as ") and (
+                    rule == "also_appears" or rest[3:4].isupper())):
+                return rule
     return None
 
 
-TRIVIA_RULES = ("note", "montage_music", "award", "first_appearance", "also_appears")
+TRIVIA_RULES = ("note", "montage_music", "timeline", "guest_star", "award",
+                "first_appearance", "also_appears")
 
 
 def split_trivia(text: str) -> tuple[str, list[tuple[str, str]]]:
-    """An episode summary's plot text (one paragraph) and its trivia, as (rule, text)."""
+    """An episode summary's plot text (one paragraph) and its trivia, as (rule, text). In a
+    paragraph, the first trivia sentence and everything after it is one trivia item: notes and
+    montage lists run on ("In 2009, it moved to #36.") and split badly at initials (QA)."""
     plot: list[str] = []
     trivia: list[tuple[str, str]] = []
     for para in text.split("\n\n"):
         para = " ".join(para.split())
         if not para:
             continue
-        if _NOTE_START.match(para):
-            trivia.append(("note", para))
-            continue
-        for sentence in split_sentences(para):
+        sentences = split_sentences(para)
+        for i, sentence in enumerate(sentences):
             rule = trivia_rule(sentence)
-            if rule is None:
-                plot.append(sentence)
-            else:
-                trivia.append((rule, sentence))
+            if rule is not None:
+                trivia.append((rule, " ".join(sentences[i:])))
+                break
+            plot.append(sentence)
     return " ".join(plot), trivia
 
 
 def _title_text(cell: str | None) -> str:
+    """The title cell as text, in double quotes like most tables write it (an italic title
+    without quotes, e.g. the Baywatch pilot movie, gets them too)."""
     if not cell:
         return ""
     text = " ".join(html_to_text(cell).split())
+    if text and not text.startswith(('"', "“")):
+        text = f'"{text}"'
     if len(text) > MAX_TITLE_CHARS:
         text = text[: MAX_TITLE_CHARS - 1].rsplit(" ", 1)[0] + "…"
     return text

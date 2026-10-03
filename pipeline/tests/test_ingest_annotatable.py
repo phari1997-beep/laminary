@@ -108,3 +108,30 @@ def test_effective_pilot_backfill_and_report_count_annotatable_titles(tmp_path: 
     run_plots(paths, rows, fetcher, backfill=True, log=lambda m: None)  # type: ignore[arg-type]
     assert fetcher.fetched == ["Q21"]  # re-fetched, now annotatable, fills the slot
     assert [r["qid"] for r in effective_pilot(paths, rows)] == ["Q11", "Q21"]
+
+
+def test_reasons_are_grouped_without_the_title_key() -> None:
+    from laminary_pipeline.ingest.plots import _reason_group
+
+    assert _reason_group("movie:12: plot file from fetcher '1.3.0', annotate-1.2.0 needs "
+                         "1.4.0 or later: re-run ingest plots --refresh") == (
+        "plot file from before fetcher 1.4.0")
+    assert _reason_group("tv_series:9: no integer tmdb_id (LLM records require one)") == (
+        "no integer tmdb_id (LLM records require one)")
+    assert _reason_group("Q5: season numbers [1, 1] are not in increasing order") == (
+        "season numbers [1, 1] are not in increasing order")
+
+
+def test_held_priority_series_log_names_the_not_annotatable_reason(tmp_path: Path) -> None:
+    from laminary_pipeline.ingest.wikipedia import FETCHER_VERSION
+
+    paths = DataPaths.resolve(str(tmp_path))
+    rows = [{**c, "title": "Seinfeld"} for c in cands([("Q23733", "pilot", 1)])]
+    rec = ok_film("Q23733", FETCHER_VERSION)
+    rec["candidate"]["tmdb_id"] = None
+    write_json_atomic(paths.plot_file("Q23733"), rec)
+    logs: list[str] = []
+    run_plots(paths, rows, Fetcher(), backfill=True, log=logs.append)  # type: ignore[arg-type]
+    warning = [m for m in logs if m.startswith("WARNING for Hari: priority series Q23733")]
+    assert warning and "is not annotatable (no integer tmdb_id" in warning[0]
+    assert "None:" not in warning[0]

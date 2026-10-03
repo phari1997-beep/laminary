@@ -18,6 +18,7 @@ warning for Hari is printed instead.
 
 from __future__ import annotations
 
+import re
 from collections import Counter, defaultdict
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
@@ -271,9 +272,13 @@ def _backfill(
         held = held_priority(paths, rows)
         for r in held:
             rec = existing_status(paths, r["qid"]) or {}
+            if rec.get("status") == "ok":  # passes the 150-word rule but can't be sent
+                state = f"not annotatable ({(not_annotatable(paths, r['qid']) or '')[:160]})"
+            else:
+                state = (f"skipped ({rec.get('skip_reason')}: "
+                         f"{(rec.get('skip_detail') or '')[:160]})")
             log(f"WARNING for Hari: priority series {r['qid']} {r.get('title')!r} ({bucket}) "
-                f"is skipped ({rec.get('skip_reason')}: {(rec.get('skip_detail') or '')[:160]}). "
-                "Its pilot slot is held, not backfilled.")
+                f"is {state}. Its pilot slot is held, not backfilled.")
         slots = sum(1 for r in rows if r["role"] == "pilot") - len(held)
         ok = sum(1 for r in rows if _is_ok(paths, r["qid"]))
         reserves = sorted(
@@ -380,6 +385,18 @@ def priority_report(
 # ---------- report ----------
 
 
+_KEY_PREFIX = re.compile(r"^(?:[\w-]+:\d+|Q\d+):\s*")  # "movie:603: " / "Q83495: "
+
+
+def _reason_group(reason: str | None) -> str:
+    """A not-annotatable reason without its title key, grouped by kind: "plot file from
+    before fetcher 1.4.0", else the reason's first clause."""
+    text = _KEY_PREFIX.sub("", reason or "")
+    if "needs 1.4.0" in text:
+        return "plot file from before fetcher 1.4.0"
+    return text.split(":")[0].strip()[:80] or "unknown"
+
+
 def _rate(ok: int, total: int) -> dict[str, Any]:
     return {"ok": ok, "total": total, "pass_rate": round(ok / total, 3) if total else None}
 
@@ -454,8 +471,7 @@ def plots_report(paths: DataPaths, candidates: Sequence[dict[str, Any]]) -> dict
             **_rate(annotatable, len(fetched)),
             "passing_but_not_annotatable": len(blocked),
             "not_annotatable_reasons": dict(Counter(
-                (r or "").split(":")[0] if "fetcher" not in (r or "") else
-                "plot file from before fetcher 1.4.0" for r in blocked.values()).most_common()),
+                _reason_group(r) for r in blocked.values()).most_common()),
             "not_annotatable_titles": sorted(blocked),
         },
         "skip_reasons": dict(sorted(reasons.items())),

@@ -599,7 +599,8 @@ class PlotFetcher:
         # trivia of every season read (1.5.8): stored with its source, never in the text
         trivia = [{"episode": t.marker, "rule": t.rule, "text": t.text,
                    "words": word_count(t.text), "ref": article_url(page.title),
-                   "revision": str(page.revid), "license": license_for(page.timestamp)}
+                   "revision": str(page.revid), "license": license_for(page.timestamp),
+                   "retrieved_at": skipped["retrieved_at"]}
                   for page, se in collected for t in se.trivia]
         report["trivia"] = {"items": len(trivia), "words": sum(t["words"] for t in trivia),
                             "by_rule": dict(Counter(t["rule"] for t in trivia))}

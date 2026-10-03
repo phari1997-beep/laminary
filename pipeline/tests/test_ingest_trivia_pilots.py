@@ -61,6 +61,18 @@ from laminary_pipeline.ingest.wikipedia import FETCHER_VERSION
     ("Allan Arbus makes his first appearance as Dr. Sidney Freedman.", "first_appearance"),
     ("Anna Massey, Joanna David and Una Stubbs also appear.", "also_appears"),
     ("Toby Jones also appears.", "also_appears"),
+    ("Timeline: November 1952 Dwight Eisenhower vows to go to Korea.", "timeline"),
+    # guest-star lines (real: TNG, Dallas, Chuck, M*A*S*H)
+    ("Guest star Elizabeth Dennehy as Starfleet Commander Shelby.", "guest_star"),
+    ("Guest star: Susan Gibney as Dr. Leah Brahms.", "guest_star"),
+    ("Guest starring Ray Wise.", "guest_star"),
+    ("Special Guest Star: Brian Dennehy as Luther Frick", "guest_star"),
+    ("Guest stars include Bernard Cribbins and June Whitfield.", "guest_star"),
+    ("Hayley Mills guest stars.", "guest_star"),
+    ("Polat Bilgin guest stars as Molla Kabiz.", "guest_star"),
+    ("Michael Rooker and Reginald VelJohnson guest star.", "guest_star"),
+    ("Edward Winter guest stars as Captain Halloran and would return in several episodes as "
+     "Colonel Flagg.", "guest_star"),
 ])
 def test_trivia_sentences_are_recognised(sentence: str, rule: str) -> None:
     assert trivia_rule(sentence) == rule
@@ -75,6 +87,26 @@ def test_trivia_sentences_are_recognised(sentence: str, rule: str) -> None:
     "Hawkeye won the poker game and the award for the best still.",
     "Gerald Hadleigh (Robert Swann), chairman of the writers circle, is deeply troubled.",
     "She makes her first move on the case.",
+    # QA B1: cast notes inside parentheses keep a plot sentence in the plot (real sentences)
+    "A woman from Mitch's past, Stephanie Holden (Alexandra Paul in her first appearance), "
+    "becomes one of his fellow lifeguards.",
+    "Corporal Ernie Yost (in an Emmy-nominated performance by Charles Durning) confesses to "
+    "having murdered his friend.",
+    # a character called Emmy is not an award
+    "Emmy won the beauty pageant despite the sabotage.",
+    "Emmy is ranked first on the list of suspects.",
+    # QA S3
+    "Later, Joyce also appears in the church.",
+    "Mitch also appears in court to testify against him.",
+    "Barnaby also appears.",
+    "Note-perfect, the forgery fools the auction house.",
+    "The Doctor makes his final appearance before regenerating.",
+    "Timeline 1950: Hawkeye and Trapper arrive at the 4077th.",  # the plot, not a timeline
+    "At the charity gala the guest stars panic when the lights go out.",
+    "Guest stars arrive at the gala before the storm.",
+    # real Baywatch: a guest star whose "as" describes the plot role keeps the sentence
+    "Comedian Jeff Altman guest stars as an annoying medical supplies salesman who drives the "
+    "lifeguards crazy while they are quarantined at headquarters.",
 ])
 def test_plot_sentences_stay(sentence: str) -> None:
     assert trivia_rule(sentence) is None
@@ -84,6 +116,23 @@ def test_sentences_do_not_split_after_titles() -> None:
     assert split_sentences("Allan Arbus makes his first appearance as Dr. Sidney Freedman. "
                            "Hawkeye is drafted.") == [
         "Allan Arbus makes his first appearance as Dr. Sidney Freedman.", "Hawkeye is drafted."]
+
+
+def test_trivia_runs_to_the_end_of_its_paragraph() -> None:
+    """QA S1/S2: a montage list splits badly at initials, and notes run on ("In 2009, it moved
+    to #36."): the first trivia sentence and the rest of its paragraph are one item."""
+    plot, trivia = split_trivia(
+        'Hobie saves a swimmer. Montage music: "Love Me" – B. J. Stewart, "To Have and To '
+        'Hold" – David Hallyday')
+    assert plot == "Hobie saves a swimmer."
+    assert trivia == [("montage_music", 'Montage music: "Love Me" – B. J. Stewart, "To Have '
+                       'and To Hold" – David Hallyday')]
+    plot, trivia = split_trivia(
+        "Picard is assimilated. In 1997, TV Guide ranked this episode #3 on its list. In 2009, "
+        "it moved to #36.")
+    assert plot == "Picard is assimilated."
+    assert trivia == [("award", "In 1997, TV Guide ranked this episode #3 on its list. In "
+                                "2009, it moved to #36.")]
 
 
 def test_split_trivia_keeps_plot_and_moves_notes() -> None:
@@ -117,7 +166,8 @@ def test_baywatch_pilot_movie_is_episode_0_and_notes_and_music_are_trivia() -> N
     seasons, _ = list_page_seasons(parse_tables(fixture("baywatch_pilot_episodes")))
     se = season_episodes(1, seasons[0][1])
     assert [e.marker for e in se.episodes] == ["S1E0", "S1E1", "S1E2"]
-    assert se.episodes[0].paragraph.startswith("S1E0 Panic at Malibu Pier: Mitch Buchannon")
+    # the italic, unquoted title cell is quoted like the others
+    assert se.episodes[0].paragraph.startswith('S1E0 "Panic at Malibu Pier": Mitch Buchannon')
     assert {t.rule for t in se.trivia} == {"note", "montage_music"}
     for e in se.episodes:
         assert "Montage" not in e.summary and not e.summary.startswith("Notes")
@@ -157,7 +207,7 @@ def test_trivia_is_stored_with_attribution_and_kept_out_of_the_text() -> None:
     assert rec["trivia"] == [{
         "episode": "S1E2", "rule": "note", "text": TRIVIA.strip(), "words": 11,
         "ref": "https://en.wikipedia.org/wiki/Tidewater_season_1", "revision": "92010",
-        "license": "CC-BY-SA-4.0"}]
+        "license": "CC-BY-SA-4.0", "retrieved_at": "2026-10-01T12:00:00Z"}]
     assert rec["episode_tables"]["trivia"] == {"items": 1, "words": 11, "by_rule": {"note": 1}}
     for part in rec["sources"]:
         assert "lighthouse keeper" not in part["text"]
@@ -182,7 +232,8 @@ def test_trivia_never_reaches_the_model_or_the_gold_text() -> None:
 
 
 def test_seinfeld_is_in_the_override() -> None:
-    assert "Q23733" in PREFER_EPISODE_TEXT and priority.PRIORITY_SERIES["Q23733"] == "Seinfeld"
+    assert PREFER_EPISODE_TEXT == {"Q23733"}  # only Seinfeld (DECISIONS 2026-10-02)
+    assert priority.PRIORITY_SERIES["Q23733"] == "Seinfeld"
 
 
 def _override_fake(monkeypatch, *, seasons: bool = True) -> Any:
