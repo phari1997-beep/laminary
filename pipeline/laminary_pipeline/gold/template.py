@@ -89,8 +89,8 @@ def text_file_name(qid: str) -> str:
 README_LINES = [
     f"Laminary gold labeling sheet (guide version {GUIDE_VERSION})",
     "Full guide: 'Laminary gold labeling guide.docx' (from docs/GOLD_LABELING_GUIDE.md).",
-    "Prefer gold_labels.xlsx: it has the dropdowns, notes and shading built in. These CSVs",
-    "are the fallback.",
+    "Prefer gold_labels.xlsx: its dropdowns and notes are built in. These CSVs are the",
+    "fallback.",
     "",
     "1. Pick a row assigned to you. Put your labeler code in labeler_id. Some titles have",
     "   two rows (label_slot 1 and 2) for two different people: label on your own and",
