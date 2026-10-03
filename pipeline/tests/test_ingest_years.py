@@ -249,6 +249,18 @@ def test_a_prompt_without_the_year_rule_refuses_year_coverage(cid_plot, version)
         _request(cid_plot, version)
 
 
+def test_specials_above_a_year_heading_skip_the_table() -> None:
+    """QA: "Specials" > "2010" is skipped under the year rule too, matching ``table_heading``;
+    a year directly under "Episodes" is used."""
+    rule = run_rule_for(CID)
+    html = (heading(2, "Episodes") + heading(3, "2009") + table(ep_rows(2009, 1, 10))
+            + heading(2, "Specials") + heading(3, "2010") + table(ep_rows(2010, 1, 10)))
+    years, skipped = list_page_seasons(parse_tables(html), rule)
+    assert [y for y, _ in years] == [2009]
+    assert skipped == [{"heading": "specials",
+                        "reason": "specials or extras, out of the year's order"}]
+
+
 def test_year_headings_are_read_from_the_path_only_by_the_year_rule() -> None:
     """QA: ``table_heading`` ignores years, so pages without the rule are unchanged; the year
     rule finds the nearest year heading itself, passing over a "Part 1" subheading and

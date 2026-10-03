@@ -45,7 +45,8 @@ RUN_RULE_FETCHER = (1, 5, 1)
 LIST_LINK_FETCHER = (1, 5, 2)
 RICHER_TEXT_FETCHER = (1, 5, 2)
 LINK_HARDENING_FETCHER = (1, 5, 6)  # 1.5.3 back-link; 1.5.6 lead-only back-link
-YEAR_HEADING_FIX_FETCHER = (1, 5, 6)  # 1.5.5's table_heading read years for every series
+YEAR_HEADING_BUG_FETCHER = (1, 5, 5)  # its table_heading read years for every series
+YEAR_HEADING_FIX_FETCHER = (1, 5, 6)
 EPISODE_MARKER_FIX_FETCHER = (1, 5, 7)  # two-part rows lost their title ("S1E2:")
 
 
@@ -139,7 +140,7 @@ def _episode_tables_from_1_5_5(rec: dict[str, Any]) -> bool:
     rule = SERIES_RUN_RULES.get(str(rec.get("qid")))
     fixed = max(YEAR_HEADING_FIX_FETCHER, rule.since) if rule else YEAR_HEADING_FIX_FETCHER
     return ("episode_tables" in rec
-            and (1, 5, 5) <= _version(rec.get("fetcher_version")) < fixed)
+            and YEAR_HEADING_BUG_FETCHER <= _version(rec.get("fetcher_version")) < fixed)
 
 
 def _episode_text_before_marker_fix(rec: dict[str, Any]) -> bool:

@@ -206,6 +206,7 @@ def test_a_differently_cased_series_name_is_not_a_match() -> None:
     w["query:List of TideWater episodes"] = page("List of TideWater episodes", 9212, 92120,
                                                  "Q9200012")
     w["sections:92120"] = sections("List of TideWater episodes", ["Series overview"])
+    w["text:92120:1"] = {"parse": {"text": "<div><table><tr><td>1</td></tr></table></div>"}}
     w["links:92120:0"] = _links(MAIN)
     w["page:92120"] = {"parse": {"text": list_page_html({1: (3, 60), 2: (3, 60)})}}
     rec = fetch(fake)
@@ -331,7 +332,13 @@ def test_link_verified_records_from_1_5_2_are_fetched_again(tmp_path) -> None:
     assert needs_fetch(paths, "Q5", False)
     _write(paths, "Q5", {**plain_tables, "fetcher_version": "1.5.4"})
     assert not needs_fetch(paths, "Q5", False)
-    other ={"qid": "Q1", "status": "skipped", "skip_reason": "too_short",
+    # QA nit: run-rule titles too (Doctor Who's rule is older than the 1.5.6 fix)
+    from laminary_pipeline.ingest.plots import _episode_tables_from_1_5_5
+
+    assert _episode_tables_from_1_5_5({**plain_tables, "qid": "Q34316"})
+    assert not _episode_tables_from_1_5_5({**plain_tables, "qid": "Q34316",
+                                           "fetcher_version": "1.5.6"})
+    other = {"qid": "Q1", "status": "skipped", "skip_reason": "too_short",
              "fetcher_version": "1.5.2", "candidate": {"media_type": "tv_series"},
              "season_articles": {"used": [], "skipped": [
                  {"title": "List of X episodes",

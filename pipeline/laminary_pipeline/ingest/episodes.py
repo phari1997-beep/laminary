@@ -412,16 +412,20 @@ def _list_page_years(
     """``list_page_seasons`` for a run rule numbering by year: tables grouped by the year
     heading above them, years rising down the page. The year comes from the table's enclosing
     headings (``RawTable.path``), nearest first, so only this rule reads year headings
-    (``table_heading`` ignores them): a nearer specials heading skips the table, a nearer
-    season heading is outside the run, and other headings ("Part 1") are passed over."""
+    (``table_heading`` ignores them): a specials heading anywhere above skips the table (also
+    "Specials" > "2010", QA), a nearer season heading is outside the run, and other headings
+    ("Part 1") are passed over."""
     years: list[tuple[int, list[RawTable]]] = []
     skipped: list[dict[str, str]] = []
     for i, t in enumerate(tables):
         m, reason = None, "not under a year heading"
+        if any(_SKIP_TABLE_HEADING.search(text) for text in t.path):
+            # a specials heading anywhere above, also around a year ("Specials" > "2010"):
+            # skipped, as ``table_heading`` does for season pages and season headings
+            skipped.append({"heading": t.heading,
+                            "reason": "specials or extras, out of the year's order"})
+            continue
         for text in reversed(t.path):
-            if _SKIP_TABLE_HEADING.search(text):
-                reason = "specials or extras, out of the year's order"
-                break
             if _LIST_SEASON_HEADING.match(text):
                 reason = rule.heading_reason()
                 break

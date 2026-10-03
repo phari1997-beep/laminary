@@ -136,7 +136,9 @@ SERIES_RUN_RULES: dict[str, SeriesRunRule] = {
         list_pages_from=0,  # not used with numbering "year": every episode-list page counts
         description="CID: each year heading on its verified episode-list pages is one "
         "'season', in year order; the coverage line states years (DECISIONS 2026-10-02)",
-        since=(1, 5, 6),  # 1.5.5 brought the rule; 1.5.6 reads years from the heading path
+        # 1.5.5 brought the rule; 1.5.6 reads years from the heading path; 1.5.7 skips a
+        # specials heading anywhere above a year
+        since=(1, 5, 7),
     ),
 }
 
