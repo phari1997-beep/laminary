@@ -354,7 +354,7 @@ def test_join_respects_the_source_limit() -> None:
 def test_series_with_failing_prose_uses_episode_tables_in_order() -> None:
     fake = episode_fake(season_pages=TWO_SEASONS)
     rec = fetch(fake)
-    assert rec["status"] == "ok" and rec["fetcher_version"] == FETCHER_VERSION == "1.5.1"
+    assert rec["status"] == "ok" and rec["fetcher_version"] == FETCHER_VERSION == "1.5.2"
     assert rec["via"] == "season_articles" and rec["via_detail"] == "episode_table"
     assert rec["section"] == {"heading": "episode tables", "index": None}
     assert rec["main_article"]["skip_reason"] == "too_short"
@@ -440,7 +440,7 @@ def test_too_little_episode_text_stays_too_short_with_the_report() -> None:
     assert rec["status"] == "skipped" and rec["skip_reason"] == "too_short"
     assert "episode tables: 2 episodes with" in rec["skip_detail"]
     assert rec["episode_tables"]["episodes_used"] == 2
-    assert rec["fetcher_version"] == "1.5.1"
+    assert rec["fetcher_version"] == "1.5.2"
 
 
 def test_no_pages_at_all_still_records_the_attempt() -> None:
@@ -657,8 +657,8 @@ def test_malformed_episode_table_files_are_refused(change: str, match: str) -> N
 
 
 def test_annotate_1_2_0_accepts_fetcher_1_5_files(episode_plot) -> None:
-    assert episode_plot["fetcher_version"] == "1.5.1"
-    _request(episode_plot)  # require_current_ingest: 1.5.1 >= 1.4.0
+    assert episode_plot["fetcher_version"] == "1.5.2"
+    _request(episode_plot)  # require_current_ingest: 1.5.2 >= 1.4.0
 
 
 def test_gate_accepts_every_shape_the_fetcher_produces() -> None:
@@ -918,11 +918,18 @@ def test_split_list_pages_are_verified_ordered_by_year_and_joined() -> None:
 
 
 def test_unverified_split_list_page_is_skipped() -> None:
-    """Verification is unchanged: a split page without the P179/P361 statement is not used."""
-    rec = fetch(split_list_fake(verified=("Q9200030",)), seasons_total=None)
+    """A split page without the P179/P361 statement that Wikidata places in another series is
+    not used, even though the main article links to it (fetcher 1.5.2)."""
+    fake = split_list_fake(verified=("Q9200030",))
+    fake.data["sparql"]["list_statements"] = {"results": {"bindings": [
+        {"item": {"value": "http://www.wikidata.org/entity/Q9200031"},
+         "prop": {"value": "P179"}, "value": {"value": "http://www.wikidata.org/entity/Q77"}}]}}
+    rec = fetch(fake, seasons_total=None)
     assert [p["source"]["season"] for p in rec["sources"]] == [1, 2]
     reasons = {s["title"]: s["reason"] for s in rec["season_articles"]["skipped"]}
-    assert reasons["List of Tidewater episodes: 2010–present"].startswith("unverified")
+    assert reasons["List of Tidewater episodes: 2010–present"] == (
+        "unverified: Wikidata places item Q9200031 in another series (P179 Q77), not "
+        "Q9200000")
 
 
 def test_split_list_pages_must_keep_seasons_rising() -> None:

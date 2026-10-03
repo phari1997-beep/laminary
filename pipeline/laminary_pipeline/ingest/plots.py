@@ -5,7 +5,8 @@ One file per title: ``data/plots/<QID>.json`` with ``status`` "ok" (text + a sch
 ``--refresh`` is given; ``fetch_error`` files (transient network problems) are always retried,
 and so are series skipped as too thin before the season-article fallback (fetcher 1.1.0) or the
 episode-table fallback (fetcher 1.5.0) existed, or, for a series with a run rule
-(``runs.SERIES_RUN_RULES``, Doctor Who), before the rule existed (fetcher 1.5.1).
+(``runs.SERIES_RUN_RULES``, Doctor Who), before the rule existed (fetcher 1.5.1), or with an
+episode-list page skipped as unverified before the main-article link fallback (fetcher 1.5.2).
 
 **Priority series** (DECISIONS 2026-10-02): ten big shows Hari named must not drop out of the
 pilot (``PRIORITY_SERIES``). The report lists any that ended skipped, with the reason, and
@@ -36,6 +37,7 @@ from laminary_pipeline.ingest.wikipedia import (
 
 EPISODE_TABLE_FETCHER = (1, 5, 0)
 RUN_RULE_FETCHER = (1, 5, 1)
+LIST_LINK_FETCHER = (1, 5, 2)
 
 
 def existing_status(paths: DataPaths, qid: str) -> dict[str, Any] | None:
@@ -50,6 +52,7 @@ def needs_fetch(paths: DataPaths, qid: str, refresh: bool) -> bool:
     return current is None or current.get("skip_reason") == SKIP_FETCH_ERROR or (
         _thin_series_before_seasons(current) or _thin_series_before_episode_tables(current)
         or _run_rule_series_before_rules(current)
+        or _unverified_list_page_before_link_fallback(current)
     )
 
 
@@ -73,6 +76,20 @@ def _run_rule_series_before_rules(rec: dict[str, Any]) -> bool:
         rec.get("qid") in SERIES_RUN_RULES
         and _thin_series_tried_seasons(rec)
         and _version(rec.get("fetcher_version")) < RUN_RULE_FETCHER
+    )
+
+
+def _unverified_list_page_before_link_fallback(rec: dict[str, Any]) -> bool:
+    """A series skipped after trying season articles, with an episode-list page skipped as
+    unverified, by a fetcher older than the main-article link fallback (1.5.2): fetched again
+    so the fallback can verify the page (Midsomer Murders, CID)."""
+    skipped = (rec.get("season_articles") or {}).get("skipped") or []
+    return (
+        _thin_series_tried_seasons(rec)
+        and _version(rec.get("fetcher_version")) < LIST_LINK_FETCHER
+        and any(str(s.get("title", "")).startswith("List of")
+                and str(s.get("reason", "")).startswith("unverified")
+                for s in skipped if isinstance(s, dict))
     )
 
 

@@ -66,6 +66,15 @@ class FakeWikimedia:
             ]
             return {"head": {"vars": ["item", "prop", "ordinal"]},
                     "results": {"bindings": bindings}}
+        if "# laminary list-page statements" in query:
+            # fetcher 1.5.2: every P179/P361 value of unverified, linked episode-list pages.
+            # Fixtures list {"item", "prop", "value"} rows under "list_statements".
+            values = re.search(r"VALUES \?item \{([^}]*)\}", query)
+            wanted = set(re.findall(r"wd:(Q\d+)", values.group(1))) if values else set()
+            rows = sparql.get("list_statements", {"results": {"bindings": []}})
+            return {"head": {"vars": ["item", "prop", "value"]}, "results": {"bindings": [
+                b for b in rows["results"]["bindings"]
+                if b["item"]["value"].rsplit("/", 1)[-1] in wanted]}}
         if "# laminary detail query" in query:
             values = re.search(r"VALUES \?item \{([^}]*)\}", query)
             wanted = set(re.findall(r"wd:(Q\d+)", values.group(1))) if values else set()

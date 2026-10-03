@@ -81,13 +81,15 @@ from laminary_pipeline.ingest.seasons import (
 from laminary_pipeline.ingest.sections import SectionFilter, filter_section, normalize_heading
 from laminary_pipeline.ingest.text import html_to_text, sha256_text, word_count
 
-FETCHER_VERSION = "1.5.1"  # 1.1.0: per-season articles for thin series; 1.2.0: lead block
+FETCHER_VERSION = "1.5.2"  # 1.1.0: per-season articles for thin series; 1.2.0: lead block
 # of stub seasons (under STUB_SEASON_WORDS, 500) before the first full season; 1.3.0: stubs
 # alone when the lead block is over the 6,000-word ceiling; 1.4.0 (DECISIONS 2026-10-02):
 # non-plot subsections dropped (sections.py), MediaWiki "Cite error" text stripped, Wikidata
 # P179/P361 evidence per season page, season coverage, lead_block_ceiling key; 1.5.0
 # (DECISIONS 2026-10-02): episode-table fallback for series (episodes.py); 1.5.1 (DECISIONS
-# 2026-10-02): per-title series run rules (runs.py; Doctor Who uses its 2005 revival only)
+# 2026-10-02): per-title series run rules (runs.py; Doctor Who uses its 2005 revival only);
+# 1.5.2 (DECISIONS 2026-10-02): episode-list pages verified by a main-article link when
+# Wikidata states nothing (seasons.py)
 MIN_WORDS = 150
 API_URL = "https://en.wikipedia.org/w/api.php"
 WIKIDATA_API_URL = "https://www.wikidata.org/w/api.php"
