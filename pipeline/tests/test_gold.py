@@ -412,6 +412,29 @@ def test_similarity_pairs_config_is_valid() -> None:
         {"qid": "Q2", "title": "Taken", "year": 2008, "media_type": "movie"},
     ])
     assert resolved[0]["qid_a"] == "Q1" and resolved[0]["qid_b"] == "Q2"
+    # N13: Triangle (2009) is pinned to the British film (DECISIONS 2026-10-03)
+    n13 = [p for p in pairs if p.pair_id == "N13"][0]
+    assert (n13.b[0], n13.pin_a, n13.pin_b) == ("Triangle", None, "Q1783930")
+
+
+def test_pairs_file_pin_columns_are_validated(tmp_path: Path) -> None:
+    src = (DEFAULT_DATA_DIR / "config" / "similarity_pairs.csv").read_text(encoding="utf-8")
+    lines = src.splitlines()
+    # the pin columns are optional
+    legacy = tmp_path / "legacy.csv"
+    legacy.write_text("\n".join(line.rsplit(",", 2)[0] for line in lines) + "\n", encoding="utf-8")
+    pairs, errors = load_pairs(legacy)
+    assert errors == [] and all(p.pin_a is None and p.pin_b is None for p in pairs)
+    bad = tmp_path / "bad.csv"
+    bad.write_text("\n".join(lines).replace(",,Q1783930", ",,1783930") + "\n",
+                   encoding="utf-8")
+    assert any("qid_b must be a Wikidata QID" in e for e in load_pairs(bad)[1])
+    # one title pinned to two QIDs
+    extra = lines[13].replace("N13,", "N99,").replace(",,Q1783930", ",,Q18648554")
+    conflict = tmp_path / "conflict.csv"
+    conflict.write_text("\n".join([*lines, extra]) + "\n", encoding="utf-8")
+    errs = load_pairs(conflict)[1]
+    assert len(errs) == 1 and "conflicts with Q1783930" in errs[0]
 
 
 def test_gold_seed_config_is_well_formed() -> None:

@@ -71,6 +71,42 @@ def test_pick_prefers_exact_year_and_refuses_ties() -> None:
     assert status == "resolved" and chosen is near
 
 
+def test_a_pin_picks_among_matching_items_only() -> None:
+    """N13 (DECISIONS 2026-10-03): the pairs file pins Triangle (2009) to the British film."""
+    key = ("Triangle", 2009, "movie")
+    uk = item("Q1783930", "Triangle", 2009, enwiki_title="Triangle (2009 British film)")
+    kr = item("Q18648554", "Triangle", 2009, enwiki_title="Triangle (2009 South Korean film)")
+    assert ps.pick(key, [uk, kr])[0] == "ambiguous"
+    assert ps.pick(key, [uk, kr], "Q1783930")[:2] == ("resolved", uk)
+    assert ps.pick(key, [uk, kr], "Q18648554")[:2] == ("resolved", kr)
+    # a pin never overrides the title / type / year checks
+    status, chosen, _ = ps.pick(key, [uk, kr, item("Q7", "Other", 2009)], "Q7")
+    assert (status, chosen) == ("unresolved", None)
+    pairs = [Pair("N13", "no_match", ("Palm Springs", 2020, "movie"), key, "s", "w",
+                  "proposed", None, "Q1783930")]
+    built = ps.build(pairs, [], {q["qid"]: q for q in (uk, kr)}, in_pilot=lambda q: False)
+    tri = [t for t in built.titles if t.key == key][0]
+    assert (tri.status, tri.qid) == ("resolved", "Q1783930")
+    assert "pinned" in (tri.detail or "")
+    assert built.rows[0]["qid"] == "Q1783930" and built.rows[0]["qid_pinned"] is True
+    assert ps.to_look_up(pairs, []) == ([("Palm Springs", 2020, "movie"), key], ["Q1783930"])
+    bad = [Pair("N13", "no_match", ("Palm Springs", 2020, "movie"), key, "s", "w",
+                "proposed", None, "Q7")]
+    built = ps.build(bad, [], {"Q7": item("Q7", "Other", 2009)}, in_pilot=lambda q: False)
+    tri = [t for t in built.titles if t.key == key][0]
+    assert tri.status == "unresolved" and "pinned QID Q7" in (tri.detail or "")
+
+
+def test_a_pin_selects_the_candidate() -> None:
+    a = {**item("Q1", "Triangle", 2009), "role": "pilot"}
+    b = {**item("Q2", "Triangle", 2009), "role": "pilot"}
+    pairs = [Pair("N1", "no_match", ("Triangle", 2009, "movie"), ("X", 2000, "movie"), "s",
+                  "w", "proposed", "Q2")]
+    assert resolve_pairs(pairs, [a, b])[0]["qid_a"] == "Q2"
+    built = ps.build(pairs, [a, b], {}, in_pilot=lambda q: True)
+    assert (built.titles[0].status, built.titles[0].qid) == ("in_pilot", "Q2")
+
+
 def test_pick_matches_enwiki_title_and_aliases() -> None:
     grinch = item("Q131864", "Dr. Seuss' How the Grinch Stole Christmas", 2000,
                   enwiki_title="How the Grinch Stole Christmas (2000 film)")

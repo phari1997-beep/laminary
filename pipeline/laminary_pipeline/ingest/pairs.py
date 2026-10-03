@@ -18,8 +18,11 @@ Per pair title (in pairs-file order, each distinct title once):
 2. **Otherwise** it is looked up on Wikidata by exact English label or alias (the gold-seed
    lookup query) and resolved with the candidate detail query, matching normalized title, type
    and year within 1. The closest year wins; two or more items at that distance are
-   **ambiguous** and none is picked. No hit is **unresolved**. A hit the candidate rules exclude
-   (no TMDB id, several TMDB ids, a non-narrative genre, no enwiki article) is **ineligible**.
+   **ambiguous** and none is picked, unless the pairs file pins that side's QID (``qid_a`` /
+   ``qid_b``, see ``gold.pairs``): a pin picks its item from the title/type/year matches, and a
+   pin that is not among them leaves the title **unresolved**. No hit is **unresolved**. A hit
+   the candidate rules exclude (no TMDB id, several TMDB ids, a non-narrative genre, no enwiki
+   article) is **ineligible**.
    Nothing is guessed: those titles are reported and left out.
 
 Resolved rows have the candidate row shape (``candidates._row``: bucket, language, series
@@ -41,11 +44,11 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
-from laminary_pipeline.gold.pairs import Pair
+from laminary_pipeline.gold.pairs import Pair, pins
 from laminary_pipeline.ingest import candidates as cand
 from laminary_pipeline.ingest.wikidata import Wikidata
 
-PAIRS_VERSION = "1.0.0"
+PAIRS_VERSION = "1.1.0"  # 1.1.0: QID pins from the pairs file
 ROLE = "pairs"
 EXPECTATION = {"match": "should_match", "no_match": "should_not_match"}
 RESOLVED_COLUMNS = ["title_a", "title_b", "expectation", "note"]
@@ -104,10 +107,14 @@ def _hit_summary(it: dict[str, Any]) -> dict[str, Any]:
             "sitelinks": it.get("sitelinks")}
 
 
-def pick(key: TitleKey, items: Sequence[dict[str, Any]]) -> tuple[str, dict[str, Any] | None,
-                                                                   list[dict[str, Any]]]:
-    """(status, the chosen item, the closest hits): resolved / ambiguous / unresolved."""
+def pick(key: TitleKey, items: Sequence[dict[str, Any]], pin: str | None = None,
+         ) -> tuple[str, dict[str, Any] | None, list[dict[str, Any]]]:
+    """(status, the chosen item, the closest hits): resolved / ambiguous / unresolved. With a
+    ``pin``, only the pinned item can be chosen, and only if it matches the key."""
     hits = matches(key, items)
+    if pin:
+        chosen = [it for it in hits if it["qid"] == pin]
+        return ("resolved", chosen[0], chosen) if chosen else ("unresolved", None, hits)
     if not hits:
         return "unresolved", None, []
     best = abs(hits[0]["year"] - key[1])
@@ -117,15 +124,27 @@ def pick(key: TitleKey, items: Sequence[dict[str, Any]]) -> tuple[str, dict[str,
     return "resolved", top[0], top
 
 
+def to_look_up(pairs: Sequence[Pair], candidates: Sequence[dict[str, Any]],
+               ) -> tuple[list[TitleKey], list[str]]:
+    """The pair titles the candidate list doesn't resolve (to look up on Wikidata), and the
+    pinned QIDs among them."""
+    pinned = pins(pairs)
+    keys = [k for k in pair_titles(pairs)
+            if pick(k, candidates, pinned.get(k))[0] != "resolved"]
+    return keys, sorted({pinned[k] for k in keys if k in pinned})
+
+
 def lookup_labels(keys: Sequence[TitleKey]) -> list[str]:
     return sorted({k[0] for k in keys})
 
 
-def gather(wd: Wikidata, keys: Sequence[TitleKey]) -> dict[str, dict[str, Any]]:
-    """Wikidata items for these titles: the label/alias lookup, then the detail query."""
+def gather(wd: Wikidata, keys: Sequence[TitleKey],
+           pinned: Sequence[str] = ()) -> dict[str, dict[str, Any]]:
+    """Wikidata items for these titles: the label/alias lookup, then the detail query (which
+    also covers any ``pinned`` QIDs, so a pin is checked even if the label lookup misses it)."""
     if not keys:
         return {}
-    labels: dict[str, set[str]] = {}
+    labels: dict[str, set[str]] = {q: set() for q in pinned}
     for hit in wd.seeds(lookup_labels(keys)):
         labels.setdefault(hit["qid"], set())
         if hit["seed_label"]:
@@ -139,7 +158,7 @@ def gather(wd: Wikidata, keys: Sequence[TitleKey]) -> dict[str, dict[str, Any]]:
 
 def pairs_row(
     item: dict[str, Any], key: TitleKey, pair_ids: list[str], rank: int,
-    retrieved_at: str | None,
+    retrieved_at: str | None, pinned: bool = False,
 ) -> dict[str, Any]:
     """A candidate-shaped row for a resolved pair title (same bucket, language and series
     status logic as ``candidates.select``)."""
@@ -148,12 +167,14 @@ def pairs_row(
     it["bucket"], it["bucket_basis"] = cand.classify_with_basis(it)
     it["language"] = cand.primary_language(it)
     row = cand._row(it, cand.BUCKET_BY_NAME[it["bucket"]], ROLE, rank, None, retrieved_at)
-    return {**row, **_pair_fields(it, key, pair_ids), "candidate_role": None}
+    return {**row, **_pair_fields(it, key, pair_ids, pinned), "candidate_role": None}
 
 
-def _pair_fields(item: dict[str, Any], key: TitleKey, pair_ids: list[str]) -> dict[str, Any]:
+def _pair_fields(item: dict[str, Any], key: TitleKey, pair_ids: list[str],
+                 pinned: bool = False) -> dict[str, Any]:
     return {"pair_title": key[0], "pair_year": key[1], "pair_ids": pair_ids,
             "year_match": "exact" if item["year"] == key[1] else "within_1",
+            "qid_pinned": pinned,
             "pairs_version": PAIRS_VERSION}
 
 
@@ -178,21 +199,25 @@ def build(
     rows: list[dict[str, Any]] = []
     titles: list[TitleResolution] = []
     qids: dict[TitleKey, str] = {}
+    pinned = pins(pairs)
     for key, pair_ids in pair_titles(pairs).items():
-        status, hit, top = pick(key, candidates)
+        pin = pinned.get(key)
+        status, hit, top = pick(key, candidates, pin)
         if status == "ambiguous":  # two candidates fit: never pick one
             titles.append(TitleResolution(key, pair_ids, "ambiguous",
                                           detail="several candidates match",
                                           hits=[_hit_summary(h) for h in top]))
             continue
         if hit is None:
-            status, hit, top = pick(key, list(items.values()))
+            status, hit, top = pick(key, list(items.values()), pin)
             if hit is not None and hit["qid"] in by_qid:  # found by alias: still a candidate
                 hit = by_qid[hit["qid"]]
             elif status != "resolved":
                 titles.append(TitleResolution(
                     key, pair_ids, status, hits=[_hit_summary(h) for h in top],
                     detail="several Wikidata items match" if status == "ambiguous"
+                    else f"pinned QID {pin} is not a Wikidata film/series with this English "
+                         "label or alias, type and year (within 1)" if pin
                     else "no Wikidata film/series with this English label or alias, type and "
                          "year (within 1) and an enwiki article"))
                 continue
@@ -202,9 +227,12 @@ def build(
                     titles.append(TitleResolution(key, pair_ids, "ineligible", hit["qid"],
                                                   reason, [_hit_summary(hit)]))
                     continue
-                rows.append(pairs_row(hit, key, pair_ids, len(rows) + 1, retrieved_at))
-                titles.append(TitleResolution(key, pair_ids, "resolved", hit["qid"],
-                                              rows[-1]["year_match"], [_hit_summary(hit)]))
+                rows.append(pairs_row(hit, key, pair_ids, len(rows) + 1, retrieved_at,
+                                      pin is not None))
+                titles.append(TitleResolution(
+                    key, pair_ids, "resolved", hit["qid"],
+                    rows[-1]["year_match"] + ("; pinned in the pairs file" if pin else ""),
+                    [_hit_summary(hit)]))
                 qids[key] = hit["qid"]
                 continue
         # a candidate
@@ -214,7 +242,8 @@ def build(
                                           f"candidate role {hit.get('role')}"))
             continue
         rows.append({**hit, "role": ROLE, "bucket_rank": len(rows) + 1,
-                     **_pair_fields(hit, key, pair_ids), "candidate_role": hit.get("role")})
+                     **_pair_fields(hit, key, pair_ids, pin is not None),
+                     "candidate_role": hit.get("role")})
         titles.append(TitleResolution(key, pair_ids, "candidate_outside_pilot", hit["qid"],
                                       f"candidate role {hit.get('role')}, not in the "
                                       "effective pilot"))

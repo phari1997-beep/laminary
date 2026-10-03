@@ -229,10 +229,10 @@ def _pairs(args: argparse.Namespace, paths: DataPaths, client: Any, clock: Any, 
         return 2
     pairs, candidates = inputs
     # Only titles the candidate list lacks are looked up on Wikidata.
-    keys = [k for k in pairs_set.pair_titles(pairs)
-            if pairs_set.pick(k, candidates)[0] != "resolved"]
+    keys, pinned = pairs_set.to_look_up(pairs, candidates)
     try:
-        items = pairs_set.gather(Wikidata(client(args.dry_run), cache_ttl=POOL_TTL), keys)
+        items = pairs_set.gather(Wikidata(client(args.dry_run), cache_ttl=POOL_TTL), keys,
+                                 pinned)
     except OfflineCacheMiss:
         log(f"[dry-run] {len(keys)} pair titles need a Wikidata lookup; responses not cached "
             "yet. Nothing written.")
@@ -265,10 +265,9 @@ def _pairs_report(paths: DataPaths, client: Any, log: Any) -> int:
         return 2
     pairs, candidates = inputs
     rows = list(read_jsonl(paths.pairs_candidates))
-    keys = [k for k in pairs_set.pair_titles(pairs)
-            if pairs_set.pick(k, candidates)[0] != "resolved"]
+    keys, pinned = pairs_set.to_look_up(pairs, candidates)
     try:
-        items = pairs_set.gather(Wikidata(client(True), cache_ttl=None), keys)
+        items = pairs_set.gather(Wikidata(client(True), cache_ttl=None), keys, pinned)
     except OfflineCacheMiss:
         log("Wikidata lookups not in the HTTP cache: title statuses come from the pairs set "
             "only (titles left out of it show as unresolved)")
