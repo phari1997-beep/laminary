@@ -78,3 +78,4 @@
 | 2026-10-02 | Gold double-label set includes 3 hard series (Game of Thrones, Seinfeld, The Good Place: episode-table / partial coverage) in place of 3 films; total stays 25 | Hari approved; measure human agreement on the harder texts |
 | 2026-10-02 | Priority series are not added to the gold seed list (gold stays 3 of 10 priority series) | Hari's call |
 | 2026-10-02 | Exit-gate coverage: at least 95% of annotated gold titles must be scored (was 90%); the double-label requirement stays at ≥20 scored double-labeled titles (80% of 25) | Hari's call |
+| 2026-10-02 | Similarity pairs: ingest the titles the 42 pairs need that aren't in our data (free Wikimedia fetch), as a separate "pairs" set that does not change the 500-title pilot or the gold set; annotating them later is a paid run needing Hari's spend approval (~$10–25 est.) | Hari's call (option b) |

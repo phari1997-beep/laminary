@@ -16,6 +16,11 @@ Rules, in priority order:
    mix types, regions and plots), get ``double_label: true``. Two labelers label those
    independently; the evaluation measures human-human agreement on them (DECISIONS 2026-09-30:
    20 to 25 titles; 25 leaves room for skips while keeping the 20 the exit gate needs).
+6. **Forced double labels:** a picked title in FORCE_DOUBLE_QIDS is always double-labeled. It
+   takes the flag from the nearest evenly spaced *film* (earlier one on a tie), so the total
+   stays DOUBLE_LABEL_N and the picks themselves don't change (DECISIONS 2026-10-02: Game of
+   Thrones, Seinfeld and The Good Place, episode-table / partial-coverage series, replace 3
+   films so human agreement is also measured on the harder texts).
 """
 
 from __future__ import annotations
@@ -28,6 +33,9 @@ DEFAULT_N = 100
 TV_SHARE = 0.3
 REGIONAL_MIN = 20
 DOUBLE_LABEL_N = 25
+# DECISIONS 2026-10-02: hard series always double-labeled (Seinfeld, The Good Place, Game of
+# Thrones)
+FORCE_DOUBLE_QIDS: tuple[str, ...] = ("Q23733", "Q22908690", "Q23572")
 
 
 def select_gold(
@@ -39,6 +47,7 @@ def select_gold(
     tv_share: float = TV_SHARE,
     regional_min: int = REGIONAL_MIN,
     double_label_n: int = DOUBLE_LABEL_N,
+    force_double: Sequence[str] = FORCE_DOUBLE_QIDS,
 ) -> list[dict[str, Any]]:
     """``plot_ok(qid)`` is True/False once a plot file exists, None if not fetched yet."""
     guesses = {s["title"]: s for s in seeds}
@@ -90,9 +99,31 @@ def select_gold(
             arcs[best["guessed_arc"]] += 1
     k = min(double_label_n, len(chosen))
     double = {i * len(chosen) // k for i in range(k)} if k else set()
+    double = _force_double(chosen, double, set(force_double)) if k else double
     for i, row in enumerate(chosen):
         row["double_label"] = i in double
     return chosen
+
+
+def _force_double(
+    chosen: Sequence[dict[str, Any]], double: set[int], forced: set[str]
+) -> set[int]:
+    """Flag every picked title in ``forced``; each one not already flagged takes the flag from
+    the nearest flagged, non-forced film in pick order (earlier on a tie), else from the
+    nearest flagged non-forced title. The count stays the same."""
+    out = set(double)
+    want = [i for i, r in enumerate(chosen) if r["qid"] in forced]
+    for i in want:
+        if i in out:
+            continue
+        donors = [j for j in out if chosen[j]["qid"] not in forced]
+        films = [j for j in donors if chosen[j]["media_type"] == "movie"]
+        pool = films or donors
+        if not pool:
+            break
+        out.remove(min(pool, key=lambda j: (abs(j - i), j)))
+        out.add(i)
+    return out
 
 
 def summarize_gold(rows: Sequence[dict[str, Any]]) -> dict[str, Any]:

@@ -12,8 +12,8 @@ only if A, B and coverage all pass:
   ``DISPLAY_CONFIDENCE_THRESHOLD`` (the labels the app would show), accuracy is at least
   SHOWN_TARGET. Fewer than MIN_SHOWN_TITLES such titles is "insufficient data" and fails.
 - **Coverage:** at least MIN_SCORED_TITLES scored titles and at least MIN_SCORED_FRACTION of
-  the gold titles labeled ``annotated`` (DECISIONS 2026-09-30). The count and share of scored
-  titles at or above the display threshold are always reported.
+  the gold titles labeled ``annotated`` (DECISIONS 2026-09-30; 95% since 2026-10-02). The
+  count and share of scored titles at or above the display threshold are always reported.
 
 Gold titles the labeler abstained on have no primary and are reported separately. Titles whose
 model record was made from a different summary than the gold label (source content hashes
@@ -61,7 +61,7 @@ MIN_DOUBLE_LABELED = 20  # A, alternative: needs this many scored double-labeled
 SHOWN_TARGET = "0.95"  # B: accuracy of labels at or above the display threshold
 MIN_SHOWN_TITLES = 30  # B: fewer shown labels than this is insufficient data
 MIN_SCORED_TITLES = 80  # coverage
-MIN_SCORED_FRACTION = "0.90"  # coverage
+MIN_SCORED_FRACTION = "0.95"  # coverage (DECISIONS 2026-10-02; was 0.90)
 ABSTAINED = "(abstained)"
 MISSING = "(no model record)"
 

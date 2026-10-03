@@ -82,7 +82,7 @@ def with_double_labels(gold: list[dict], n: int, disagree: int) -> list[dict]:
 def test_gate_constants() -> None:
     assert (OVERALL_TARGET, HUMAN_MARGIN, MIN_DOUBLE_LABELED) == ("0.85", "0.05", 20)
     assert (SHOWN_TARGET, MIN_SHOWN_TITLES) == ("0.95", 30)
-    assert (MIN_SCORED_TITLES, MIN_SCORED_FRACTION) == (80, "0.90")
+    assert (MIN_SCORED_TITLES, MIN_SCORED_FRACTION) == (80, "0.95")  # DECISIONS 2026-10-02
     assert DISPLAY_CONFIDENCE_THRESHOLD == 0.95
 
 
@@ -208,18 +208,34 @@ def test_small_sample_cannot_pass() -> None:
 
 
 def test_mismatched_titles_leave_the_denominator_and_are_listed() -> None:
-    gold, model = gold_set(85, mismatched=5)
+    gold, model = gold_set(84, mismatched=4)
     report = evaluate(gold, model)
     h = report["headline"]
     assert h["total"] == 80 and h["correct"] == 80
-    assert h["excluded_source_mismatch"] == [f"movie:{1000 + i}" for i in range(5)]
+    assert h["excluded_source_mismatch"] == [f"movie:{1000 + i}" for i in range(4)]
     assert report["counts"]["source_hash_mismatches"] == h["excluded_source_mismatch"]
-    assert h["coverage"]["gold_annotated"] == 85
+    assert h["coverage"]["gold_annotated"] == 84
     assert h["coverage"]["at_display_threshold"] == 80
-    assert h["passes"] is True  # 80 scored, 94% of the gold set, 80 shown and right
+    assert h["passes"] is True  # 80 scored, 95.2% of the gold set, 80 shown and right
     assert all(r["title_key"] not in h["excluded_source_mismatch"] for r in report["per_title"])
     md = render_markdown(report)
-    assert "excluded from every score" in md and "80 of 85 gold titles scored" in md
+    assert "excluded from every score" in md and "80 of 84 gold titles scored" in md
+
+
+def test_coverage_share_passes_at_exactly_95_percent() -> None:
+    """DECISIONS 2026-10-02: 95/100 passes (exact fractions, no float slop)."""
+    gold, model = gold_set(100, mismatched=5)
+    cov = evaluate(gold, model)["headline"]["coverage"]
+    assert (cov["scored"], cov["gold_annotated"], cov["min_scored_fraction"]) == (95, 100, 0.95)
+    assert cov["passes"] is True
+
+
+def test_coverage_share_fails_below_95_percent() -> None:
+    """94% passed the old 90% bar; it fails now."""
+    gold, model = gold_set(100, mismatched=6)
+    h = evaluate(gold, model)["headline"]
+    assert h["total"] == 94 and h["accuracy"] == 1.0
+    assert h["coverage"]["passes"] is False and h["passes"] is False
 
 
 def test_too_many_mismatches_fail_coverage() -> None:

@@ -358,6 +358,35 @@ def test_gold_selector_balances_type_region_and_plots() -> None:
     assert [i for i, r in enumerate(rows) if r["double_label"]] == list(range(0, 100, 4))
 
 
+def test_gold_selector_forces_hard_series_into_double_labels() -> None:
+    """DECISIONS 2026-10-02: forced titles take the flag from the nearest spaced film; the
+    picks and the total don't change."""
+    from laminary_pipeline.gold.select import FORCE_DOUBLE_QIDS
+
+    assert set(FORCE_DOUBLE_QIDS) == {"Q23572", "Q23733", "Q22908690"}
+    cands = [cand(i, "tv_series" if i % 10 == 0 else "movie", "english", None)
+             for i in range(1, 41)]
+    plain = select_gold(cands, [], n=40, tv_share=0.1, double_label_n=10, force_double=())
+    flagged = [i for i, r in enumerate(plain) if r["double_label"]]
+    assert flagged == list(range(0, 40, 4))
+    force = [plain[6]["qid"], plain[13]["qid"], plain[37]["qid"]]
+    rows = select_gold(cands, [], n=40, tv_share=0.1, double_label_n=10, force_double=force)
+    assert [r["qid"] for r in rows] == [r["qid"] for r in plain]
+    got = {i for i, r in enumerate(rows) if r["double_label"]}
+    assert len(got) == 10 and {6, 13, 37} <= got
+    lost = set(flagged) - got
+    assert all(rows[i]["media_type"] == "movie" for i in lost)
+    expect_lost: set[int] = set()
+    for f in (6, 13, 37):
+        donors = [j for j in flagged if j not in expect_lost and plain[j]["media_type"] == "movie"]
+        expect_lost.add(min(donors, key=lambda j: (abs(j - f), j)))
+    assert lost == expect_lost
+    # a forced title already flagged, or not picked at all, changes nothing
+    again = select_gold(cands, [], n=40, tv_share=0.1, double_label_n=10,
+                        force_double=[plain[0]["qid"], "Q99999"])
+    assert [i for i, r in enumerate(again) if r["double_label"]] == flagged
+
+
 def test_gold_selector_tops_up_with_famous_non_seeds() -> None:
     cands = [cand(i, "movie", "english", None) for i in range(1, 11)]
     rows = select_gold(cands, [], n=5, tv_share=0)

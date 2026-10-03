@@ -11,7 +11,7 @@ Your labels are compared with the model's. The main score is simple: does the mo
 - **Overall:** the model matches your primary plot on at least 85% of titles. If two people label at least 20 of the same titles, it is enough for the model to come within 5 points of how often those two people agree with each other.
 - **Labels the app would show:** when the model is at least 95% confident in a primary plot (the confidence it needs for the app to show it), it must match you at least 95% of the time, measured on at least 30 such titles.
 
-The check also needs at least 80 titles scored, and at least 90% of your labeled titles. Everything else you fill in is measured too, but only the primary plot decides.
+The check also needs at least 80 titles scored, and at least 95% of your labeled titles (DECISIONS 2026-10-02, was 90%). Everything else you fill in is measured too, but only the primary plot decides.
 
 Labels are internal. Nobody sees them in the app, so spoilers are fine here.
 
@@ -200,7 +200,7 @@ The importer checks every row and names the column. The usual ones:
 2. In Google Sheets, import `gold_labels_template.csv` (File > Import > Replace spreadsheet), then import `gold_labels_lists.csv` and `gold_labels_readme.csv` with "Insert new sheet(s)". Rename the tabs Labels, Lists and README.
 3. On the Labels tab: View > Freeze > 2 rows (header plus the `#` help row). Select the `plot_`, `stage_` and `tag_` columns and add Data > Data validation > "Dropdown (from a range)" = `Lists!A2:A3` (the `yes_no` column). Do the same for `primary_plot`, `blueprint`, `arc_shape`, `skip_reason` and `confidence`, each pointing at its column on the Lists tab. Set invalid data to "Reject input".
 4. Shade the prefilled columns grey (`qid` to `summary_coverage`, including `label_slot`, and `series_status` to `guide_version`) and protect them (Data > Protect sheets and ranges > "Show a warning").
-5. Give each labeler a code (`L01`, `L02`, ...) and assign rows. The selector marks 25 titles for double labeling (DECISIONS 2026-09-30), and the template already has two rows for each, `label_slot` 1 and 2. Assign the two slots of a title to different people. Slot 1 is the reference the model is scored against; slot 2 measures human agreement. Tell labelers to work independently (golden rule 6). The evaluation lists every title where the two disagree, for you to adjudicate.
+5. Give each labeler a code (`L01`, `L02`, ...) and assign rows. The selector marks 25 titles for double labeling (DECISIONS 2026-09-30), always including Game of Thrones, Seinfeld and The Good Place (DECISIONS 2026-10-02), and the template already has two rows for each, `label_slot` 1 and 2. Assign the two slots of a title to different people. Slot 1 is the reference the model is scored against; slot 2 measures human agreement. Tell labelers to work independently (golden rule 6). The evaluation lists every title where the two disagree, for you to adjudicate.
 6. When done: File > Download > CSV (Labels tab) and hand it to the coordinator, who runs `python -m laminary_pipeline.gold import <file>.csv`. Any problems come back as a list by row number and title.
 
 ## Versions
