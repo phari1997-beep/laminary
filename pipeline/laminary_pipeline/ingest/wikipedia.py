@@ -37,6 +37,13 @@ plus ``via_detail: "episode_table"`` (on the record and on each entry of ``sourc
 partly included season, and what was left out over the cap. ``season_articles`` keeps the
 prose attempt.
 
+Richer text for priority series (fetcher 1.5.2, DECISIONS 2026-10-02): for one of the ten
+priority series (``priority.PRIORITY_SERIES``) whose main article passes with fewer than
+``RICHER_TEXT_WORDS`` (500) words, the season-article / episode-table path above is tried as
+well (run rules included), and the longer text is used (the main article on a tie or when the
+other path fails). Either way the record carries ``richer_text``: the rule, the threshold, which
+text was chosen and both word counts. Other titles are unchanged.
+
 Series run rules (fetcher 1.5.1, DECISIONS 2026-10-02): for a series listed in
 ``runs.SERIES_RUN_RULES`` (Doctor Who: the 2005 revival only), both fallbacks use only the
 pages and list-page headings of that run, and the season total ignores Wikidata P2437. The
@@ -67,6 +74,7 @@ from laminary_pipeline.ingest.episodes import (
     season_text,
 )
 from laminary_pipeline.ingest.http import HttpClient, HttpError
+from laminary_pipeline.ingest.priority import PRIORITY_SERIES
 from laminary_pipeline.ingest.seasons import (
     LEAD_BLOCK_CEILING,
     MAX_SEASON_NUMBER,
@@ -89,8 +97,13 @@ FETCHER_VERSION = "1.5.2"  # 1.1.0: per-season articles for thin series; 1.2.0: 
 # (DECISIONS 2026-10-02): episode-table fallback for series (episodes.py); 1.5.1 (DECISIONS
 # 2026-10-02): per-title series run rules (runs.py; Doctor Who uses its 2005 revival only);
 # 1.5.2 (DECISIONS 2026-10-02): episode-list pages verified by a main-article link when
-# Wikidata states nothing (seasons.py)
+# Wikidata states nothing (seasons.py), and richer text for thin priority series
 MIN_WORDS = 150
+# A priority series whose main-article text passes with fewer words than this also tries the
+# season-article / episode-table path and keeps the longer text (fetcher 1.5.2, DECISIONS
+# 2026-10-02). The same 500 words as a stub season.
+RICHER_TEXT_WORDS = STUB_SEASON_WORDS
+RICHER_TEXT_RULE = "priority_series_richer_text"
 API_URL = "https://en.wikipedia.org/w/api.php"
 WIKIDATA_API_URL = "https://www.wikidata.org/w/api.php"
 ARTICLE_BASE = "https://en.wikipedia.org/wiki/"
@@ -325,7 +338,8 @@ class PlotFetcher:
                                              media_type)
             checks.append(filtered.record(section.index))
             if filtered.words >= self.min_words:
-                return self._ok(result, page_title, revid, rev_ts, section, filtered)
+                ok = self._ok(result, page_title, revid, rev_ts, section, filtered)
+                return self._prefer_richer(ok, media_type)
             if best is None or filtered.words > best[0]:
                 best = (filtered.words, section)
         assert best is not None
@@ -340,6 +354,37 @@ class PlotFetcher:
             "word_count": words,
         }
         return self._try_seasons(skipped, media_type)
+
+    # ---------- priority series: richer text (fetcher 1.5.2) ----------
+
+    def _prefer_richer(self, ok: dict[str, Any], media_type: str) -> dict[str, Any]:
+        """For a priority series whose main article passed with under RICHER_TEXT_WORDS words,
+        also try the season-article / episode-table path and keep the longer text."""
+        if (ok["qid"] not in PRIORITY_SERIES or media_type != "tv_series"
+                or ok["word_count"] >= RICHER_TEXT_WORDS or not self.season_articles):
+            return ok
+        attempt = {k: v for k, v in ok.items() if k not in ("source", "text")}
+        attempt.update(status="skipped", skip_reason=None,
+                       skip_detail=f"main article passed with {ok['word_count']} words, under "
+                       f"{RICHER_TEXT_WORDS}; tried for richer text")
+        other = self._try_seasons(attempt, media_type)
+        other_words = other["word_count"] if other.get("status") == "ok" else 0
+        chosen = other if other_words > ok["word_count"] else ok
+        report = {
+            "rule": RICHER_TEXT_RULE,
+            "threshold_words": RICHER_TEXT_WORDS,
+            "chosen": "main_article" if chosen is ok else (
+                other.get("via_detail") or VIA_SEASON_ARTICLES),
+            "main_article_words": ok["word_count"],
+            "alternative_words": other_words,
+            "alternative_status": other.get("status"),
+            "alternative_detail": None if other.get("status") == "ok"
+            else (other.get("skip_detail") or other.get("skip_reason")),
+        }
+        if chosen is other:
+            return {**other, "richer_text": report}
+        extra = {k: other[k] for k in ("series_run_rule", "series_run_ignored") if k in other}
+        return {**ok, **extra, "richer_text": report}
 
     # ---------- series: per-season articles ----------
 
