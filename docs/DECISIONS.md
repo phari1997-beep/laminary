@@ -69,3 +69,4 @@
 | 2026-10-02 | For the 10 priority series only: if the main-article plot text is under 500 words, also try season/episode-table text and use whichever is longer (Sherlock 180, Doctor Who 249, Star Trek: TNG 278, M*A*S*H 345) | Hari approved; thin texts for the most important shows |
 | 2026-10-02 | Doctor Who revival numbering includes series 14–15 (2023 relaunch continues the numbering); total 15 | Hari approved |
 | 2026-10-02 | CID: per-title run rule treating each year heading on its verified episode-list pages as one "season", in year order; coverage line states years (e.g. "Summary covers 1998–1999 of 1998–2024") | Hari's call (coordinator recommendation); CID's lists have no season headings |
+| 2026-10-02 | Doctor Who season pages verify against Wikidata's own continuous numbering: revival series N must carry ordinal exactly N+26 (or none); scoped to Doctor Who only | Hari confirmed; Wikidata numbers revival series 27–41 after the 26 classic seasons |
