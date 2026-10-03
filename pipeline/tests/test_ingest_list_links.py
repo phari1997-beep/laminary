@@ -330,8 +330,8 @@ def test_link_verified_records_from_1_5_2_are_fetched_again(tmp_path) -> None:
                     "episode_tables": {"evidence": [{"property": "P179"}]}}
     _write(paths, "Q5", plain_tables)
     assert needs_fetch(paths, "Q5", False)
-    _write(paths, "Q5", {**plain_tables, "fetcher_version": "1.5.4"})
-    assert not needs_fetch(paths, "Q5", False)
+    from laminary_pipeline.ingest.plots import _episode_tables_from_1_5_5 as from_1_5_5
+    assert not from_1_5_5({**plain_tables, "fetcher_version": "1.5.4"})  # (1.5.8 re-fetches)
     # QA nit: run-rule titles too (Doctor Who's rule is older than the 1.5.6 fix)
     from laminary_pipeline.ingest.plots import _episode_tables_from_1_5_5
 

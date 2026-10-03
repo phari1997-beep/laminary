@@ -38,7 +38,8 @@ def test_longer_season_text_is_chosen_for_a_thin_priority_series() -> None:
     assert [p["page_title"] for p in rec["sources"]] == ["Doctor Who series 1",
                                                          "Doctor Who series 2"]
     assert rec["richer_text"] == {
-        "rule": "priority_series_richer_text", "threshold_words": 500,
+        "rule": "priority_series_richer_text", "reason": "main article under 500 words",
+        "threshold_words": 500,
         "chosen": "season_articles", "main_article_words": 249,
         "alternative_words": rec["word_count"], "alternative_status": "ok",
         "alternative_detail": None}
@@ -108,8 +109,8 @@ def test_thin_priority_series_from_older_fetchers_are_fetched_again(tmp_path: Pa
         write_json_atomic(paths.plot_file(qid), {**old, "fetcher_version": FETCHER_VERSION})
         assert not needs_fetch(paths, qid, False), qid
     # 500+ words, a season-article file, or a non-priority series: not fetched again
-    for rec in ({"qid": "Q23733", "word_count": 800},
-                {"qid": "Q23733", "word_count": 300, "via": "season_articles"},
+    for rec in ({"qid": "Q4525", "word_count": 800},
+                {"qid": "Q4525", "word_count": 300, "via": "season_articles"},
                 {"qid": "Q1", "word_count": 300}):
         full = {"status": "ok", "fetcher_version": "1.5.0",
                 "candidate": {"media_type": "tv_series"}, **rec}

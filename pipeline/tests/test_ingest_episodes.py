@@ -773,7 +773,7 @@ def _cands(rows: list[tuple[str, str, str, int]]) -> list[dict[str, Any]]:
 def _skipped(qid: str, reason: str = "too_short") -> dict[str, Any]:
     return {"qid": qid, "status": "skipped", "skip_reason": reason,
             "skip_detail": "longest plot-like section 'premise' has 40 words; episode tables: "
-            "0 episodes with 0 words", "fetcher_version": "1.5.0",
+            "0 episodes with 0 words", "fetcher_version": FETCHER_VERSION,
             "candidate": {"media_type": "tv_series"}, "season_articles": {"used": []},
             "episode_tables": {"episodes_used": 0}}
 
@@ -1107,5 +1107,5 @@ def test_season_too_long_series_are_fetched_again_by_1_5_0(tmp_path: Path) -> No
     old = {**_skipped("Q1", "season_too_long"), "fetcher_version": "1.4.0"}
     write_json_atomic(paths.plot_file("Q1"), old)
     assert needs_fetch(paths, "Q1", False)
-    write_json_atomic(paths.plot_file("Q1"), {**old, "fetcher_version": "1.5.0"})
+    write_json_atomic(paths.plot_file("Q1"), {**old, "fetcher_version": FETCHER_VERSION})
     assert not needs_fetch(paths, "Q1", False)

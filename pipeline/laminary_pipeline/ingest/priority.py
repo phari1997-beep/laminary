@@ -21,3 +21,8 @@ PRIORITY_SERIES: dict[str, str] = {
     "Q252118": "CID",
     "Q34316": "Doctor Who",
 }
+
+# Priority series that use the season-article / episode-table text even when their main
+# article passes, whenever that path yields usable text (fetcher 1.5.8, DECISIONS 2026-10-02):
+# Seinfeld's main article is mostly commentary, its episode summaries are the story.
+PREFER_EPISODE_TEXT: frozenset[str] = frozenset({"Q23733"})  # Seinfeld

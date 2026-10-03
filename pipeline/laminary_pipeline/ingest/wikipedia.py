@@ -56,6 +56,7 @@ it left out, with the reason); list-page headings it skipped are in
 from __future__ import annotations
 
 import urllib.parse
+from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -74,7 +75,7 @@ from laminary_pipeline.ingest.episodes import (
     season_text,
 )
 from laminary_pipeline.ingest.http import HttpClient, HttpError
-from laminary_pipeline.ingest.priority import PRIORITY_SERIES
+from laminary_pipeline.ingest.priority import PREFER_EPISODE_TEXT, PRIORITY_SERIES
 from laminary_pipeline.ingest.seasons import (
     LEAD_BLOCK_CEILING,
     MAX_SEASON_NUMBER,
@@ -91,7 +92,7 @@ from laminary_pipeline.ingest.seasons import (
 from laminary_pipeline.ingest.sections import SectionFilter, filter_section, normalize_heading
 from laminary_pipeline.ingest.text import html_to_text, sha256_text, word_count
 
-FETCHER_VERSION = "1.5.7"  # 1.1.0: per-season articles for thin series; 1.2.0: lead block
+FETCHER_VERSION = "1.5.8"  # 1.1.0: per-season articles for thin series; 1.2.0: lead block
 # of stub seasons (under STUB_SEASON_WORDS, 500) before the first full season; 1.3.0: stubs
 # alone when the lead block is over the 6,000-word ceiling; 1.4.0 (DECISIONS 2026-10-02):
 # non-plot subsections dropped (sections.py), MediaWiki "Cite error" text stripped, Wikidata
@@ -107,13 +108,16 @@ FETCHER_VERSION = "1.5.7"  # 1.1.0: per-season articles for thin series; 1.2.0: 
 # (QA): only the year rule reads year headings, from the heading path; the list page's
 # back-link must be in its lead; "television program" counts as a TV series
 # 1.5.7 (QA): a two-part episode row (rowspan="2" title cell) keeps its title and both
-# numbers ("S1E1–2"), instead of "S1E2:" with no title
+# numbers ("S1E1–2"), instead of "S1E2:" with no title; 1.5.8 (DECISIONS 2026-10-02):
+# episode-summary trivia stored apart from the plot (``trivia``), a single pilot is episode 0
+# of the first season, and per-title episode-text overrides (Seinfeld)
 MIN_WORDS = 150
 # A priority series whose main-article text passes with fewer words than this also tries the
 # season-article / episode-table path and keeps the longer text (fetcher 1.5.2, DECISIONS
 # 2026-10-02). The same 500 words as a stub season.
 RICHER_TEXT_WORDS = STUB_SEASON_WORDS
 RICHER_TEXT_RULE = "priority_series_richer_text"
+OVERRIDE_REASON = "per-title override"  # PREFER_EPISODE_TEXT (Seinfeld, 1.5.8)
 API_URL = "https://en.wikipedia.org/w/api.php"
 WIKIDATA_API_URL = "https://www.wikidata.org/w/api.php"
 ARTICLE_BASE = "https://en.wikipedia.org/wiki/"
@@ -369,19 +373,29 @@ class PlotFetcher:
 
     def _prefer_richer(self, ok: dict[str, Any], media_type: str) -> dict[str, Any]:
         """For a priority series whose main article passed with under RICHER_TEXT_WORDS words,
-        also try the season-article / episode-table path and keep the longer text."""
+        also try the season-article / episode-table path and keep the longer text. For a title
+        in PREFER_EPISODE_TEXT (Seinfeld) that path's text is used whenever it is usable,
+        whatever its length (reason "per-title override")."""
+        override = ok["qid"] in PREFER_EPISODE_TEXT
         if (ok["qid"] not in PRIORITY_SERIES or media_type != "tv_series"
-                or ok["word_count"] >= RICHER_TEXT_WORDS or not self.season_articles):
+                or not self.season_articles
+                or (ok["word_count"] >= RICHER_TEXT_WORDS and not override)):
             return ok
+        why = (OVERRIDE_REASON if override else
+               f"main article under {RICHER_TEXT_WORDS} words")
         attempt = {k: v for k, v in ok.items() if k not in ("source", "text")}
         attempt.update(status="skipped", skip_reason=None,
-                       skip_detail=f"main article passed with {ok['word_count']} words, under "
-                       f"{RICHER_TEXT_WORDS}; tried for richer text")
+                       skip_detail=f"main article passed with {ok['word_count']} words; "
+                       f"tried the season-article / episode-table path ({why})")
         other = self._try_seasons(attempt, media_type)
         other_words = other["word_count"] if other.get("status") == "ok" else 0
-        chosen = other if other_words > ok["word_count"] else ok
+        if override:
+            chosen = other if other.get("status") == "ok" else ok
+        else:
+            chosen = other if other_words > ok["word_count"] else ok
         report = {
             "rule": RICHER_TEXT_RULE,
+            "reason": why,
             "threshold_words": RICHER_TEXT_WORDS,
             "chosen": "main_article" if chosen is ok else (
                 other.get("via_detail") or VIA_SEASON_ARTICLES),
@@ -582,6 +596,13 @@ class PlotFetcher:
                                MAX_SEASON_SOURCES)
         page_for = {se.season: page for page, se in collected}
         available = {se.season: len(se.episodes) for _, se in collected}
+        # trivia of every season read (1.5.8): stored with its source, never in the text
+        trivia = [{"episode": t.marker, "rule": t.rule, "text": t.text,
+                   "words": word_count(t.text), "ref": article_url(page.title),
+                   "revision": str(page.revid), "license": license_for(page.timestamp)}
+                  for page, se in collected for t in se.trivia]
+        report["trivia"] = {"items": len(trivia), "words": sum(t["words"] for t in trivia),
+                            "by_rule": dict(Counter(t["rule"] for t in trivia))}
         used_pages: list[Page] = []
         for s in joined.seasons:
             if page_for[s.season] not in used_pages:
@@ -609,7 +630,7 @@ class PlotFetcher:
             report["unit"] = YEAR_UNIT
             coverage = year_coverage([s.season for s in joined.seasons], listed,
                                      joined.partial_season)
-            return self._ok_episodes(skipped, main, joined, page_for, report, coverage)
+            return self._ok_episodes(skipped, main, joined, page_for, report, coverage, trivia)
         coverage = season_coverage(
             [s.season for s in joined.seasons], sorted({*found.verified_seasons, *listed}),
             (skipped.get("candidate") or {}).get("number_of_seasons"),
@@ -618,7 +639,7 @@ class PlotFetcher:
         assert coverage is not None  # every episode-table source has a season number
         if joined.partial_season is not None:
             coverage.update(partial_season=joined.partial_season, partial=True)
-        return self._ok_episodes(skipped, main, joined, page_for, report, coverage)
+        return self._ok_episodes(skipped, main, joined, page_for, report, coverage, trivia)
 
     def _ok_episodes(
         self,
@@ -628,6 +649,7 @@ class PlotFetcher:
         page_for: dict[int, Page],
         report: dict[str, Any],
         coverage: dict[str, Any],
+        trivia: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         parts = []
         unit_key = "year" if coverage.get("unit") == YEAR_UNIT else "season"
@@ -667,6 +689,9 @@ class PlotFetcher:
             "sources": parts,
             "episode_tables": report,
             "coverage": coverage,
+            # trivia moved out of the episode summaries (1.5.8, DECISIONS 2026-10-02): kept for
+            # a future trivia feature; never part of ``sources`` text, the model or gold input
+            "trivia": trivia or [],
         }
 
     def _ok_seasons(

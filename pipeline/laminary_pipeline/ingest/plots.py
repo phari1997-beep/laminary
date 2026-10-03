@@ -27,7 +27,7 @@ from laminary_pipeline.annotate.ready import not_annotatable_reason
 from laminary_pipeline.ingest.candidates import BUCKETS, language_display
 from laminary_pipeline.ingest.episodes import VIA_DETAIL_EPISODE_TABLE
 from laminary_pipeline.ingest.paths import DataPaths, read_json, write_json_atomic
-from laminary_pipeline.ingest.priority import PRIORITY_SERIES
+from laminary_pipeline.ingest.priority import PREFER_EPISODE_TEXT, PRIORITY_SERIES
 from laminary_pipeline.ingest.runs import SERIES_RUN_RULES
 from laminary_pipeline.ingest.wikipedia import (
     RICHER_TEXT_WORDS,
@@ -48,6 +48,9 @@ LINK_HARDENING_FETCHER = (1, 5, 6)  # 1.5.3 back-link; 1.5.6 lead-only back-link
 YEAR_HEADING_BUG_FETCHER = (1, 5, 5)  # its table_heading read years for every series
 YEAR_HEADING_FIX_FETCHER = (1, 5, 6)
 EPISODE_MARKER_FIX_FETCHER = (1, 5, 7)  # two-part rows lost their title ("S1E2:")
+# 1.5.8: trivia moved out of episode summaries, a single pilot is episode 0
+EPISODE_TEXT_FETCHER = (1, 5, 8)
+PREFER_EPISODE_TEXT_FETCHER = (1, 5, 8)
 
 
 def existing_status(paths: DataPaths, qid: str) -> dict[str, Any] | None:
@@ -68,6 +71,8 @@ def needs_fetch(paths: DataPaths, qid: str, refresh: bool) -> bool:
         or _link_fallback_before_hardening(current)
         or _episode_tables_from_1_5_5(current)
         or _episode_text_before_marker_fix(current)
+        or _episode_tables_before_trivia_and_pilots(current)
+        or _episode_text_override_before_rule(current)
     )
 
 
@@ -149,6 +154,20 @@ def _episode_text_before_marker_fix(rec: dict[str, Any]) -> bool:
     again, since which ones have two-part rows can't be told from the file."""
     return (rec.get("status") == "ok" and rec.get("via_detail") == VIA_DETAIL_EPISODE_TABLE
             and _version(rec.get("fetcher_version")) < EPISODE_MARKER_FIX_FETCHER)
+
+
+def _episode_tables_before_trivia_and_pilots(rec: dict[str, Any]) -> bool:
+    """Any file that tried episode tables (ok or skipped) before 1.5.8: trivia now leaves the
+    plot text (fewer words, different hashes) and a single pilot joins season 1 as episode 0
+    (more words; a skipped series may now pass)."""
+    return ("episode_tables" in rec
+            and _version(rec.get("fetcher_version")) < EPISODE_TEXT_FETCHER)
+
+
+def _episode_text_override_before_rule(rec: dict[str, Any]) -> bool:
+    """A title in ``priority.PREFER_EPISODE_TEXT`` (Seinfeld) fetched before the override."""
+    return (rec.get("qid") in PREFER_EPISODE_TEXT
+            and _version(rec.get("fetcher_version")) < PREFER_EPISODE_TEXT_FETCHER)
 
 
 def _link_fallback_before_hardening(rec: dict[str, Any]) -> bool:

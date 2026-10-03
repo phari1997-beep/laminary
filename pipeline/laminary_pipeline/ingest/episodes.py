@@ -27,6 +27,22 @@ the page, e.g. a revival that restarts at "Series 1"). Every skipped table is re
 episodes didn't fit under the cap, or when rows after its last used episode have no summary
 (episodes not yet aired or not yet summarized).
 
+**Trivia** (fetcher 1.5.8, DECISIONS 2026-10-02: stored, not discarded). Summary cells often
+carry production trivia after the plot. Conservative sentence-level rules (``TRIVIA_RULES``)
+move it out of the plot text into the plot file's ``trivia`` list (with episode marker, rule,
+source ref, revision and CC BY-SA licence), for a future trivia "delighter" feature (PLAN
+Phase 4): a paragraph or sentence starting "Note:" / "Notes:" / "Note –"; "Montage music:";
+award, guild-nomination and TV Guide sentences; "first appearance" / "first episode to ..."
+sentences; and sentences that only list actors who "also appear(s)". Anything else stays in
+the plot; actor names in parentheses stay. Trivia never reaches the model or the gold texts:
+word counts, the cap and hashes are computed on the plot text only.
+
+**Pilot episodes** (fetcher 1.5.8, DECISIONS 2026-10-02). On an episode-list page, a single
+episode under a "Pilot" heading ("Pilot (1997)", "Pilot TV movie (1989)") before the first
+season heading becomes episode 0 of that season (``S1E0 "The Killings at Badger's Drift":``)
+and counts toward the cap and coverage as part of it. Several pilot entries, or a pilot
+heading after the seasons began, are skipped with a reason (not numbered).
+
 **Text.** One paragraph per episode, in season order then table order: ``S2E5 "Title": <summary>``
 (``S2E5:`` without a title). The episode number is the table's in-season number when it has
 one as a plain integer, else the row's position in the season. A season's paragraphs, joined by
@@ -50,7 +66,7 @@ from __future__ import annotations
 
 import html
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from html.parser import HTMLParser
 from typing import Any
 
@@ -69,6 +85,25 @@ _PLAIN_INT = re.compile(r"^\d{1,3}$")
 # (fetcher 1.5.5, CID: DECISIONS 2026-10-02)
 _YEAR_HEADING = re.compile(r"^(\d{4})\b")
 MIN_YEAR, MAX_YEAR = 1900, 2100  # a year heading outside this range is not a year
+_PILOT_HEADING = re.compile(r"^pilots?\b")  # "pilot (1997)", "pilot tv movie (1989)"
+
+# Trivia rules (fetcher 1.5.8): (name, pattern). A paragraph starting with a note marker is
+# trivia whole; the other rules match one sentence.
+_NOTE_START = re.compile(r"^notes?\s*[:–—-]", re.IGNORECASE)
+_MONTAGE = re.compile(r"^montage music\s*:", re.IGNORECASE)
+_AWARD_BODY = re.compile(r"\b(?:Emmy|Golden Globe|Peabody|BAFTA|(?:Writers|Directors) Guild|"
+                         r"TV Guide)\b")
+_AWARD_WORD = re.compile(r"\b(?:award|nominat\w*|won|ranked|ranking|list)\b", re.IGNORECASE)
+_FIRST = re.compile(r"\bfirst appearance\b|\bfirst episode (?:to|without|with|in which)\b|"
+                    r"\bmakes? (?:his|her|their) (?:first|last|final) appearance\b",
+                    re.IGNORECASE)
+_ALSO_APPEAR = re.compile(r"^(?P<names>.+?)\s+also appears?\b(?P<rest>.*)$")
+_NAME_WORD = re.compile(r"^(?:[A-Z][\w'’.-]*|and|de|van|von|da|du|le|la)$")
+# abbreviations a sentence never ends on ("Dr. Sidney Freedman")
+_ABBREVIATIONS = frozenset({"Dr.", "Mr.", "Mrs.", "Ms.", "Lt.", "Capt.", "Sgt.", "Col.",
+                            "Maj.", "Gen.", "St.", "Jr.", "Sr.", "Prof.", "Rev.", "No.",
+                            "Cpl.", "Pvt.", "Adm.", "Cmdr.", "Det.", "Insp.", "Supt."})
+_SENTENCE_END = re.compile(r"(?<=[.!?])\s+(?=[A-Z\"“‘(])")
 UNIT_SEASON, UNIT_YEAR = "season", "year"
 ROW_HEADER = " th"  # marks a <th> cell in the parser's class sets (never a real class name)
 ROWSPAN = " rowspan="  # prefix of a pseudo-class carrying a cell's rowspan (same trick)
@@ -91,6 +126,7 @@ class RawTable:
     heading: str  # the heading that decides the table (``table_heading``), normalized
     path: tuple[str, ...] = ()  # every enclosing heading, outermost first
     rows: list[RawEpisode] = field(default_factory=list)
+    pilot: bool = False  # a pilot table joined to the first season as episode 0 (1.5.8)
 
 
 class _TableParser(HTMLParser):
@@ -276,6 +312,7 @@ class Episode:
     # the last episode number of a two-part row ("S1E1–2", fetcher 1.5.7), else None
     number_end: int | None = None
     parts: int = 1  # episode rows this entry covers (2 for a two-part row)
+    trivia: tuple[tuple[str, str], ...] = ()  # (rule, text) moved out of the summary (1.5.8)
 
     @property
     def marker(self) -> str:
@@ -300,15 +337,85 @@ class Episode:
         return word_count(self.paragraph)
 
 
+@dataclass(frozen=True)
+class TriviaItem:
+    """One trivia sentence or note moved out of an episode summary (fetcher 1.5.8)."""
+
+    marker: str  # the episode's marker, "S2E5"
+    rule: str  # which TRIVIA_RULES rule matched
+    text: str
+
+
 @dataclass
 class SeasonEpisodes:
     season: int
     episodes: list[Episode]
     rows: int  # episode rows in the season's tables, with or without a summary
+    # trivia of every episode row read, also rows whose summary was trivia only (1.5.8)
+    trivia: list[TriviaItem] = field(default_factory=list)
 
     @property
     def without_summary(self) -> int:
         return self.rows - sum(e.parts for e in self.episodes)
+
+
+def split_sentences(paragraph: str) -> list[str]:
+    """Sentences of one paragraph, not splitting after "Dr.", "Lt." and similar."""
+    out: list[str] = []
+    start = 0
+    for m in _SENTENCE_END.finditer(paragraph):
+        last_word = paragraph[start:m.start()].rsplit(" ", 1)[-1]
+        if last_word in _ABBREVIATIONS:
+            continue
+        out.append(paragraph[start:m.start()])
+        start = m.end()
+    out.append(paragraph[start:])
+    return [s for s in (x.strip() for x in out) if s]
+
+
+def trivia_rule(sentence: str) -> str | None:
+    """The trivia rule a sentence matches, or None (it stays in the plot)."""
+    if _NOTE_START.match(sentence):
+        return "note"
+    if _MONTAGE.match(sentence):
+        return "montage_music"
+    if _AWARD_BODY.search(sentence) and _AWARD_WORD.search(sentence):
+        return "award"
+    if _FIRST.search(sentence):
+        return "first_appearance"
+    m = _ALSO_APPEAR.match(sentence)
+    if m:
+        # only a list of names before "also appear(s)" ("Anna Massey, Joanna David and Una
+        # Stubbs also appear."), nothing after it but "as ..." / "in ..."
+        rest = m.group("rest").strip(" .")
+        words = m.group("names").replace(",", " ").split()
+        if ((not rest or rest.startswith(("as ", "in "))) and words
+                and words[0][:1].isupper() and all(_NAME_WORD.match(w) for w in words)):
+            return "also_appears"
+    return None
+
+
+TRIVIA_RULES = ("note", "montage_music", "award", "first_appearance", "also_appears")
+
+
+def split_trivia(text: str) -> tuple[str, list[tuple[str, str]]]:
+    """An episode summary's plot text (one paragraph) and its trivia, as (rule, text)."""
+    plot: list[str] = []
+    trivia: list[tuple[str, str]] = []
+    for para in text.split("\n\n"):
+        para = " ".join(para.split())
+        if not para:
+            continue
+        if _NOTE_START.match(para):
+            trivia.append(("note", para))
+            continue
+        for sentence in split_sentences(para):
+            rule = trivia_rule(sentence)
+            if rule is None:
+                plot.append(sentence)
+            else:
+                trivia.append((rule, sentence))
+    return " ".join(plot), trivia
 
 
 def _title_text(cell: str | None) -> str:
@@ -336,22 +443,31 @@ def season_episodes(
     """One season's (or, with ``unit="year"``, one year's) episodes with a summary, in table
     order."""
     out: list[Episode] = []
-    position = 0
+    trivia: list[TriviaItem] = []
+    position = 0  # rows read, pilot included (for the missing-summary check)
+    ordinal = 0  # episode rows outside the pilot (the fallback episode number)
     for table in tables:
         for row in table.rows:
             position += 1
-            number = _episode_number(row.number_cells, position)
-            end = None
-            for extra in row.extra_number_cells:  # a two-part row: one more episode each
-                position += 1
-                end = _episode_number(extra, position)
-            summary = html_to_text(row.description_html) if row.description_html else ""
-            summary = " ".join(summary.split())  # one paragraph per episode
-            if not summary:
-                continue
-            out.append(Episode(season, number, _title_text(row.title_html), summary,
-                               position, unit, end, 1 + len(row.extra_number_cells)))
-    return SeasonEpisodes(season, out, position)
+            if table.pilot:  # episode 0 of the first season (1.5.8)
+                number, end = 0, None
+                position += len(row.extra_number_cells)
+            else:
+                ordinal += 1
+                number = _episode_number(row.number_cells, ordinal)
+                end = None
+                for extra in row.extra_number_cells:  # a two-part row: one more episode each
+                    position += 1
+                    ordinal += 1
+                    end = _episode_number(extra, ordinal)
+            raw = html_to_text(row.description_html) if row.description_html else ""
+            summary, found = split_trivia(raw)  # one paragraph of plot, trivia apart
+            ep = Episode(season, number, _title_text(row.title_html), summary,
+                         position, unit, end, 1 + len(row.extra_number_cells), tuple(found))
+            trivia += [TriviaItem(ep.marker, rule, text) for rule, text in found]
+            if summary:
+                out.append(ep)
+    return SeasonEpisodes(season, out, position, trivia)
 
 
 def season_page_tables(
@@ -382,7 +498,15 @@ def list_page_seasons(
         return _list_page_years(tables, rule)
     seasons: list[tuple[int, list[RawTable]]] = []
     skipped: list[dict[str, str]] = []
+    pilots: list[RawTable] = []  # pilot tables before the first season (1.5.8)
     for i, t in enumerate(tables):
+        if _PILOT_HEADING.match(t.heading):
+            if seasons:
+                skipped.append({"heading": t.heading, "reason": "pilot heading after the "
+                                "seasons began: not numbered"})
+            else:
+                pilots.append(t)
+            continue
         m = _LIST_SEASON_HEADING.match(t.heading)
         if not m or _SKIP_TABLE_HEADING.search(t.heading):
             skipped.append({"heading": t.heading, "reason": "not under a season heading"})
@@ -402,7 +526,18 @@ def list_page_seasons(
                          f"{seasons[-1][0]}: the page's numbering restarts; stopped here"}
                         for r in tables[i:]]
             break
+        if not seasons and pilots:
+            entries = sum(len(p.rows) for p in pilots)
+            if entries == 1:  # one pilot episode: episode 0 of this, the first season
+                seasons.append((n, [replace(p, pilot=True) for p in pilots] + [t]))
+                pilots = []
+                continue
+            skipped += [{"heading": p.heading, "reason": f"{entries} pilot entries: only a "
+                         "single pilot is numbered as episode 0"} for p in pilots]
+            pilots = []
         seasons.append((n, [t]))
+    skipped += [{"heading": p.heading, "reason": "pilot without a season heading after it"}
+                for p in pilots]
     return seasons, skipped
 
 
