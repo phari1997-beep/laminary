@@ -71,6 +71,7 @@ _YEAR_HEADING = re.compile(r"^(\d{4})\b")
 MIN_YEAR, MAX_YEAR = 1900, 2100  # a year heading outside this range is not a year
 UNIT_SEASON, UNIT_YEAR = "season", "year"
 ROW_HEADER = " th"  # marks a <th> cell in the parser's class sets (never a real class name)
+ROWSPAN = " rowspan="  # prefix of a pseudo-class carrying a cell's rowspan (same trick)
 
 
 @dataclass(frozen=True)
@@ -80,6 +81,9 @@ class RawEpisode:
     number_cells: tuple[str, ...]  # cells before the title cell, as HTML
     title_html: str | None
     description_html: str | None
+    # number cells of the rows a two-part title cell spans (rowspan="2": "Encounter at
+    # Farpoint" is episodes 1 and 2 with one title and one summary; fetcher 1.5.7)
+    extra_number_cells: tuple[tuple[str, ...], ...] = ()
 
 
 @dataclass
@@ -114,10 +118,26 @@ class _TableParser(HTMLParser):
     def _classes(attrs: list[tuple[str, str | None]]) -> set[str]:
         return set((dict(attrs).get("class") or "").split())
 
+    @staticmethod
+    def _rowspan(classes: set[str]) -> int:
+        for c in classes:
+            if c.startswith(ROWSPAN) and c[len(ROWSPAN):].isdigit():
+                return int(c[len(ROWSPAN):])
+        return 1
+
     def _finish_row(self) -> None:
-        starts_episode = any("summary" in classes or ROW_HEADER in classes
-                             for classes, _ in self._row_cells)
-        if self._row_kind == "episode" and not starts_episode and self._pending is not None:
+        has_title = any("summary" in classes for classes, _ in self._row_cells)
+        starts_episode = has_title or any(ROW_HEADER in classes
+                                          for classes, _ in self._row_cells)
+        if (self._row_kind == "episode" and starts_episode and not has_title
+                and self._pending is not None and self._pending["span_left"] > 0):
+            # a new episode-number row (it has its own row header, "2") that the title cell
+            # above still spans: a two-part episode (TNG "Encounter at Farpoint", episodes 1
+            # and 2, one title and one summary). A spanned row without a row header (only a
+            # second production code, Shrinking) stays a continuation, below.
+            self._pending["span_left"] -= 1
+            self._pending["extra"].append(tuple(cell for _, cell in self._row_cells))
+        elif self._row_kind == "episode" and not starts_episode and self._pending is not None:
             # a continuation row of the episode above (its rowspan="2" cells span it, e.g. a
             # second production code): not a new episode
             pass
@@ -125,12 +145,14 @@ class _TableParser(HTMLParser):
             self._flush_pending()
             number_cells: list[str] = []
             title: str | None = None
+            span = 1
             for classes, cell in self._row_cells:
                 if "summary" in classes:
-                    title = cell
+                    title, span = cell, self._rowspan(classes)
                     break
                 number_cells.append(cell)
-            self._pending = {"numbers": tuple(number_cells), "title": title, "desc": None}
+            self._pending = {"numbers": tuple(number_cells), "title": title, "desc": None,
+                             "span_left": min(span, 4) - 1, "extra": []}
         elif self._row_kind == "description" and self._pending is not None:
             for classes, cell in self._row_cells:
                 if "description" in classes and self._pending["desc"] is None:
@@ -142,7 +164,8 @@ class _TableParser(HTMLParser):
     def _flush_pending(self) -> None:
         if self._pending is not None and self.tables:
             p = self._pending
-            self.tables[-1].rows.append(RawEpisode(p["numbers"], p["title"], p["desc"]))
+            self.tables[-1].rows.append(RawEpisode(p["numbers"], p["title"], p["desc"],
+                                                   tuple(p.get("extra") or ())))
         self._pending = None
 
     # --- HTMLParser ---
@@ -171,7 +194,9 @@ class _TableParser(HTMLParser):
                               else "description" if "expand-child" in classes else None)
         elif self._table_depth == 1 and tag in ("td", "th") and self._row_kind:
             self._cell, self._cell_tag = [], tag
-            self._cell_classes = self._classes(attrs) | ({ROW_HEADER} if tag == "th" else set())
+            rowspan = (dict(attrs).get("rowspan") or "").strip()
+            self._cell_classes = (self._classes(attrs) | ({ROW_HEADER} if tag == "th" else set())
+                                  | ({ROWSPAN + rowspan} if rowspan.isdigit() else set()))
             self._cell_nested_tables = 0
 
     def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
@@ -248,13 +273,20 @@ class Episode:
     row: int = 0  # the episode row's position in its season (1-based), with or without summary
     # "season", or "year" when ``season`` is a broadcast year (a run rule, fetcher 1.5.5)
     unit: str = UNIT_SEASON
+    # the last episode number of a two-part row ("S1E1–2", fetcher 1.5.7), else None
+    number_end: int | None = None
+    parts: int = 1  # episode rows this entry covers (2 for a two-part row)
 
     @property
     def marker(self) -> str:
-        """"S2E5" for season 2 episode 5; "1998E5" for the fifth episode of year 1998."""
+        """"S2E5" for season 2 episode 5; "1998E5" for the fifth episode of year 1998;
+        "S1E1–2" for a two-part episode with one title and summary."""
+        number = (f"{self.number}–{self.number_end}"
+                  if self.number_end is not None and self.number_end > self.number
+                  else str(self.number))
         if self.unit == UNIT_YEAR:
-            return f"{self.season}E{self.number}"
-        return f"S{self.season}E{self.number}"
+            return f"{self.season}E{number}"
+        return f"S{self.season}E{number}"
 
     @property
     def paragraph(self) -> str:
@@ -276,7 +308,7 @@ class SeasonEpisodes:
 
     @property
     def without_summary(self) -> int:
-        return self.rows - len(self.episodes)
+        return self.rows - sum(e.parts for e in self.episodes)
 
 
 def _title_text(cell: str | None) -> str:
@@ -308,13 +340,17 @@ def season_episodes(
     for table in tables:
         for row in table.rows:
             position += 1
+            number = _episode_number(row.number_cells, position)
+            end = None
+            for extra in row.extra_number_cells:  # a two-part row: one more episode each
+                position += 1
+                end = _episode_number(extra, position)
             summary = html_to_text(row.description_html) if row.description_html else ""
             summary = " ".join(summary.split())  # one paragraph per episode
             if not summary:
                 continue
-            number = _episode_number(row.number_cells, position)
             out.append(Episode(season, number, _title_text(row.title_html), summary,
-                               position, unit))
+                               position, unit, end, 1 + len(row.extra_number_cells)))
     return SeasonEpisodes(season, out, position)
 
 

@@ -46,6 +46,7 @@ LIST_LINK_FETCHER = (1, 5, 2)
 RICHER_TEXT_FETCHER = (1, 5, 2)
 LINK_HARDENING_FETCHER = (1, 5, 6)  # 1.5.3 back-link; 1.5.6 lead-only back-link
 YEAR_HEADING_FIX_FETCHER = (1, 5, 6)  # 1.5.5's table_heading read years for every series
+EPISODE_MARKER_FIX_FETCHER = (1, 5, 7)  # two-part rows lost their title ("S1E2:")
 
 
 def existing_status(paths: DataPaths, qid: str) -> dict[str, Any] | None:
@@ -65,6 +66,7 @@ def needs_fetch(paths: DataPaths, qid: str, refresh: bool) -> bool:
         or _thin_priority_series_before_richer_text(current)
         or _link_fallback_before_hardening(current)
         or _episode_tables_from_1_5_5(current)
+        or _episode_text_before_marker_fix(current)
     )
 
 
@@ -138,6 +140,14 @@ def _episode_tables_from_1_5_5(rec: dict[str, Any]) -> bool:
     fixed = max(YEAR_HEADING_FIX_FETCHER, rule.since) if rule else YEAR_HEADING_FIX_FETCHER
     return ("episode_tables" in rec
             and (1, 5, 5) <= _version(rec.get("fetcher_version")) < fixed)
+
+
+def _episode_text_before_marker_fix(rec: dict[str, Any]) -> bool:
+    """A passing episode-table file from before 1.5.7 (QA, 2026-10-02): a two-part row came
+    out as "S1E2:" with no title (TNG, TOS, Baywatch, Dallas). Every such file is fetched
+    again, since which ones have two-part rows can't be told from the file."""
+    return (rec.get("status") == "ok" and rec.get("via_detail") == VIA_DETAIL_EPISODE_TABLE
+            and _version(rec.get("fetcher_version")) < EPISODE_MARKER_FIX_FETCHER)
 
 
 def _link_fallback_before_hardening(rec: dict[str, Any]) -> bool:

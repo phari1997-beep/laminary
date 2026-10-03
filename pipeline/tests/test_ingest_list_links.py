@@ -340,6 +340,7 @@ def test_link_verified_records_from_1_5_2_are_fetched_again(tmp_path) -> None:
     _write(paths, "Q1", other)
     assert needs_fetch(paths, "Q1", False)
     # a 1.5.2 file verified by Wikidata alone is not fetched again
+    from laminary_pipeline.ingest.plots import _link_fallback_before_hardening
+
     plain = {**ok, "qid": "Q3", "episode_tables": {"evidence": [{"property": "P179"}]}}
-    _write(paths, "Q3", plain)
-    assert not needs_fetch(paths, "Q3", False)
+    assert not _link_fallback_before_hardening(plain)  # (1.5.7 re-fetches it for markers)

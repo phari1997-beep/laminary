@@ -275,6 +275,42 @@ def test_real_tables_under_season_headings_with_a_continuation_row() -> None:
     assert "T12.17451" not in s1.episodes[0].paragraph  # the production code cell
 
 
+def test_real_two_part_row_keeps_its_title_and_both_numbers() -> None:
+    """TNG season 1: "Encounter at Farpoint" is episodes 1 and 2 in one row group: row 1 has
+    the rowspan="2" title cell, row 2 only its own numbers (with a row header), then an empty
+    row and one summary. Before fetcher 1.5.7 this came out as "S1E2:" with no title."""
+    tables = parse_tables(fixture("tng_season_1_episodes"))
+    used, _ = season_page_tables(tables)
+    se = season_episodes(1, used)
+    assert [e.marker for e in se.episodes] == ["S1E1–2", "S1E3"]
+    assert se.episodes[0].paragraph.startswith(
+        'S1E1–2 "Encounter at Farpoint": The new starship Enterprise begins her maiden voyage')
+    assert se.episodes[1].paragraph.startswith('S1E3 "The Naked Now":')
+    assert se.rows == 3 and se.without_summary == 0  # two episodes in one row group
+    assert se.episodes[0].row == 2 and se.episodes[1].row == 3
+
+
+def test_episode_table_files_from_before_the_marker_fix_are_fetched_again(
+        tmp_path: Path) -> None:
+    from laminary_pipeline.ingest.plots import needs_fetch
+
+    paths = DataPaths.resolve(str(tmp_path))
+    rec = {"qid": "Q16290", "status": "ok", "fetcher_version": "1.5.6",
+           "via": "season_articles", "via_detail": "episode_table",
+           "candidate": {"media_type": "tv_series"}}
+    write_json_atomic(paths.plot_file("Q16290"), rec)
+    assert needs_fetch(paths, "Q16290", False)
+    write_json_atomic(paths.plot_file("Q16290"), {**rec, "fetcher_version": FETCHER_VERSION})
+    assert not needs_fetch(paths, "Q16290", False)
+
+
+def test_two_part_marker_for_years_and_single_numbers() -> None:
+    from laminary_pipeline.ingest.episodes import Episode
+
+    assert Episode(1998, 4, "", "x", unit="year", number_end=5).marker == "1998E4–5"
+    assert Episode(2, 7, "", "x", number_end=7).marker == "S2E7"
+
+
 def test_real_fixtures_are_recorded_with_licence_and_permalink() -> None:
     sources = json.loads((FIXTURES / "sources.json").read_text(encoding="utf-8"))
     assert set(sources) == {p.stem for p in FIXTURES.glob("*.html")}

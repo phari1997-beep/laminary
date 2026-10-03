@@ -91,7 +91,7 @@ from laminary_pipeline.ingest.seasons import (
 from laminary_pipeline.ingest.sections import SectionFilter, filter_section, normalize_heading
 from laminary_pipeline.ingest.text import html_to_text, sha256_text, word_count
 
-FETCHER_VERSION = "1.5.6"  # 1.1.0: per-season articles for thin series; 1.2.0: lead block
+FETCHER_VERSION = "1.5.7"  # 1.1.0: per-season articles for thin series; 1.2.0: lead block
 # of stub seasons (under STUB_SEASON_WORDS, 500) before the first full season; 1.3.0: stubs
 # alone when the lead block is over the 6,000-word ceiling; 1.4.0 (DECISIONS 2026-10-02):
 # non-plot subsections dropped (sections.py), MediaWiki "Cite error" text stripped, Wikidata
@@ -106,6 +106,8 @@ FETCHER_VERSION = "1.5.6"  # 1.1.0: per-season articles for thin series; 1.2.0: 
 # rule may number by year (CID: list-page year headings; sources carry ``year``); 1.5.6
 # (QA): only the year rule reads year headings, from the heading path; the list page's
 # back-link must be in its lead; "television program" counts as a TV series
+# 1.5.7 (QA): a two-part episode row (rowspan="2" title cell) keeps its title and both
+# numbers ("S1E1–2"), instead of "S1E2:" with no title
 MIN_WORDS = 150
 # A priority series whose main-article text passes with fewer words than this also tries the
 # season-article / episode-table path and keeps the longer text (fetcher 1.5.2, DECISIONS

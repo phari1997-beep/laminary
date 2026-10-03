@@ -30,5 +30,13 @@
   "permalink": "https://en.wikipedia.org/w/index.php?title=List_of_CID_episodes:_2024%E2%80%93present&oldid=1337101470",
   "license": "CC-BY-SA-4.0",
   "note": "whole-page parse from the cache; only the 2024 and 2025 year headings kept, each episode table cut to its first 2 episodes (summaries whole); styles removed; markup otherwise as served"
+ },
+ "tng_season_1_episodes": {
+  "title": "Star Trek: The Next Generation season 1",
+  "section": "whole page",
+  "revision": "1372802034",
+  "permalink": "https://en.wikipedia.org/w/index.php?title=Star_Trek%3A_The_Next_Generation_season_1&oldid=1372802034",
+  "license": "CC-BY-SA-4.0",
+  "note": "whole-page parse from the cache; the Episodes heading and its episode table cut to the first two entries: the two-part \"Encounter at Farpoint\" (episodes 1 and 2, rowspan=\"2\" title cell, an empty row, one summary) and \"The Naked Now\"; styles removed; markup otherwise as served"
  }
 }
