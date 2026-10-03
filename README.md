@@ -27,7 +27,7 @@ cp .env.example .env          # local stack values (Phases 0–1); .env is gitig
 cd pipeline
 python3.12 -m venv .venv
 . .venv/bin/activate
-pip install -e ".[dev,annotate]"
+pip install -e ".[dev,annotate,gold]"
 ruff check .
 pytest
 ```

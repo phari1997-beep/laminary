@@ -23,6 +23,11 @@ dev = [
 annotate = [
     "anthropic>=1.9,<2",
 ]
+# Gold labeling sheet as .xlsx with dropdowns (laminary_pipeline/gold). Optional: ingest and
+# evaluate don't import it.
+gold = [
+    "openpyxl>=3.1,<4",
+]
 
 [tool.setuptools.packages.find]
 where = ["."]
