@@ -51,7 +51,8 @@ from laminary_pipeline.gold.pairs import Pair, pins
 from laminary_pipeline.ingest import candidates as cand
 from laminary_pipeline.ingest.wikidata import Wikidata
 
-PAIRS_VERSION = "1.2.0"  # 1.1.0: QID pins from the pairs file; 1.2.0: EXCLUDED QIDs
+PAIRS_VERSION = "1.2.1"  # 1.1.0: QID pins from the pairs file; 1.2.0: EXCLUDED QIDs;
+# 1.2.1 (QA N1, N2): every hit in the year window reported; rejected pairs left out
 ROLE = "pairs"
 EXPECTATION = {"match": "should_match", "no_match": "should_not_match"}
 RESOLVED_COLUMNS = ["title_a", "title_b", "expectation", "note"]
@@ -85,10 +86,16 @@ class TitleResolution:
                 "detail": self.detail, "hits": self.hits}
 
 
+def active(pairs: Sequence[Pair]) -> list[Pair]:
+    """The pairs that count: every status but ``rejected`` (QA N2)."""
+    return [p for p in pairs if p.status != "rejected"]
+
+
 def pair_titles(pairs: Sequence[Pair]) -> dict[TitleKey, list[str]]:
-    """Each distinct pair title, in file order, with the pair ids it appears in."""
+    """Each distinct title of the active pairs, in file order, with the pair ids it appears
+    in. A title only a rejected pair uses is not resolved or fetched."""
     out: dict[TitleKey, list[str]] = {}
-    for p in pairs:
+    for p in active(pairs):
         for side in (p.a, p.b):
             out.setdefault(side, []).append(p.pair_id)
     return out
@@ -121,19 +128,20 @@ def _hit_summary(it: dict[str, Any]) -> dict[str, Any]:
 
 def pick(key: TitleKey, items: Sequence[dict[str, Any]], pin: str | None = None,
          ) -> tuple[str, dict[str, Any] | None, list[dict[str, Any]]]:
-    """(status, the chosen item, the closest hits): resolved / ambiguous / unresolved. With a
-    ``pin``, only the pinned item can be chosen, and only if it matches the key."""
+    """(status, the chosen item, every hit within the year window, closest first): resolved /
+    ambiguous / unresolved. The closest year wins; a tie there is ambiguous. With a ``pin``,
+    only the pinned item can be chosen, and only if it matches the key."""
     hits = matches(key, items)
     if pin:
         chosen = [it for it in hits if it["qid"] == pin]
-        return ("resolved", chosen[0], chosen) if chosen else ("unresolved", None, hits)
+        return ("resolved", chosen[0], hits) if chosen else ("unresolved", None, hits)
     if not hits:
         return "unresolved", None, []
     best = abs(hits[0]["year"] - key[1])
     top = [it for it in hits if abs(it["year"] - key[1]) == best]
     if len(top) > 1:
-        return "ambiguous", None, top
-    return "resolved", top[0], top
+        return "ambiguous", None, hits
+    return "resolved", top[0], hits
 
 
 def to_look_up(pairs: Sequence[Pair], candidates: Sequence[dict[str, Any]],
@@ -249,7 +257,7 @@ def build(
                 titles.append(TitleResolution(
                     key, pair_ids, "resolved", hit["qid"],
                     rows[-1]["year_match"] + ("; pinned in the pairs file" if pin else ""),
-                    [_hit_summary(hit)]))
+                    [_hit_summary(h) for h in top]))
                 qids[key] = hit["qid"]
                 continue
         # a candidate
@@ -287,9 +295,9 @@ def _flag_shared_qids(titles: list[TitleResolution]) -> None:
 
 
 def resolved_pairs(pairs: Sequence[Pair], qids: dict[TitleKey, str]) -> list[dict[str, str]]:
-    """``evaluate/pairs.py`` rows for the pairs with both titles resolved."""
+    """``evaluate/pairs.py`` rows for the active pairs with both titles resolved."""
     out = []
-    for p in pairs:
+    for p in active(pairs):
         a, b = qids.get(p.a), qids.get(p.b)
         if a and b:
             out.append({"title_a": a, "title_b": b, "expectation": EXPECTATION[p.expect],
@@ -310,9 +318,9 @@ def scorability(
     excluded: dict[TitleKey, str] | None = None,
 ) -> list[dict[str, Any]]:
     """Per pair: scorable once embeddings exist when both titles have a QID and an annotatable
-    plot file (``annotate.ready``); else why not, per side."""
+    plot file (``annotate.ready``); else why not, per side. Rejected pairs are left out."""
     out = []
-    for p in pairs:
+    for p in active(pairs):
         problems = []
         for side in (p.a, p.b):
             qid = qids.get(side)

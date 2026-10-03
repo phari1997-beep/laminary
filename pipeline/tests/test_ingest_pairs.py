@@ -71,7 +71,10 @@ def test_pick_prefers_exact_year_and_refuses_ties() -> None:
     twin = item("Q3", "Triangle", 2009, enwiki_title="Triangle (2009 South Korean film)")
     status, chosen, top = ps.pick(key, [exact, twin, near])
     assert status == "ambiguous" and chosen is None
-    assert {t["qid"] for t in top} == {"Q1", "Q3"}  # the off-by-one item is not a contender
+    # QA N1: every hit in the year window is reported, closest first; the off-by-one item is
+    # listed but is not a contender
+    assert [t["qid"] for t in top] == ["Q1", "Q3", "Q2"]
+    assert ps.pick(key, [near, exact])[2] == [exact, near]
     assert ps.pick(key, [item("Q4", "Triangle", 2011)])[0] == "unresolved"  # 2 years off
     assert ps.pick(key, [item("Q5", "Triangle", 2009, media_type="tv_series")])[0] == (
         "unresolved")  # wrong type
@@ -224,6 +227,23 @@ def test_an_excluded_qid_is_reported_and_left_out() -> None:
         assert "Code Geass (2006): Q4384067 excluded" in scored[0]["problems"]
         assert "EXCLUDED: Code Geass" in ps.format_summary(ps.summary(built, scored))
         assert ps.resolved_pairs(pairs, built.qids) == []
+
+
+def test_rejected_pairs_are_left_out() -> None:
+    """QA N2: a rejected pair is not resolved, written or scored; its titles are looked up
+    only if an active pair uses them."""
+    nemo = {**item("Q10", "Finding Nemo", 2003), "role": "pilot"}
+    pairs = [pair("N1", ("Finding Nemo", 2003, "movie"), ("Taken", 2008, "movie"), "no_match"),
+             Pair("N2", "no_match", ("Finding Nemo", 2003, "movie"), ("Up", 2009, "movie"),
+                  "s", "w", "rejected")]
+    assert list(ps.pair_titles(pairs)) == [("Finding Nemo", 2003, "movie"),
+                                          ("Taken", 2008, "movie")]
+    items = {"Q20": item("Q20", "Taken", 2008), "Q30": item("Q30", "Up", 2009)}
+    built = ps.build(pairs, [nemo], items, in_pilot=lambda q: True)
+    assert [t.key[0] for t in built.titles] == ["Finding Nemo", "Taken"]
+    assert [r["note"][:2] for r in ps.resolved_pairs(pairs, built.qids)] == ["N1"]
+    scored = ps.scorability(pairs, built.qids, lambda q: None)
+    assert [p["pair_id"] for p in scored] == ["N1"]
 
 
 def test_resolved_csv_loads_in_the_evaluator(tmp_path: Path) -> None:
