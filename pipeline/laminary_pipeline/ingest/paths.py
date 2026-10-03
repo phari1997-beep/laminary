@@ -49,6 +49,16 @@ class DataPaths:
         return self.root / "pilot_effective.jsonl"
 
     @property
+    def pairs_candidates(self) -> Path:
+        """Titles the similarity pairs need that the candidates lack (``ingest pairs``)."""
+        return self.root / "pairs_candidates.jsonl"
+
+    @property
+    def pairs_resolved(self) -> Path:
+        """The similarity pairs as QIDs, in the ``evaluate/pairs.py`` format."""
+        return self.root / "similarity_pairs_resolved.csv"
+
+    @property
     def plots(self) -> Path:
         return self.root / "plots"
 
@@ -80,6 +90,18 @@ def write_json_atomic(path: Path, data: Any) -> None:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             json.dump(data, fh, ensure_ascii=False, indent=2, sort_keys=False)
             fh.write("\n")
+        os.replace(tmp, path)
+    except BaseException:
+        Path(tmp).unlink(missing_ok=True)
+        raise
+
+
+def write_text_atomic(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as fh:
+            fh.write(text)
         os.replace(tmp, path)
     except BaseException:
         Path(tmp).unlink(missing_ok=True)

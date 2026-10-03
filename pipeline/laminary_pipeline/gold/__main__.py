@@ -144,11 +144,16 @@ def _pairs(paths: DataPaths, log: Callable[[str], None]) -> int:
     counts = {e: sum(1 for p in pairs if p.expect == e) for e in ("match", "no_match")}
     log(f"{len(pairs)} pairs: {counts['match']} should match, {counts['no_match']} should not")
     if paths.candidates.exists():
-        resolved = resolve_pairs(pairs, list(read_jsonl(paths.candidates)))
+        titles = list(read_jsonl(paths.candidates))
+        where = "the candidate list"
+        if paths.pairs_candidates.exists():  # ingest pairs: titles the candidates lack
+            titles += list(read_jsonl(paths.pairs_candidates))
+            where += " or the pairs set"
+        resolved = resolve_pairs(pairs, titles)
         missing = [r for r in resolved if not (r["qid_a"] and r["qid_b"])]
-        log(f"{len(resolved) - len(missing)} pairs have both titles in the candidate list")
+        log(f"{len(resolved) - len(missing)} pairs have both titles in {where}")
         for r in missing:
-            log(f"  {r['pair_id']}: not in candidates: "
+            log(f"  {r['pair_id']}: not in {where}: "
                 + ", ".join(t for t, q in ((r["title_a"], r["qid_a"]), (r["title_b"], r["qid_b"]))
                             if not q))
     return 1 if errors else 0

@@ -5,8 +5,9 @@
 Finding Nemo vs Taken), ``match`` pairs should be. Hari reviews the list; ``status`` is
 ``seed`` / ``proposed`` / ``approved`` / ``rejected``.
 
-``resolve_pairs`` maps titles to Wikidata QIDs through the candidate list, so the similarity
-evaluation can look up both titles' fingerprints later.
+``resolve_pairs`` maps titles to Wikidata QIDs through the candidate list (and, when given, the
+pairs set from ``ingest pairs``, whose rows carry the pairs file's own title as ``pair_title``),
+so the similarity evaluation can look up both titles' fingerprints later.
 """
 
 from __future__ import annotations
@@ -82,7 +83,8 @@ def _find(side: tuple[str, int, str], candidates: Sequence[dict[str, Any]]) -> s
     title, year, media_type = side
     want = normalize_title(title)
     for c in candidates:
-        names = {normalize_title(c.get(k) or "") for k in ("title", "gold_seed_title")}
+        names = {normalize_title(c.get(k) or "")
+                 for k in ("title", "gold_seed_title", "pair_title")}
         close = bool(c.get("year")) and abs(c["year"] - year) <= 1
         if c["media_type"] == media_type and close and want in names:
             return c["qid"]
