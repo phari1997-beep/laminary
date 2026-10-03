@@ -495,8 +495,12 @@ def test_thin_series_from_an_older_fetcher_are_fetched_again(tmp_path: Path) -> 
     write_json_atomic(paths.plot_file("Q1"), {**old, "season_articles": {"status": "disabled"},
                                                "fetcher_version": "1.4.0"})
     assert not needs_fetch(paths, "Q1", False)  # season lookup was off for that run
-    write_json_atomic(paths.plot_file("Q1"), {**old, "candidate": {"media_type": "movie"}})
+    write_json_atomic(paths.plot_file("Q1"), {**old, "candidate": {"media_type": "movie"},
+                                               "fetcher_version": "1.4.0"})
     assert not needs_fetch(paths, "Q1", False)
+    # QA 2026-10-02: any file from before 1.4.0 (or without a version) is fetched again
+    write_json_atomic(paths.plot_file("Q1"), {**old, "candidate": {"media_type": "movie"}})
+    assert needs_fetch(paths, "Q1", False)
 
 
 # --- lead block (DECISIONS 2026-10-01) -----------------------------------------------------

@@ -32,7 +32,7 @@ from laminary_pipeline.ingest.paths import (
     write_json_atomic,
     write_jsonl_atomic,
 )
-from laminary_pipeline.ingest.plots import effective_pilot
+from laminary_pipeline.ingest.plots import effective_pilot, not_annotatable
 
 SELECTION_NAME = "gold_selection.jsonl"
 LABELS_NAME = "gold_labels.jsonl"
@@ -68,8 +68,10 @@ def main(argv: Sequence[str] | None = None, *, log: Callable[[str], None] = prin
 
 
 def _plot_status(paths: DataPaths, qid: str) -> bool | None:
+    """True when the plot file is annotatable (QA 2026-10-02: not merely ``status: ok``),
+    False when it isn't, None when there is no file yet."""
     f = paths.plot_file(qid)
-    return read_json(f).get("status") == "ok" if f.exists() else None
+    return not_annotatable(paths, qid) is None if f.exists() else None
 
 
 def _select(paths: DataPaths, n: int, log: Callable[[str], None]) -> int:

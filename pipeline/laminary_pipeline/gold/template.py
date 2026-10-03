@@ -42,6 +42,7 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
+from laminary_pipeline.annotate.config import DEFAULT_PROMPT_VERSION
 from laminary_pipeline.annotate.inputs import (
     GatedInput,
     GateError,
@@ -57,7 +58,12 @@ from laminary_pipeline.annotate.inputs import (
     parse_via_detail,
     parse_year_coverage,
 )
-from laminary_pipeline.annotate.prompt import labeler_coverage, labeler_text
+from laminary_pipeline.annotate.prompt import (
+    labeler_coverage,
+    labeler_text,
+    load_prompt,
+    require_current_ingest,
+)
 from laminary_pipeline.gold.columns import (
     ALL_COLUMNS,
     GUIDE_VERSION,
@@ -130,10 +136,17 @@ def _gated(plot: dict[str, Any]) -> GatedInput:
     via_detail = parse_via_detail(plot, via, origin)
     partial = parse_partial_season(plot.get("coverage"), sources, via_detail, origin)
     span, partial_year = parse_year_coverage(plot.get("coverage"), sources, via_detail, origin)
-    return gate(PlotInput(title, tuple(sources), origin, via=via,
-                          season_total=total, season_total_basis=basis,
-                          via_detail=via_detail, partial_season=partial,
-                          year_span=span, partial_year=partial_year))
+    fetcher = plot.get("fetcher_version")
+    gated = gate(PlotInput(title, tuple(sources), origin, via=via,
+                           season_total=total, season_total_basis=basis,
+                           fetcher_version=str(fetcher or "0"),
+                           via_detail=via_detail, partial_season=partial,
+                           year_span=span, partial_year=partial_year))
+    # the same refusal as the request builder under the default prompt (QA 2026-10-02): a
+    # plot file from before fetcher 1.4.0 never reaches the sheet
+    if load_prompt(DEFAULT_PROMPT_VERSION).sends_coverage:
+        require_current_ingest(gated.plot)
+    return gated
 
 
 def labeler_text_for(plot: dict[str, Any]) -> str:

@@ -23,6 +23,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from laminary_pipeline.annotate.ready import not_annotatable_reason
 from laminary_pipeline.ingest.candidates import BUCKETS, language_display
 from laminary_pipeline.ingest.episodes import VIA_DETAIL_EPISODE_TABLE
 from laminary_pipeline.ingest.paths import DataPaths, read_json, write_json_atomic
@@ -38,6 +39,7 @@ from laminary_pipeline.ingest.wikipedia import (
     PlotFetcher,
 )
 
+CURRENT_INGEST_FETCHER = (1, 4, 0)  # annotate-1.2.0 on refuses older plot files
 EPISODE_TABLE_FETCHER = (1, 5, 0)
 RUN_RULE_FETCHER = (1, 5, 1)
 LIST_LINK_FETCHER = (1, 5, 2)
@@ -56,7 +58,8 @@ def needs_fetch(paths: DataPaths, qid: str, refresh: bool) -> bool:
         return True
     current = existing_status(paths, qid)
     return current is None or current.get("skip_reason") == SKIP_FETCH_ERROR or (
-        _thin_series_before_seasons(current) or _thin_series_before_episode_tables(current)
+        _before_current_ingest(current)
+        or _thin_series_before_seasons(current) or _thin_series_before_episode_tables(current)
         or _run_rule_series_before_rules(current)
         or _unverified_list_page_before_link_fallback(current)
         or _thin_priority_series_before_richer_text(current)
@@ -68,6 +71,13 @@ def needs_fetch(paths: DataPaths, qid: str, refresh: bool) -> bool:
 def _version(value: Any) -> tuple[int, ...]:
     parts = str(value or "0").split(".")
     return tuple(int(p) for p in parts) if all(p.isdigit() for p in parts) else (0,)
+
+
+def _before_current_ingest(rec: dict[str, Any]) -> bool:
+    """Any plot file, passing or not, from a fetcher older than 1.4.0 (QA, 2026-10-02): the
+    current prompts refuse it (``prompt.require_current_ingest``), so it could never be
+    annotated. Applies wherever ``needs_fetch`` is asked: pilot titles and backfill reserves."""
+    return _version(rec.get("fetcher_version")) < CURRENT_INGEST_FETCHER
 
 
 def _thin_series_before_episode_tables(rec: dict[str, Any]) -> bool:
@@ -124,9 +134,10 @@ def _episode_tables_from_1_5_5(rec: dict[str, Any]) -> bool:
     """A file from fetcher 1.5.5 that tried episode tables: that version's ``table_heading``
     let a year subheading decide a table on every series ("Season 1" > "2005" was skipped,
     "Specials" > "2010" was not). Fetched again with the fix (1.5.6, QA)."""
+    rule = SERIES_RUN_RULES.get(str(rec.get("qid")))
+    fixed = max(YEAR_HEADING_FIX_FETCHER, rule.since) if rule else YEAR_HEADING_FIX_FETCHER
     return ("episode_tables" in rec
-            and _version(rec.get("fetcher_version")) == (1, 5, 5)
-            and rec.get("qid") not in SERIES_RUN_RULES)  # rule titles: their own ``since``
+            and (1, 5, 5) <= _version(rec.get("fetcher_version")) < fixed)
 
 
 def _link_fallback_before_hardening(rec: dict[str, Any]) -> bool:
@@ -246,15 +257,39 @@ def _backfill(
             record = fetcher.fetch(r)
             write_json_atomic(paths.plot_file(r["qid"]), record)
             fetched += 1
-            ok += record["status"] == "ok"
+            ok += _record_annotatable(paths, r["qid"])
             log(f"[backfill {bucket}] {r['qid']} {r.get('title')!r}: "
                 f"{record['status'] if record['status'] == 'ok' else record['skip_reason']}")
     return fetched
 
 
+# (path, mtime_ns, size) -> reason or None; plot files are rewritten atomically, so a changed
+# file gets a new key
+_ANNOTATABLE: dict[tuple[str, int, int], str | None] = {}
+
+
+def not_annotatable(paths: DataPaths, qid: str) -> str | None:
+    """None when the title's plot file is annotatable (``annotate.ready``: the gate and the
+    request build pass under the default prompt); else why not. A missing file says so."""
+    path = paths.plot_file(qid)
+    if not path.exists():
+        return "no plot file"
+    st = path.stat()
+    key = (str(path), st.st_mtime_ns, st.st_size)
+    if key not in _ANNOTATABLE:
+        _ANNOTATABLE[key] = not_annotatable_reason(read_json(path))
+    return _ANNOTATABLE[key]
+
+
+def _record_annotatable(paths: DataPaths, qid: str) -> bool:
+    return not_annotatable(paths, qid) is None
+
+
 def _is_ok(paths: DataPaths, qid: str) -> bool:
-    current = existing_status(paths, qid)
-    return bool(current and current.get("status") == "ok")
+    """A title fills a pilot slot only when its plot file is annotatable (QA, 2026-10-02), not
+    merely ``status: ok``: a pre-1.4.0 file passes the 150-word rule but is refused by every
+    current prompt."""
+    return _record_annotatable(paths, qid)
 
 
 def held_priority(paths: DataPaths, rows: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -275,6 +310,7 @@ def priority_report(
 
     - ``pass``: in the effective pilot;
     - ``skipped``: its plot file is skipped (with the reason and detail);
+    - ``not_annotatable``: its plot file passes but can't be sent (e.g. a pre-1.4.0 file);
     - ``not_fetched``: a candidate with no plot file yet;
     - ``reserve``: passes the plot rules but is a reserve outside the effective pilot;
     - ``not_selected``: a passing pilot row left out of the effective pilot;
@@ -296,6 +332,9 @@ def priority_report(
         elif rec.get("status") != "ok":
             entry.update(status="skipped", skip_reason=rec.get("skip_reason"),
                          skip_detail=rec.get("skip_detail"))
+        elif not _is_ok(paths, qid):
+            entry.update(status="not_annotatable", reason=not_annotatable(paths, qid),
+                         fetcher_version=rec.get("fetcher_version"))
         else:
             if qid in effective:
                 status = "pass"
@@ -316,8 +355,8 @@ def _rate(ok: int, total: int) -> dict[str, Any]:
 
 
 def effective_pilot(paths: DataPaths, candidates: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Passing titles per bucket, pilot first then reserves by rank, capped at the bucket's
-    pilot slots: the set the annotation pilot should use."""
+    """Annotatable titles per bucket (``not_annotatable``), pilot first then reserves by rank,
+    capped at the bucket's pilot slots: the set the annotation pilot should use."""
     out: list[dict[str, Any]] = []
     for bucket in BUCKETS:
         rows = [c for c in candidates if c["bucket"] == bucket.name]
@@ -353,6 +392,10 @@ def plots_report(paths: DataPaths, candidates: Sequence[dict[str, Any]]) -> dict
         return {k: _rate(sum(v), len(v)) for k, v in sorted(groups.items())}
 
     reasons = Counter(rec["skip_reason"] for _, rec in fetched if rec["status"] != "ok")
+    # QA 2026-10-02: passing the 150-word rule is not enough; count what can be sent
+    blocked = {c["qid"]: not_annotatable(paths, c["qid"]) for c, rec in fetched
+               if rec["status"] == "ok" and not _is_ok(paths, c["qid"])}
+    annotatable = sum(1 for c, rec in fetched if rec["status"] == "ok") - len(blocked)
     sections = Counter(rec["section"]["heading"] for _, rec in fetched if rec["status"] == "ok")
     ok_words = sorted(rec["word_count"] for _, rec in fetched if rec["status"] == "ok")
     eff = effective_pilot(paths, candidates)
@@ -377,6 +420,14 @@ def plots_report(paths: DataPaths, candidates: Sequence[dict[str, Any]]) -> dict
         "candidates": len(candidates),
         "fetched": len(fetched),
         "overall": _rate(sum(rec["status"] == "ok" for _, rec in fetched), len(fetched)),
+        "annotatable": {
+            **_rate(annotatable, len(fetched)),
+            "passing_but_not_annotatable": len(blocked),
+            "not_annotatable_reasons": dict(Counter(
+                (r or "").split(":")[0] if "fetcher" not in (r or "") else
+                "plot file from before fetcher 1.4.0" for r in blocked.values()).most_common()),
+            "not_annotatable_titles": sorted(blocked),
+        },
         "skip_reasons": dict(sorted(reasons.items())),
         "by_media_type": by(lambda c: c["media_type"]),
         "by_region": by(lambda c: c["region"]),
@@ -423,6 +474,11 @@ def format_report(report: dict[str, Any]) -> str:
         f"Plot sections: {report['fetched']} of {report['candidates']} candidates fetched; "
         f"{report['overall']['ok']} pass the 150-word rule "
         f"({_pct(report['overall']['pass_rate'])}).",
+        *([f"Annotatable (gate and request build pass under the default prompt): "
+           f"{report['annotatable']['ok']} ({_pct(report['annotatable']['pass_rate'])}); "
+           f"{report['annotatable']['passing_but_not_annotatable']} pass the 150-word rule but "
+           f"can't be sent: {report['annotatable']['not_annotatable_reasons'] or 'none'}"]
+          if "annotatable" in report else []),
         f"Skip reasons: {report['skip_reasons'] or 'none'}",
     ]
     for title, key in (("By type", "by_media_type"), ("By region", "by_region"),
@@ -447,7 +503,8 @@ def format_report(report: dict[str, Any]) -> str:
             f"{npf['titles_with_a_section_rejected']} had a section rejected as mostly "
             f"non-plot; {npf['partial_season_coverage']} passing series cover only some seasons")
     eff = report["effective_pilot"]
-    lines.append(f"Effective pilot (after backfill): {eff['total']}/{eff['slots']} slots filled")
+    lines.append(f"Effective pilot (annotatable, after backfill): {eff['total']}/{eff['slots']} "
+                 "slots filled")
     lines.append("  " + ", ".join(f"{b} {v}" for b, v in eff["by_bucket"].items()))
     if eff.get("held_for_priority_series"):
         lines.append("  slots held for skipped priority series (not backfilled): "

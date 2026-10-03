@@ -794,8 +794,15 @@ class _CountingFetcher:
 
     def fetch(self, cand: dict[str, Any]) -> dict[str, Any]:
         self.fetched.append(cand["qid"])
-        return {"qid": cand["qid"], "status": "ok", "word_count": 200,
-                "section": {"heading": "plot"}, "candidate": {"media_type": "tv_series"}}
+        return _annotatable_ok(cand["qid"])
+
+
+def _annotatable_ok(qid: str) -> dict[str, Any]:
+    """A passing plot file the annotation gate accepts (fills a pilot slot, QA 2026-10-02)."""
+    from annotate_support import ingest_plot
+
+    return {**ingest_plot(qid, tmdb_id=int(qid[1:])), "word_count": 200,
+            "section": {"heading": "plot"}}
 
 
 def test_backfill_never_replaces_a_priority_series(tmp_path: Path) -> None:
@@ -805,8 +812,7 @@ def test_backfill_never_replaces_a_priority_series(tmp_path: Path) -> None:
                                                "skip_reason": "too_short",
                                                "fetcher_version": "1.5.0",
                                                "candidate": {"media_type": "movie"}})
-    write_json_atomic(paths.plot_file("Q90"), {"qid": "Q90", "status": "ok", "word_count": 200,
-                                               "section": {"heading": "plot"}})
+    write_json_atomic(paths.plot_file("Q90"), _annotatable_ok("Q90"))
     cands = _cands([("Q90", "Passing", "pilot", 1), ("Q23733", "Seinfeld", "pilot", 2),
                     ("Q91", "Thin", "pilot", 3), ("Q80", "Reserve A", "reserve", 1),
                     ("Q81", "Reserve B", "reserve", 2)])
@@ -818,8 +824,7 @@ def test_backfill_never_replaces_a_priority_series(tmp_path: Path) -> None:
     warning = [m for m in logs if m.startswith("WARNING for Hari: priority series Q23733")]
     assert warning and "Its pilot slot is held, not backfilled." in warning[0]
     # the effective pilot leaves Seinfeld's slot empty even with a passing reserve available
-    write_json_atomic(paths.plot_file("Q81"), {"qid": "Q81", "status": "ok", "word_count": 200,
-                                               "section": {"heading": "plot"}})
+    write_json_atomic(paths.plot_file("Q81"), _annotatable_ok("Q81"))
     assert [r["qid"] for r in effective_pilot(paths, cands)] == ["Q90", "Q80"]
     report = plots_report(paths, cands)
     assert report["effective_pilot"]["held_for_priority_series"] == ["Q23733"]

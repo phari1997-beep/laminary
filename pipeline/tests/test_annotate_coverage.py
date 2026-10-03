@@ -165,6 +165,21 @@ def test_gold_template_skips_stale_season_files() -> None:
     sel = [{"qid": "Q9100000", "title": "Tidewater", "year": 2019, "media_type": "tv_series",
             "tmdb_id": 91000}]
     rows, skipped = template_rows(sel, {"Q9100000": stale(series_plot([1, 2, 3, 4], 7))})
+    assert rows == [] and "needs 1.4.0" in skipped[0]
+    # QA 2026-10-02: a passing pre-1.4.0 file (a film too) is refused, like the request builder
+    from annotate_support import ingest_plot
+
+    film = {"qid": "Q1001", "title": "Film", "year": 2019, "media_type": "movie",
+            "tmdb_id": 5001}
+    ok_film = {**ingest_plot(), "word_count": 200, "section": {"heading": "plot"},
+               "permalink": "https://en.wikipedia.org/w/index.php?title=Film&oldid=1"}
+    rows, skipped = template_rows([film], {"Q1001": {**ok_film, "fetcher_version": "1.3.0"}})
+    assert rows == [] and "needs 1.4.0" in skipped[0]
+    rows, skipped = template_rows([film], {"Q1001": ok_film})
+    assert skipped == [] and len(rows) == 1
+    # a 1.4.0 season file without a total is still refused for that reason
+    no_total = stale(series_plot([1, 2, 3, 4], 7), "1.4.0")
+    rows, skipped = template_rows(sel, {"Q9100000": no_total})
     assert rows == [] and "no coverage total" in skipped[0]
     rows, skipped = template_rows(sel, {"Q9100000": series_plot([1, 2, 3, 4], 7)})
     assert skipped == [] and rows[0]["summary_coverage"] == "Summary covers seasons 1–4 of 7."
