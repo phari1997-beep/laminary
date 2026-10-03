@@ -75,3 +75,6 @@
 | 2026-10-02 | CID's one-line teaser summaries are accepted as gold input (labelers may skip under guide rule 4) | Hari approved |
 | 2026-10-02 | Episodes under "Pilot" headings are included as episode 0 of the first season (e.g. Midsomer's Badger's Drift) | Hari approved |
 | 2026-10-02 | Trivia rules also cover guest-star lines ("Guest star X as Y.", "X guest stars.", "Special Guest Star: …") and M*A*S*H-style "Timeline:" notes (colon form only); a trivia sentence takes the rest of its paragraph with it | Coordinator, within Hari's trivia decision (its patterns were examples); QA found these were the largest remaining cast/context trivia in the model text. Hari may veto |
+| 2026-10-02 | Gold double-label set includes 3 hard series (Game of Thrones, Seinfeld, The Good Place: episode-table / partial coverage) in place of 3 films; total stays 25 | Hari approved; measure human agreement on the harder texts |
+| 2026-10-02 | Priority series are not added to the gold seed list (gold stays 3 of 10 priority series) | Hari's call |
+| 2026-10-02 | Exit-gate coverage: at least 95% of annotated gold titles must be scored (was 90%); the double-label requirement stays at ≥20 scored double-labeled titles (80% of 25) | Hari's call |
