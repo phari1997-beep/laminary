@@ -1,0 +1,299 @@
+diff --git a/pipeline/laminary_pipeline/ingest/episodes.py b/pipeline/laminary_pipeline/ingest/episodes.py
+index e9ede2d..e137c0f 100644
+--- a/pipeline/laminary_pipeline/ingest/episodes.py
++++ b/pipeline/laminary_pipeline/ingest/episodes.py
+@@ -23,6 +23,19 @@ level, that names one ("Season 3 (1991–92)", "Series 2"; a "Part 1" subheading
+ headings are skipped, and seasons must rise down the page (a repeated or lower number stops
+ the page, e.g. a revival that restarts at "Series 1"). Every skipped table is recorded.
+ 
++**Main-article tables** (fetcher 1.6.0, DECISIONS 2026-10-03, rule A): when the season pages
++and episode-list pages give nothing usable, the tables in the main article's own top-level
++"Episodes" section (the page already verified as the series' own Wikidata item) are read like
++an episode-list page (``wikipedia.PlotFetcher``). Its sources carry ``via_detail``
++``"main_article_episode_table"``.
++
++**No season headings** (fetcher 1.6.0, rule B): when none of a page's (or the Episodes
++section's) tables sits under a "Season N" / "Series N" heading, its tables under the section's
++own heading or under "Part I" / "Part 2"-style headings are season 1, in table order;
++specials tables are skipped as usual, and tables under any other heading (a year, an arc name)
++too. Only for a series without a run rule whose Wikidata season count (P2437) is 1 or not
++stated: with more seasons, the tables could span several seasons, so they are not read.
++
+ **Partial last season.** The last season used is marked ``partial_season`` when some of its
+ episodes didn't fit under the cap, or when rows after its last used episode have no summary
+ (episodes not yet aired or not yet summarized).
+@@ -80,6 +93,9 @@ from laminary_pipeline.ingest.sections import normalize_heading
+ from laminary_pipeline.ingest.text import html_to_text, word_count
+ 
+ VIA_DETAIL_EPISODE_TABLE = "episode_table"
++# a source read from the main article's own Episodes section (fetcher 1.6.0, rule A); the plot
++# file's own via_detail stays VIA_DETAIL_EPISODE_TABLE, the gate's format for all such input
++VIA_DETAIL_MAIN_ARTICLE_TABLE = "main_article_episode_table"
+ EPISODE_TABLE_CLASS = "wikiepisodetable"
+ MAX_TITLE_CHARS = 150
+ _LIST_SEASON_HEADING = re.compile(r"^(season|series)\s+(\d{1,3})\b")
+@@ -91,6 +107,11 @@ _PLAIN_INT = re.compile(r"^\d{1,3}$")
+ _YEAR_HEADING = re.compile(r"^(\d{4})\b")
+ MIN_YEAR, MAX_YEAR = 1900, 2100  # a year heading outside this range is not a year
+ _PILOT_HEADING = re.compile(r"^pilots?\b")  # "pilot (1997)", "pilot tv movie (1989)"
++# Rule B (fetcher 1.6.0): headings a page without season headings may put its tables under.
++# The page's or section's own heading (none at all, or the Episodes section itself) ...
++UNHEADED_HEADINGS = frozenset({"", "episodes", "episode list", "list of episodes"})
++# ... or a numbered part ("Part I", "Part 2 (2007)"), as Death Note's are
++_PART_HEADING = re.compile(r"^part\s+(?:\d{1,2}|[ivx]{1,5})\b")
+ 
+ # Trivia rules (fetcher 1.5.8): (name, pattern). A paragraph starting with a note marker is
+ # trivia whole; the other rules match one sentence.
+@@ -530,8 +551,25 @@ def season_page_tables(
+     return used, skipped
+ 
+ 
++def has_season_headings(tables: list[RawTable]) -> bool:
++    """Whether any table sits under a "Season N" / "Series N" heading (``table_heading``)."""
++    return any(_LIST_SEASON_HEADING.match(t.heading) for t in tables)
++
++
++def unheaded_kind(heading: str) -> str | None:
++    """For a table on a page without season headings (fetcher 1.6.0, rule B): "section" when
++    its heading is the page's or section's own ("", "episodes"), "part" for a "Part I" /
++    "Part 2"-style heading, else None (a heading rule B doesn't read, e.g. a year)."""
++    if heading in UNHEADED_HEADINGS:
++        return "section"
++    if _PART_HEADING.match(heading):
++        return "part"
++    return None
++
++
+ def list_page_seasons(
+-    tables: list[RawTable], rule: SeriesRunRule | None = None,
++    tables: list[RawTable], rule: SeriesRunRule | None = None, *,
++    unheaded: bool = False, unheaded_refused: str = "",
+ ) -> tuple[list[tuple[int, list[RawTable]]], list[dict[str, str]]]:
+     """An episode-list page's tables grouped by the season named in the heading above them,
+     in page order, and the skipped tables with a reason. Seasons must rise down the page; the
+@@ -539,9 +577,20 @@ def list_page_seasons(
+     (fetcher 1.5.1, ``runs.py``), a heading in the other run's numbering ("Season 3" when the
+     rule uses "Series N") is skipped before the rising check. With a rule numbering by year
+     (fetcher 1.5.5, CID), each year heading ("1998") is one "season" numbered by its year, and
+-    the same rising order applies to years; season headings are then skipped."""
++    the same rising order applies to years; season headings are then skipped.
++
++    Rule B (fetcher 1.6.0, DECISIONS 2026-10-03): with ``unheaded`` and no run rule, a page (or
++    a main article's Episodes section) whose tables have no "Season N" / "Series N" heading at
++    all reads them as season 1, in table order (``_unheaded_season``). The caller passes
++    ``unheaded=False`` with an ``unheaded_refused`` reason when the series has more than one
++    season on Wikidata, so tables of several seasons are never numbered as one."""
+     if rule is not None and rule.numbering == UNIT_YEAR:
+         return _list_page_years(tables, rule)
++    if rule is None and tables and not has_season_headings(tables):
++        if unheaded:
++            return _unheaded_season(tables)
++        if unheaded_refused:
++            return [], [{"heading": t.heading, "reason": unheaded_refused} for t in tables]
+     seasons: list[tuple[int, list[RawTable]]] = []
+     skipped: list[dict[str, str]] = []
+     pilots: list[RawTable] = []  # pilot tables before the first season (1.5.8)
+@@ -587,6 +636,46 @@ def list_page_seasons(
+     return seasons, skipped
+ 
+ 
++def _unheaded_season(
++    tables: list[RawTable],
++) -> tuple[list[tuple[int, list[RawTable]]], list[dict[str, str]]]:
++    """Rule B (fetcher 1.6.0): tables with no season heading are season 1, in table order: a
++    single table under the page's or section's own heading ("Episodes"), and tables under
++    "Part I" / "Part 2"-style headings (Death Note). Tables under a specials heading are
++    skipped (The Pacific's "Special"), and so is any table under another heading (a year, a
++    named arc), so pages organised some other way are never read as one season. A single pilot
++    before the first season-1 table is episode 0, as on other pages."""
++    used: list[RawTable] = []
++    skipped: list[dict[str, str]] = []
++    pilots: list[RawTable] = []
++    for t in tables:
++        if _SKIP_TABLE_HEADING.search(t.heading):
++            skipped.append({"heading": t.heading, "reason": "specials or extras, out of the "
++                            "season's order"})
++        elif _PILOT_HEADING.match(t.heading):
++            if used:
++                skipped.append({"heading": t.heading, "reason": "pilot heading after the "
++                                "season began: not numbered"})
++            else:
++                pilots.append(t)
++        elif unheaded_kind(t.heading) is None:
++            skipped.append({"heading": t.heading, "reason": "no season heading, and not a "
++                            "part heading or the section's own heading"})
++        else:
++            used.append(t)
++    if not used:
++        skipped += [{"heading": p.heading, "reason": "pilot without a season after it"}
++                    for p in pilots]
++        return [], skipped
++    entries = sum(len(p.rows) for p in pilots)
++    if entries == 1:
++        used = [replace(p, pilot=True) for p in pilots] + used
++    elif pilots:
++        skipped += [{"heading": p.heading, "reason": f"{entries} pilot entries: only a single "
++                     "pilot is numbered as episode 0"} for p in pilots]
++    return [(1, used)], skipped
++
++
+ def _list_page_years(
+     tables: list[RawTable], rule: SeriesRunRule
+ ) -> tuple[list[tuple[int, list[RawTable]]], list[dict[str, str]]]:
+diff --git a/pipeline/laminary_pipeline/ingest/kind.py b/pipeline/laminary_pipeline/ingest/kind.py
+new file mode 100644
+index 0000000..82080b2
+--- /dev/null
++++ b/pipeline/laminary_pipeline/ingest/kind.py
+@@ -0,0 +1,55 @@
++"""Film/series sanity check on a title's English Wikipedia page (fetcher 1.6.0).
++
++DECISIONS 2026-10-03: a TV-series item whose Wikipedia page's short description names a film
++and no series is skipped, and so is a movie item whose page's short description names a series
++and no film. Wikidata's enwiki sitelink for Code Geass's series item (Q4384067) leads to the
++compilation-film article "Code Geass Lelouch of the Rebellion" ("Three-part film by Gorō
++Taniguchi"), whose plot section describes the films; the QID check passes, because the page
++does carry that item, so only the page's own description shows the mismatch.
++
++The short description is the page property ``wikibase-shortdesc``, read in the same
++``action=query`` request that resolves the page and checks its Wikidata item
++(``PlotFetcher.latest_revision``): no extra call. A page without one is not checked.
++
++The words are deliberately narrow, so a description naming both ("Film series", "Television
++film based on the series") or neither ("South Korean television drama", "Stage musical") never
++skips a title:
++
++- a film: "film(s)", "movie(s)", "telefilm";
++- a series: "series", "miniseries" / "mini-series", "serial(s)", "sitcom", "soap opera",
++  "telenovela", "TV / television show", "TV / television program(me)".
++
++``plots`` records the description on every plot file (``short_description``) and skips a
++mismatch as ``media_type_mismatch``. ``ingest kind-check`` applies the same rule to files
++fetched before 1.6.0, from a batched page-property lookup, so ``needs_fetch`` can fetch exactly
++those files again (``KIND_CHECK_FILE``).
++"""
++
++from __future__ import annotations
++
++import re
++
++FILM_WORDS = re.compile(r"\b(?:films?|movies?|telefilms?)\b", re.IGNORECASE)
++SERIES_WORDS = re.compile(
++    r"\b(?:series|mini-?series|serials?|sitcoms?|soap operas?|telenovelas?|"
++    r"(?:tv|television) (?:shows?|programmes?|programs?))\b",
++    re.IGNORECASE,
++)
++SKIP_MEDIA_TYPE_MISMATCH = "media_type_mismatch"
++KIND_CHECK_VERSION = "1.0.0"
++
++
++def media_type_mismatch(short_description: str | None, media_type: str) -> str | None:
++    """Why the page doesn't fit the item's media type, or None (it fits, or can't be told)."""
++    desc = " ".join((short_description or "").split())
++    if not desc:
++        return None
++    film = bool(FILM_WORDS.search(desc))
++    series = bool(SERIES_WORDS.search(desc))
++    if media_type == "tv_series" and film and not series:
++        return (f"the page's short description {desc!r} names a film and no series; the "
++                "candidate is a TV series")
++    if media_type == "movie" and series and not film:
++        return (f"the page's short description {desc!r} names a series and no film; the "
++                "candidate is a movie")
++    return None
+diff --git a/pipeline/laminary_pipeline/ingest/seasons.py b/pipeline/laminary_pipeline/ingest/seasons.py
+index 97f2947..f5cc783 100644
+--- a/pipeline/laminary_pipeline/ingest/seasons.py
++++ b/pipeline/laminary_pipeline/ingest/seasons.py
+@@ -275,6 +275,27 @@ class LinkEvidence:
+                 "other_statements": list(self.other_statements)}
+ 
+ 
++MAIN_ARTICLE_BASIS = "main_article"
++
++
++@dataclass(frozen=True)
++class MainArticleEvidence:
++    """The series' own main article (fetcher 1.6.0, rule A, DECISIONS 2026-10-03): its page's
++    Wikidata item (``wikibase_item``) is the series' QID, checked before any text is read, and
++    its episode tables are in its own top-level "Episodes" section."""
++
++    item: str
++    series: str
++    section: str  # the section heading as written ("Episodes")
++    section_index: str
++    revision: int
++
++    def record(self) -> dict[str, Any]:
++        return {"item": self.item, "basis": MAIN_ARTICLE_BASIS, "series": self.series,
++                "section": self.section, "section_index": self.section_index,
++                "revision": self.revision}
++
++
+ @dataclass(frozen=True)
+ class Evidence:
+     """One Wikidata statement placing a page's item in the series."""
+@@ -380,8 +401,8 @@ class Page:
+     item: str | None
+     season: int | None  # None for a list-of-episodes page
+     # the statement that verified it, or (episode-list pages only, fetcher 1.5.2) the main
+-    # article's link
+-    evidence: Evidence | LinkEvidence | None = None
++    # article's link, or (fetcher 1.6.0) the main article itself, for its own Episodes section
++    evidence: Evidence | LinkEvidence | MainArticleEvidence | None = None
+ 
+ 
+ @dataclass
+diff --git a/pipeline/laminary_pipeline/ingest/wikipedia.py b/pipeline/laminary_pipeline/ingest/wikipedia.py
+index 0632e9b..5c26020 100644
+--- a/pipeline/laminary_pipeline/ingest/wikipedia.py
++++ b/pipeline/laminary_pipeline/ingest/wikipedia.py
+@@ -75,6 +75,7 @@ from laminary_pipeline.ingest.episodes import (
+     season_text,
+ )
+ from laminary_pipeline.ingest.http import HttpClient, HttpError
++from laminary_pipeline.ingest.kind import SKIP_MEDIA_TYPE_MISMATCH, media_type_mismatch
+ from laminary_pipeline.ingest.priority import PREFER_EPISODE_TEXT, PRIORITY_SERIES
+ from laminary_pipeline.ingest.seasons import (
+     LEAD_BLOCK_CEILING,
+@@ -92,7 +93,7 @@ from laminary_pipeline.ingest.seasons import (
+ from laminary_pipeline.ingest.sections import SectionFilter, filter_section, normalize_heading
+ from laminary_pipeline.ingest.text import html_to_text, sha256_text, word_count
+ 
+-FETCHER_VERSION = "1.5.9"  # 1.1.0: per-season articles for thin series; 1.2.0: lead block
++FETCHER_VERSION = "1.6.0"  # 1.1.0: per-season articles for thin series; 1.2.0: lead block
+ # of stub seasons (under STUB_SEASON_WORDS, 500) before the first full season; 1.3.0: stubs
+ # alone when the lead block is over the 6,000-word ceiling; 1.4.0 (DECISIONS 2026-10-02):
+ # non-plot subsections dropped (sections.py), MediaWiki "Cite error" text stripped, Wikidata
+@@ -112,6 +113,10 @@ FETCHER_VERSION = "1.5.9"  # 1.1.0: per-season articles for thin series; 1.2.0:
+ # episode-summary trivia stored apart from the plot (``trivia``), a single pilot is episode 0
+ # of the first season, and per-title episode-text overrides (Seinfeld); 1.5.9 (QA): trivia
+ # rules "Music:", "<Name> has a small role as", the ACE Eddie award; no split after "W."
++# 1.6.0 (DECISIONS 2026-10-03): (A) episode tables in the main article's own "Episodes"
++# section when season and list pages give nothing usable; (B) tables with no season heading
++# are season 1 (single-season series only); film/series check on the page's short
++# description (``kind.py``, skip reason media_type_mismatch); ``short_description`` recorded
+ MIN_WORDS = 150
+ # A priority series whose main-article text passes with fewer words than this also tries the
+ # season-article / episode-table path and keeps the longer text (fetcher 1.5.2, DECISIONS
+@@ -240,7 +245,8 @@ class PlotFetcher:
+             {
+                 "action": "query", "titles": title, "redirects": "1",
+                 "prop": "revisions|pageprops", "rvprop": "ids|timestamp",
+-                "ppprop": "wikibase_item|disambiguation",
++                # 1.6.0: the short description for the film/series check (kind.py)
++                "ppprop": "wikibase_item|disambiguation|wikibase-shortdesc",
+             },
+             cache_ttl=LATEST_REVISION_TTL,
+         )
+@@ -331,6 +337,10 @@ class PlotFetcher:
+         if page_qid != qid:
+             return {**result, "skip_reason": SKIP_QID_MISMATCH,
+                     "skip_detail": f"page {page_title!r} is {page_qid}, expected {qid}"}
++        result["short_description"] = props.get("wikibase-shortdesc")
++        mismatch = media_type_mismatch(props.get("wikibase-shortdesc"), media_type)
++        if mismatch:  # 1.6.0 (DECISIONS 2026-10-03): e.g. a series item on a film's page
++            return {**result, "skip_reason": SKIP_MEDIA_TYPE_MISMATCH, "skip_detail": mismatch}
+         rev = page["revisions"][0]
+         revid, rev_ts = int(rev["revid"]), rev["timestamp"]
+         result.update(revision=str(revid), revision_timestamp=rev_ts,
